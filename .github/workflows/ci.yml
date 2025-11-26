@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project OldMansBookClub.xcodeproj -scheme OldMansBookClub -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 14' clean build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO

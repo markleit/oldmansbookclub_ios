@@ -1,0 +1,17 @@
+name: OldMansBookClub
+options:
+  bundleIdPrefix: com.example
+configs:
+  Debug: debug
+  Release: release
+settings:
+  IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+targets:
+  OldMansBookClub:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: App
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.example.oldmansbookclub
