@@ -1,0 +1,63 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using BookClubApi.Data;
+using BookClubApi.Models;
+using BookClubApi.Services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+
+namespace BookClubApi.Controllers;
+
+[ApiController]
+[Route("[controller]")]
+public class AuthController(
+    AppDbContext db,
+    AppleTokenValidator appleValidator,
+    IConfiguration config) : ControllerBase
+{
+    [HttpPost("apple")]
+    public async Task<ActionResult<AuthResponse>> SignInWithApple([FromBody] AppleAuthRequest request)
+    {
+        var bundleId = config["Apple:BundleId"]
+            ?? throw new InvalidOperationException("Apple:BundleId not configured");
+
+        var appleSubject = await appleValidator.ValidateAsync(request.IdentityToken, bundleId);
+        if (appleSubject is null)
+            return Unauthorized("Invalid Apple identity token");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == appleSubject);
+        if (user is null)
+        {
+            user = new User { AppleSubject = appleSubject, DisplayName = request.DisplayName };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+
+        var token = GenerateJwt(user);
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName)));
+    }
+
+    private string GenerateJwt(User user)
+    {
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(config["Jwt:Secret"]
+                ?? throw new InvalidOperationException("Jwt:Secret not configured")));
+
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: config["Jwt:Issuer"],
+            audience: config["Jwt:Audience"],
+            claims: claims,
+            expires: DateTime.UtcNow.AddDays(30),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}

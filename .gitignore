@@ -25,3 +25,9 @@ fastlane/screenshots
 
 # macOS
 .DS_Store
+
+# .NET / API
+API/bin/
+API/obj/
+API/appsettings.json
+API/*.user
