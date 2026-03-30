@@ -73,20 +73,22 @@ app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat");
 app.MapGet("/health", () => Results.Ok("healthy"));
 
-// Auto-migrate on startup
-using (var scope = app.Services.CreateScope())
+// Run migration in background after app starts so startup probe succeeds
+_ = Task.Run(async () =>
 {
+    await Task.Delay(TimeSpan.FromSeconds(5)); // Let app fully start first
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
     try
     {
-        db.Database.Migrate();
+        await db.Database.MigrateAsync();
         logger.LogInformation("Database migration completed successfully.");
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database migration failed. App will continue without migration.");
+        logger.LogError(ex, "Database migration failed.");
     }
-}
+});
 
 app.Run();
