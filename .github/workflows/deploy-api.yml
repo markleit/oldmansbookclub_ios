@@ -29,9 +29,19 @@ jobs:
       - name: Publish
         run: dotnet publish API/BookClubApi.csproj --configuration Release --no-build --output ./publish
 
-      - name: Deploy to Azure Web App
-        uses: azure/webapps-deploy@v3
+      - name: Zip publish output
+        run: cd publish && zip -r ../deploy.zip .
+
+      - name: Login to Azure
+        uses: azure/login@v2
         with:
-          app-name: 'oldmansbookclub-api'
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: ./publish
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App
+        run: |
+          az webapp deploy \
+            --name oldmansbookclub-api \
+            --resource-group oldmansbookclub-rg \
+            --subscription 668575f2-34c3-4607-b861-0854744b21c0 \
+            --src-path deploy.zip \
+            --type zip
