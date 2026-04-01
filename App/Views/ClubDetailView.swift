@@ -44,7 +44,7 @@ struct ClubDetailView: View {
                     .textFieldStyle(.roundedBorder)
 
                 Button {
-                    // SignalR send — coming soon
+                    Task { await viewModel.sendMessage() }
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
@@ -55,7 +55,8 @@ struct ClubDetailView: View {
         }
         .navigationTitle(viewModel.club.name)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.loadMessages() }
+        .task { await viewModel.load() }
+        .onDisappear { Task { await viewModel.disconnect() } }
     }
 }
 

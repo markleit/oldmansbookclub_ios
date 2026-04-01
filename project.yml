@@ -6,6 +6,10 @@ configs:
   Release: release
 settings:
   IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+packages:
+  SignalRClient:
+    url: https://github.com/dotnet/signalr-client-swift
+    from: 1.0.0
 targets:
   OldMansBookClub:
     type: application
@@ -15,3 +19,5 @@ targets:
       - path: App
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.example.oldmansbookclub
+    dependencies:
+      - package: SignalRClient
