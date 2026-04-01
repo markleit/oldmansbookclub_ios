@@ -9,6 +9,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Club> Clubs => Set<Club>();
     public DbSet<Membership> Memberships => Set<Membership>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<Event> Events => Set<Event>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

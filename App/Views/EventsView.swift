@@ -1,23 +1,34 @@
 import SwiftUI
 
 struct EventsView: View {
-    // Sample events
-    private let events: [Event] = [
-        Event(id: UUID(), title: "Monthly Meetup", date: Date().addingTimeInterval(86400 * 7), location: "Community Hall"),
-        Event(id: UUID(), title: "Author Q&A", date: Date().addingTimeInterval(86400 * 14), location: "Library Room B")
-    ]
+    @StateObject private var viewModel = EventsViewModel()
 
     var body: some View {
         NavigationView {
-            List(events) { event in
-                VStack(alignment: .leading) {
-                    Text(event.title).font(.headline)
-                    Text(event.location ?? "").font(.subheadline).foregroundColor(.secondary)
-                    Text(event.date, style: .date).font(.caption).foregroundColor(.secondary)
+            Group {
+                if viewModel.isLoading {
+                    ProgressView()
+                } else if let error = viewModel.errorMessage {
+                    Text(error).foregroundColor(.secondary)
+                } else if viewModel.events.isEmpty {
+                    Text("No upcoming events.")
+                        .foregroundColor(.secondary)
+                        .padding()
+                } else {
+                    List(viewModel.events) { event in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(event.title).font(.headline)
+                            if let location = event.location {
+                                Text(location).font(.subheadline).foregroundColor(.secondary)
+                            }
+                            Text(event.date, style: .date).font(.caption).foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                    }
                 }
-                .padding(.vertical, 6)
             }
             .navigationTitle("Events")
+            .task { await viewModel.load() }
         }
     }
 }

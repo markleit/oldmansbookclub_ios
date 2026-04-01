@@ -1,14 +1,19 @@
 import Foundation
 
+@MainActor
 final class HomeViewModel: ObservableObject {
     @Published var clubs: [Club] = []
+    @Published var isLoading = false
+    @Published var errorMessage: String?
 
-    init() {
-        // Sample data for the scaffold
-        clubs = [
-            Club(id: UUID(), name: "Evening Readers", description: "A cozy group for evening reading and discussion."),
-            Club(id: UUID(), name: "Sci-Fi Fans", description: "We read one sci-fi book per month."),
-            Club(id: UUID(), name: "Local Authors", description: "Spotlight on authors from our region.")
-        ]
+    func load() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            clubs = try await APIClient.shared.getMyClubs()
+        } catch {
+            errorMessage = "Failed to load clubs."
+        }
+        isLoading = false
     }
 }

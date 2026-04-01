@@ -21,3 +21,5 @@ public record SendTextRequest(string Body);
 public record SendVoiceRequest(string MediaUrl, int DurationSeconds);
 public record UploadUrlResponse(string UploadUrl, string MediaUrl);
 public record RegisterDeviceRequest(string DeviceToken);
+public record EventDto(Guid Id, Guid ClubId, string Title, DateTime Date, string? Location);
+public record CreateEventRequest(string Title, DateTime Date, string? Location);

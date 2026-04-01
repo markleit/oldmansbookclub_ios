@@ -49,3 +49,14 @@ public class Message
 }
 
 public enum MessageType { Text, Voice, Photo }
+
+public class Event
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ClubId { get; set; }
+    public Club Club { get; set; } = null!;
+    [Required] public string Title { get; set; } = "";
+    public DateTime Date { get; set; }
+    public string? Location { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}

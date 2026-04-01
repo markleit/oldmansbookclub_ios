@@ -8,38 +8,89 @@ struct ClubDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(height: 180)
-                    .cornerRadius(8)
-
-                Text(viewModel.club.name)
-                    .font(.title)
-                    .bold()
-
-                Text(viewModel.club.description)
-                    .font(.body)
+        VStack(spacing: 0) {
+            // Message history
+            if viewModel.isLoadingMessages {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.messages.isEmpty {
+                Text("No messages yet. Say hello!")
                     .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(viewModel.messages.reversed()) { message in
+                                MessageRow(message: message)
+                                    .id(message.id)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                    }
+                    .onAppear {
+                        if let last = viewModel.messages.first {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
 
-                Divider()
+            Divider()
 
-                Text("Members & Discussions")
-                    .font(.headline)
+            // Message input (read-only until SignalR is wired up)
+            HStack(spacing: 12) {
+                TextField("Message…", text: $viewModel.messageText)
+                    .textFieldStyle(.roundedBorder)
 
-                Text("(Placeholder — discussions, upcoming events, and members will appear here.)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                Button {
+                    // SignalR send — coming soon
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.title2)
+                }
+                .disabled(viewModel.messageText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding()
         }
         .navigationTitle(viewModel.club.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await viewModel.loadMessages() }
+    }
+}
+
+struct MessageRow: View {
+    let message: Message
+    private var isMe: Bool { message.senderId == TokenStore.shared.userId }
+
+    var body: some View {
+        HStack {
+            if isMe { Spacer() }
+            VStack(alignment: isMe ? .trailing : .leading, spacing: 2) {
+                if !isMe {
+                    Text(message.senderName)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Text(message.body ?? "")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isMe ? Color.blue : Color(.systemGray5))
+                    .foregroundColor(isMe ? .white : .primary)
+                    .cornerRadius(16)
+                Text(message.sentAt, style: .time)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            if !isMe { Spacer() }
+        }
     }
 }
 
 struct ClubDetailView_Previews: PreviewProvider {
     static var previews: some View {
-        ClubDetailView(club: Club(id: UUID(), name: "Sample Club", description: "A short description."))
+        NavigationView {
+            ClubDetailView(club: Club(id: UUID(), name: "Sample Club", description: "A short description."))
+        }
     }
 }
