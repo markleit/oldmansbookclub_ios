@@ -29,5 +29,7 @@ fastlane/screenshots
 # .NET / API
 API/bin/
 API/obj/
+API/publish/
+API/deploy.zip
 API/appsettings.json
 API/*.user
