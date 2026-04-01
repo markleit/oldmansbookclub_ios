@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
+    @State private var showingCreateClub = false
 
     var body: some View {
         NavigationView {
@@ -39,6 +40,16 @@ struct HomeView: View {
             }
             .navigationTitle("Clubs")
             .task { await viewModel.load() }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingCreateClub = true } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingCreateClub) {
+                CreateClubView { club in viewModel.clubCreated(club) }
+            }
         }
     }
 }

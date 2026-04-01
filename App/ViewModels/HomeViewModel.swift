@@ -16,4 +16,8 @@ final class HomeViewModel: ObservableObject {
         }
         isLoading = false
     }
+
+    func clubCreated(_ club: Club) {
+        clubs.append(club)
+    }
 }
