@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ClubDetailView: View {
     @StateObject private var viewModel: ClubViewModel
+    @State private var showingCreateEvent = false
 
     init(club: Club) {
         _viewModel = StateObject(wrappedValue: ClubViewModel(club: club))
@@ -57,6 +58,16 @@ struct ClubDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.load() }
         .onDisappear { Task { await viewModel.disconnect() } }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showingCreateEvent = true } label: {
+                    Image(systemName: "calendar.badge.plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingCreateEvent) {
+            CreateEventView(clubId: viewModel.club.id) { _ in }
+        }
     }
 }
 
