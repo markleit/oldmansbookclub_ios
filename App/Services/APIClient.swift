@@ -70,37 +70,39 @@ final class APIClient {
         return try await post(path: "/clubs", body: body, authenticated: true)
     }
 
-    // MARK: - Events
+    // MARK: - Books
 
-    func getMyEvents() async throws -> [Event] {
-        try await get(path: "/events")
+    func getMyBooks() async throws -> [Book] {
+        try await get(path: "/books")
     }
 
-    func getClubEvents(clubId: UUID) async throws -> [Event] {
-        try await get(path: "/events/club/\(clubId)")
-    }
-
-    struct CreateEventRequest: Encodable {
+    struct CreateBookRequest: Encodable {
+        let clubId: UUID
         let title: String
-        let date: Date
-        let location: String?
+        let author: String
     }
 
-    func createEvent(clubId: UUID, title: String, date: Date, location: String?) async throws -> Event {
-        let body = CreateEventRequest(title: title, date: date, location: location)
-        return try await post(path: "/events/club/\(clubId)", body: body, authenticated: true)
+    func createBook(clubId: UUID, title: String, author: String) async throws -> Book {
+        let body = CreateBookRequest(clubId: clubId, title: title, author: author)
+        return try await post(path: "/books", body: body, authenticated: true)
+    }
+
+    func finishBook(bookId: UUID) async throws {
+        let _: EmptyResponse = try await post(path: "/books/\(bookId)/finish", body: EmptyRequest(), authenticated: true)
     }
 
     // MARK: - Messages
 
-    func getMessages(clubId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {
-        var path = "/clubs/\(clubId)/messages?limit=\(limit)"
+    func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {
+        var path = "/books/\(bookId)/messages?limit=\(limit)"
         if let before {
             let iso = ISO8601DateFormatter()
             path += "&before=\(iso.string(from: before))"
         }
         return try await get(path: path)
     }
+
+    private struct EmptyRequest: Encodable {}
 
     // MARK: - Notifications
 

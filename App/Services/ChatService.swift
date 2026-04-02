@@ -6,23 +6,22 @@ final class ChatService: ObservableObject {
     static let shared = ChatService()
 
     private var connection: HubConnection?
-    private(set) var currentClubId: UUID?
+    private(set) var currentBookId: UUID?
 
     var onMessageReceived: ((Message) -> Void)?
 
     private init() {}
 
-    func connect(clubId: UUID) async {
+    func connect(bookId: UUID) async {
         guard let token = TokenStore.shared.token else { return }
 
-        // Disconnect from previous club if different
-        if currentClubId != clubId {
+        if currentBookId != bookId {
             await disconnect()
         }
 
         guard connection == nil else { return }
 
-        currentClubId = clubId
+        currentBookId = bookId
 
         let url = "https://oldmansbookclub-api.azurewebsites.net/hubs/chat?access_token=\(token)"
 
@@ -48,15 +47,15 @@ final class ChatService: ObservableObject {
 
         do {
             try await connection?.start()
-            try await connection?.invoke(method: "JoinClub", arguments: [clubId.uuidString])
+            try await connection?.invoke(method: "JoinBook", arguments: [bookId.uuidString])
         } catch {
             print("SignalR connect error: \(error)")
         }
     }
 
-    func sendText(clubId: UUID, body: String) async {
+    func sendText(bookId: UUID, body: String) async {
         do {
-            try await connection?.invoke(method: "SendTextMessage", arguments: [clubId.uuidString, body])
+            try await connection?.invoke(method: "SendTextMessage", arguments: [bookId.uuidString, body])
         } catch {
             print("SignalR send error: \(error)")
         }
@@ -65,11 +64,10 @@ final class ChatService: ObservableObject {
     func disconnect() async {
         try? await connection?.stop()
         connection = nil
-        currentClubId = nil
+        currentBookId = nil
     }
 }
 
-// Mirrors the server MessageDto for SignalR deserialization
 private struct MessageDto: Decodable {
     let id: UUID
     let clubId: UUID

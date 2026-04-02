@@ -6,6 +6,7 @@ final class TokenStore {
     private let tokenKey = "jwt_token"
     private let userIdKey = "user_id"
     private let userNameKey = "user_name"
+    private let clubIdKey = "club_id"
 
     private init() {}
 
@@ -27,6 +28,14 @@ final class TokenStore {
         set { UserDefaults.standard.set(newValue, forKey: userNameKey) }
     }
 
+    var clubId: UUID? {
+        get {
+            guard let str = UserDefaults.standard.string(forKey: clubIdKey) else { return nil }
+            return UUID(uuidString: str)
+        }
+        set { UserDefaults.standard.set(newValue?.uuidString, forKey: clubIdKey) }
+    }
+
     var isAuthenticated: Bool { token != nil }
 
     func save(token: String, userId: UUID, displayName: String) {
@@ -39,5 +48,6 @@ final class TokenStore {
         token = nil
         userId = nil
         displayName = nil
+        clubId = nil
     }
 }

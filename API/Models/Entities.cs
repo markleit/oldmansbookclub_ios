@@ -38,6 +38,8 @@ public class Message
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ClubId { get; set; }
     public Club Club { get; set; } = null!;
+    public Guid? BookId { get; set; }
+    public Book? Book { get; set; }
     public Guid SenderId { get; set; }
     public User Sender { get; set; } = null!;
     public MessageType Type { get; set; }
@@ -50,13 +52,15 @@ public class Message
 
 public enum MessageType { Text, Voice, Photo }
 
-public class Event
+public class Book
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ClubId { get; set; }
     public Club Club { get; set; } = null!;
     [Required] public string Title { get; set; } = "";
-    public DateTime Date { get; set; }
-    public string? Location { get; set; }
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    [Required] public string Author { get; set; } = "";
+    public string? CoverBlobUrl { get; set; }
+    public DateTime AddedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? FinishedAt { get; set; }
+    public ICollection<Message> Messages { get; set; } = [];
 }

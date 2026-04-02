@@ -10,39 +10,46 @@ namespace BookClubApi.Hubs;
 [Authorize]
 public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 {
-    public async Task JoinClub(Guid clubId)
+    public async Task JoinBook(Guid bookId)
     {
         var userId = GetUserId();
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return;
+
         var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == userId && m.ClubId == clubId);
+            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
 
         if (isMember)
-            await Groups.AddToGroupAsync(Context.ConnectionId, clubId.ToString());
+            await Groups.AddToGroupAsync(Context.ConnectionId, bookId.ToString());
     }
 
-    public async Task SendTextMessage(Guid clubId, string body)
+    public async Task SendTextMessage(Guid bookId, string body)
     {
-        var message = await SaveMessageAsync(clubId, MessageType.Text, body: body);
-        await BroadcastAndNotify(clubId, message);
+        var message = await SaveMessageAsync(bookId, MessageType.Text, body: body);
+        await BroadcastAndNotify(bookId, message);
     }
 
-    public async Task SendVoiceMessage(Guid clubId, string mediaUrl, int durationSeconds)
+    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds)
     {
-        var message = await SaveMessageAsync(clubId, MessageType.Voice,
+        var message = await SaveMessageAsync(bookId, MessageType.Voice,
             mediaUrl: mediaUrl, durationSeconds: durationSeconds);
-        await BroadcastAndNotify(clubId, message);
+        await BroadcastAndNotify(bookId, message);
     }
 
-    private async Task<MessageDto> SaveMessageAsync(Guid clubId, MessageType type,
+    private async Task<MessageDto> SaveMessageAsync(Guid bookId, MessageType type,
         string? body = null, string? mediaUrl = null, int? durationSeconds = null)
     {
         var userId = GetUserId();
         var user = await db.Users.FindAsync(userId)
             ?? throw new HubException("User not found");
 
+        var book = await db.Books.FindAsync(bookId)
+            ?? throw new HubException("Book not found");
+
         var message = new Message
         {
-            ClubId = clubId,
+            BookId = bookId,
+            ClubId = book.ClubId,
             SenderId = userId,
             Type = type,
             Body = body,
@@ -56,12 +63,12 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         return ToDto(message, user.DisplayName);
     }
 
-    private async Task BroadcastAndNotify(Guid clubId, MessageDto dto)
+    private async Task BroadcastAndNotify(Guid bookId, MessageDto dto)
     {
-        await Clients.Group(clubId.ToString()).SendAsync("NewMessage", dto);
+        await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
         var offlineTokens = await db.Memberships
-            .Where(m => m.ClubId == clubId && m.UserId != dto.SenderId)
+            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId)
             .Select(m => m.User.DeviceToken)
             .Where(t => t != null)
             .Cast<string>()

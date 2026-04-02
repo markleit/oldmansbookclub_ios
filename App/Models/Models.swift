@@ -4,15 +4,18 @@ struct Club: Identifiable, Codable {
     let id: UUID
     var name: String
     var description: String?
-    var coverBlobUrl: String?
 }
 
-struct Event: Identifiable, Codable {
+struct Book: Identifiable, Codable {
     let id: UUID
     var clubId: UUID
     var title: String
-    var date: Date
-    var location: String?
+    var author: String
+    var coverBlobUrl: String?
+    var addedAt: Date
+    var finishedAt: Date?
+
+    var isCurrentRead: Bool { finishedAt == nil }
 }
 
 struct User: Identifiable, Codable {

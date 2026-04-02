@@ -3,14 +3,9 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
-            HomeView()
+            LibraryView()
                 .tabItem {
-                    Label("Clubs", systemImage: "person.3.fill")
-                }
-
-            EventsView()
-                .tabItem {
-                    Label("Events", systemImage: "calendar")
+                    Label("Library", systemImage: "books.vertical.fill")
                 }
 
             ProfileView()
@@ -24,5 +19,6 @@ struct ContentView: View {
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()
+            .environmentObject(AuthViewModel())
     }
 }
