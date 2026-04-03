@@ -39,6 +39,6 @@ jobs:
           az webapp deploy \
             --name oldmansbookclub-api \
             --resource-group oldmansbookclub-rg \
-            --subscription 668575f2-34c3-4607-b861-0854744b21c0 \
+            --subscription c6c735c0-e3e6-452d-871d-ba10e3e32ae9 \
             --src-path deploy.zip \
             --type zip
