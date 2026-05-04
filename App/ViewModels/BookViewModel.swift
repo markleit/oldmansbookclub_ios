@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import AVFoundation
 
 @MainActor
 final class BookViewModel: ObservableObject {
@@ -104,6 +105,18 @@ final class BookViewModel: ObservableObject {
                 errorMessage = "Failed to send voice message."
             }
         } else {
+            let granted: Bool
+            if #available(iOS 17.0, *) {
+                granted = await AVAudioApplication.requestRecordPermission()
+            } else {
+                granted = await withCheckedContinuation { cont in
+                    AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
+                }
+            }
+            guard granted else {
+                errorMessage = "Microphone access denied. Enable it in Settings."
+                return
+            }
             do {
                 try audioRecorder.start()
                 isRecording = true
