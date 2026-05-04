@@ -34,8 +34,15 @@ struct BookDetailView: View {
                         .padding(.top, 8)
                     }
                     .onAppear {
-                        if let last = viewModel.messages.first {
-                            proxy.scrollTo(last.id, anchor: .bottom)
+                        if let newest = viewModel.messages.first {
+                            proxy.scrollTo(newest.id, anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: viewModel.messages.count) { _ in
+                        if let newest = viewModel.messages.first {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(newest.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
