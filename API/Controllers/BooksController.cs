@@ -40,7 +40,8 @@ public class BooksController(AppDbContext db) : ControllerBase
         {
             ClubId = request.ClubId,
             Title = request.Title,
-            Author = request.Author
+            Author = request.Author,
+            CoverBlobUrl = request.CoverUrl
         };
 
         db.Books.Add(book);
@@ -48,6 +49,21 @@ public class BooksController(AppDbContext db) : ControllerBase
 
         return CreatedAtAction(nameof(GetMyBooks),
             new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt));
+    }
+
+    [HttpDelete("{bookId}")]
+    public async Task<IActionResult> DeleteBook(Guid bookId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
+        if (!isMember) return Forbid();
+
+        db.Books.Remove(book);
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpPost("{bookId}/finish")]

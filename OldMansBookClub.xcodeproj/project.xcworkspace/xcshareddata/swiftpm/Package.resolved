@@ -1,0 +1,15 @@
+{
+  "originHash" : "ffa02a6cae5fc0e2ef612283493b3ffc358b5c4bfa225cc4d9b611f30d1fcea2",
+  "pins" : [
+    {
+      "identity" : "signalr-client-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dotnet/signalr-client-swift",
+      "state" : {
+        "revision" : "1a27323e478ad75dc8383a11f0c5d5cce62afc6e",
+        "version" : "1.0.0"
+      }
+    }
+  ],
+  "version" : 3
+}

@@ -1,11 +1,15 @@
 import SwiftUI
 
 struct BookDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
     @State private var showingFinishConfirm = false
+    @State private var showingDeleteConfirm = false
+    var onDeleted: (() -> Void)?
 
-    init(book: Book) {
+    init(book: Book, onDeleted: (() -> Void)? = nil) {
         _viewModel = StateObject(wrappedValue: BookViewModel(book: book))
+        self.onDeleted = onDeleted
     }
 
     var body: some View {
@@ -55,10 +59,14 @@ struct BookDetailView: View {
         .navigationTitle(viewModel.book.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if viewModel.book.isCurrentRead {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Finish") { showingFinishConfirm = true }
-                        .foregroundColor(.green)
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    if viewModel.book.isCurrentRead {
+                        Button("Mark as Finished") { showingFinishConfirm = true }
+                    }
+                    Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
@@ -69,6 +77,19 @@ struct BookDetailView: View {
         ) {
             Button("Mark as Finished", role: .none) {
                 Task { await viewModel.finishBook() }
+            }
+        }
+        .confirmationDialog(
+            "Delete \"\(viewModel.book.title)\"?",
+            isPresented: $showingDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    try? await viewModel.deleteBook()
+                    onDeleted?()
+                    dismiss()
+                }
             }
         }
         .task { await viewModel.load() }

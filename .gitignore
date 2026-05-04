@@ -33,3 +33,4 @@ API/publish/
 API/deploy.zip
 API/appsettings.json
 API/*.user
+API/appsettings.Development.json

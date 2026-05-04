@@ -3,19 +3,27 @@ import Foundation
 final class APIClient {
     static let shared = APIClient()
 
+    #if targetEnvironment(simulator)
+    private let baseURL = URL(string: "http://localhost:5235")!
+    #else
     private let baseURL = URL(string: "https://oldmansbookclub-api.azurewebsites.net")!
+    #endif
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoNoTZ = ISO8601DateFormatter()
+        isoNoTZ.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        isoNoTZ.timeZone = TimeZone(identifier: "UTC")
+        let iso2 = ISO8601DateFormatter()
         d.dateDecodingStrategy = .custom { decoder in
             let str = try decoder.singleValueContainer().decode(String.self)
             if let date = iso.date(from: str) { return date }
-            // Fallback without fractional seconds
-            let iso2 = ISO8601DateFormatter()
+            if let date = isoNoTZ.date(from: str + "Z") { return date }
             if let date = iso2.date(from: str) { return date }
+            if let date = iso2.date(from: str + "Z") { return date }
             throw DecodingError.dataCorruptedError(
                 in: try decoder.singleValueContainer(),
                 debugDescription: "Cannot decode date: \(str)")
@@ -28,6 +36,13 @@ final class APIClient {
         e.keyEncodingStrategy = .convertToSnakeCase
         e.dateEncodingStrategy = .iso8601
         return e
+    }()
+
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 10
+        config.timeoutIntervalForResource = 10
+        return URLSession(configuration: config)
     }()
 
     private init() {}
@@ -53,6 +68,15 @@ final class APIClient {
         let body = AppleAuthRequest(identityToken: identityToken, displayName: displayName)
         return try await post(path: "/auth/apple", body: body, authenticated: false)
     }
+
+    #if targetEnvironment(simulator)
+    struct DevLoginRequest: Encodable { let displayName: String }
+
+    func devLogin(displayName: String) async throws -> AuthResponse {
+        let body = DevLoginRequest(displayName: displayName)
+        return try await post(path: "/auth/dev-login", body: body, authenticated: false)
+    }
+    #endif
 
     // MARK: - Clubs
 
@@ -80,11 +104,31 @@ final class APIClient {
         let clubId: UUID
         let title: String
         let author: String
+        let coverUrl: String?
     }
 
-    func createBook(clubId: UUID, title: String, author: String) async throws -> Book {
-        let body = CreateBookRequest(clubId: clubId, title: title, author: author)
+    func createBook(clubId: UUID, title: String, author: String, coverUrl: String?) async throws -> Book {
+        let body = CreateBookRequest(clubId: clubId, title: title, author: author, coverUrl: coverUrl)
         return try await post(path: "/books", body: body, authenticated: true)
+    }
+
+    func searchBookCover(title: String, author: String) async -> String? {
+        var components = URLComponents(string: "https://openlibrary.org/search.json")!
+        components.queryItems = [
+            .init(name: "title", value: title),
+            .init(name: "author", value: author),
+            .init(name: "limit", value: "1"),
+            .init(name: "fields", value: "cover_i,isbn")
+        ]
+        guard let url = components.url else { return nil }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let docs = json["docs"] as? [[String: Any]],
+              let first = docs.first else { return nil }
+        if let coverId = first["cover_i"] as? Int {
+            return "https://covers.openlibrary.org/b/id/\(coverId)-M.jpg"
+        }
+        return nil
     }
 
     func finishBook(bookId: UUID) async throws {
@@ -115,17 +159,29 @@ final class APIClient {
         let _: EmptyResponse = try await post(path: "/notifications/register", body: body, authenticated: true)
     }
 
+    func deleteBook(bookId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyResponse: Decodable {}
 
     // MARK: - Helpers
 
     private func get<Response: Decodable>(path: String) async throws -> Response {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "GET"
         if let token = TokenStore.shared.token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
@@ -137,14 +193,14 @@ final class APIClient {
         body: Body,
         authenticated: Bool
     ) async throws -> Response {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if authenticated, let token = TokenStore.shared.token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }

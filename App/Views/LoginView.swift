@@ -35,11 +35,20 @@ struct LoginView: View {
                 .padding(.horizontal, 40)
             }
 
+            #if targetEnvironment(simulator)
+            Button("Dev Login (Simulator)") {
+                auth.devLogin()
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            #endif
+
             if let error = auth.errorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundColor(.red)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 40)
             }
 

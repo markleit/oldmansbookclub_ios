@@ -1,18 +1,17 @@
 import Foundation
 import SignalRClient
 
-@MainActor
 final class ChatService: ObservableObject {
     static let shared = ChatService()
 
-    private var connection: HubConnection?
-    private(set) var currentBookId: UUID?
+    nonisolated(unsafe) private var connection: HubConnection?
+    nonisolated(unsafe) private(set) var currentBookId: UUID?
 
     var onMessageReceived: ((Message) -> Void)?
 
     private init() {}
 
-    func connect(bookId: UUID) async {
+    nonisolated func connect(bookId: UUID) async {
         guard let token = TokenStore.shared.token else { return }
 
         if currentBookId != bookId {
@@ -23,12 +22,18 @@ final class ChatService: ObservableObject {
 
         currentBookId = bookId
 
-        let url = "https://oldmansbookclub-api.azurewebsites.net/hubs/chat?access_token=\(token)"
+        #if targetEnvironment(simulator)
+        let baseUrl = "http://localhost:5235"
+        #else
+        let baseUrl = "https://oldmansbookclub-api.azurewebsites.net"
+        #endif
+        let url = "\(baseUrl)/hubs/chat?access_token=\(token)"
 
-        connection = HubConnectionBuilder(url: URL(string: url)!)
+        connection = HubConnectionBuilder()
+            .withUrl(url: url)
             .build()
 
-        connection?.on("NewMessage") { [weak self] (dto: MessageDto) in
+        await connection?.on("NewMessage") { [weak self] (dto: MessageDto) async in
             let message = Message(
                 id: dto.id,
                 clubId: dto.clubId,
@@ -40,29 +45,29 @@ final class ChatService: ObservableObject {
                 durationSeconds: dto.durationSeconds,
                 sentAt: dto.sentAt
             )
-            Task { @MainActor in
+            await MainActor.run {
                 self?.onMessageReceived?(message)
             }
         }
 
         do {
             try await connection?.start()
-            try await connection?.invoke(method: "JoinBook", arguments: [bookId.uuidString])
+            try await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
         } catch {
             print("SignalR connect error: \(error)")
         }
     }
 
-    func sendText(bookId: UUID, body: String) async {
+    nonisolated func sendText(bookId: UUID, body: String) async {
         do {
-            try await connection?.invoke(method: "SendTextMessage", arguments: [bookId.uuidString, body])
+            try await connection?.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
         } catch {
             print("SignalR send error: \(error)")
         }
     }
 
-    func disconnect() async {
-        try? await connection?.stop()
+    nonisolated func disconnect() async {
+        await connection?.stop()
         connection = nil
         currentBookId = nil
     }

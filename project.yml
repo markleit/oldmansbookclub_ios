@@ -19,5 +19,10 @@ targets:
       - path: App
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.example.oldmansbookclub
+      GENERATE_INFOPLIST_FILE: YES
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    plist:
+      NSAppTransportSecurity:
+        NSAllowsLocalNetworking: true
     dependencies:
       - package: SignalRClient

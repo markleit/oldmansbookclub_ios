@@ -55,4 +55,25 @@ final class AuthViewModel: ObservableObject {
         TokenStore.shared.clear()
         isAuthenticated = false
     }
+
+    #if targetEnvironment(simulator)
+    func devLogin() {
+        isLoading = true
+        errorMessage = nil
+        Task {
+            defer { isLoading = false }
+            do {
+                let response = try await APIClient.shared.devLogin(displayName: "Mark")
+                TokenStore.shared.save(
+                    token: response.accessToken,
+                    userId: response.user.id,
+                    displayName: response.user.displayName
+                )
+                isAuthenticated = true
+            } catch {
+                errorMessage = "Dev login failed: \(error)"
+            }
+        }
+    }
+    #endif
 }

@@ -44,6 +44,10 @@ final class BookViewModel: ObservableObject {
         }
     }
 
+    func deleteBook() async throws {
+        try await APIClient.shared.deleteBook(bookId: book.id)
+    }
+
     func disconnect() async {
         await ChatService.shared.disconnect()
     }

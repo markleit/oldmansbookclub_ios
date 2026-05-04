@@ -17,6 +17,38 @@ public class AuthController(
     AppleTokenValidator appleValidator,
     IConfiguration config) : ControllerBase
 {
+    [HttpPost("dev-login")]
+    public async Task<ActionResult<AuthResponse>> DevLogin([FromBody] DevLoginRequest request)
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var subject = "dev_" + request.DisplayName.ToLowerInvariant();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == subject);
+        if (user is null)
+        {
+            user = new User { AppleSubject = subject, DisplayName = request.DisplayName };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+
+        var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
+        if (!isMember)
+        {
+            var club = await db.Clubs.FirstOrDefaultAsync();
+            if (club is null)
+            {
+                club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
+                db.Clubs.Add(club);
+            }
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
+            await db.SaveChangesAsync();
+        }
+
+        var token = GenerateJwt(user);
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName)));
+    }
+
     [HttpPost("apple")]
     public async Task<ActionResult<AuthResponse>> SignInWithApple([FromBody] AppleAuthRequest request)
     {
