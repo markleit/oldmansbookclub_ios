@@ -20,15 +20,17 @@ struct LibraryView: View {
                         .padding(.top, 60)
                     }
 
-                    // Currently Reading — always expanded
-                    if let current = viewModel.currentRead {
+                    // Currently Reading
+                    if !viewModel.currentReads.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             SectionHeader(title: "CURRENTLY READING")
-                            NavigationLink(destination: BookDetailView(book: current, onDeleted: { viewModel.bookDeleted(current) })) {
-                                CurrentBookCard(book: current)
+                            ForEach(viewModel.currentReads) { book in
+                                NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
+                                    CurrentBookCard(book: book)
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal)
                             }
-                            .buttonStyle(.plain)
-                            .padding(.horizontal)
                         }
                     }
 
@@ -38,7 +40,7 @@ struct LibraryView: View {
                             CollapsibleSectionHeader(title: "BOOK LIST", isExpanded: $bookListExpanded)
                             if bookListExpanded {
                                 ForEach(viewModel.bookList) { book in
-                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
+                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
                                         PastBookRow(book: book)
                                     }
                                     .buttonStyle(.plain)
@@ -55,7 +57,7 @@ struct LibraryView: View {
                             CollapsibleSectionHeader(title: "PAST READS", isExpanded: $pastReadsExpanded)
                             if pastReadsExpanded {
                                 ForEach(viewModel.pastReads) { book in
-                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
+                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
                                         PastBookRow(book: book)
                                     }
                                     .buttonStyle(.plain)

@@ -119,27 +119,45 @@ final class APIClient {
         let coverUrl: String?
     }
 
+    private static let googleBooksApiKey = "AIzaSyDTRMqMpatAG2Masvnhw5za5eFJOJi5Ej0"
+
     func searchBooks(title: String) async -> [BookSearchResult] {
-        var components = URLComponents(string: "https://openlibrary.org/search.json")!
+        var components = URLComponents(string: "https://www.googleapis.com/books/v1/volumes")!
         components.queryItems = [
-            .init(name: "title", value: title),
-            .init(name: "limit", value: "5"),
-            .init(name: "fields", value: "title,author_name,cover_i")
+            .init(name: "q", value: "intitle:\(title)"),
+            .init(name: "maxResults", value: "5"),
+            .init(name: "printType", value: "books"),
+            .init(name: "key", value: Self.googleBooksApiKey)
         ]
         guard let url = components.url else { return [] }
         guard let (data, _) = try? await URLSession.shared.data(from: url) else { return [] }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let docs = json["docs"] as? [[String: Any]] else { return [] }
-        return docs.compactMap { doc in
-            guard let t = doc["title"] as? String else { return nil }
-            let author = (doc["author_name"] as? [String])?.first ?? ""
-            let coverUrl = (doc["cover_i"] as? Int).map { "https://covers.openlibrary.org/b/id/\($0)-M.jpg" }
+              let items = json["items"] as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let info = item["volumeInfo"] as? [String: Any],
+                  let t = info["title"] as? String else { return nil }
+            let author = (info["authors"] as? [String])?.first ?? ""
+            let coverUrl = (info["imageLinks"] as? [String: Any])
+                .flatMap { $0["thumbnail"] as? String }
+                .map { $0.replacingOccurrences(of: "http://", with: "https://") }
             return BookSearchResult(title: t, author: author, coverUrl: coverUrl)
         }
     }
 
-    func finishBook(bookId: UUID) async throws {
-        let _: EmptyResponse = try await post(path: "/books/\(bookId)/finish", body: EmptyRequest(), authenticated: true)
+    struct SetStatusRequest: Encodable { let status: String }
+
+    func setBookStatus(bookId: UUID, status: BookStatus) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/status")!)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(SetStatusRequest(status: status.rawValue))
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     // MARK: - Messages

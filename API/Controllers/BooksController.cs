@@ -23,9 +23,9 @@ public class BooksController(AppDbContext db) : ControllerBase
 
         return await db.Books
             .Where(b => myClubIds.Contains(b.ClubId))
-            .OrderByDescending(b => b.FinishedAt == null) // current reads first
+            .OrderBy(b => b.Status == "current" ? 0 : b.Status == "future" ? 1 : 2)
             .ThenByDescending(b => b.AddedAt)
-            .Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt))
+            .Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status))
             .ToListAsync();
     }
 
@@ -41,14 +41,15 @@ public class BooksController(AppDbContext db) : ControllerBase
             ClubId = request.ClubId,
             Title = request.Title,
             Author = request.Author,
-            CoverBlobUrl = request.CoverUrl
+            CoverBlobUrl = request.CoverUrl,
+            Status = "future"
         };
 
         db.Books.Add(book);
         await db.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetMyBooks),
-            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt));
+            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status));
     }
 
     [HttpDelete("{bookId}")]
@@ -66,9 +67,12 @@ public class BooksController(AppDbContext db) : ControllerBase
         return NoContent();
     }
 
-    [HttpPost("{bookId}/finish")]
-    public async Task<IActionResult> FinishBook(Guid bookId)
+    [HttpPatch("{bookId}/status")]
+    public async Task<IActionResult> SetStatus(Guid bookId, [FromBody] SetBookStatusRequest request)
     {
+        if (request.Status is not ("future" or "current" or "past"))
+            return BadRequest("Status must be 'future', 'current', or 'past'.");
+
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return NotFound();
 
@@ -76,7 +80,8 @@ public class BooksController(AppDbContext db) : ControllerBase
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
-        book.FinishedAt = DateTime.UtcNow;
+        book.Status = request.Status;
+        book.FinishedAt = request.Status == "past" ? DateTime.UtcNow : null;
         await db.SaveChangesAsync();
         return Ok();
     }

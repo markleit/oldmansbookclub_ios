@@ -3,13 +3,14 @@ import SwiftUI
 struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
-    @State private var showingFinishConfirm = false
     @State private var showingDeleteConfirm = false
     var onDeleted: (() -> Void)?
+    var onStatusChanged: ((BookStatus) -> Void)?
 
-    init(book: Book, onDeleted: (() -> Void)? = nil) {
+    init(book: Book, onDeleted: (() -> Void)? = nil, onStatusChanged: ((BookStatus) -> Void)? = nil) {
         _viewModel = StateObject(wrappedValue: BookViewModel(book: book))
         self.onDeleted = onDeleted
+        self.onStatusChanged = onStatusChanged
     }
 
     var body: some View {
@@ -61,22 +62,46 @@ struct BookDetailView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
-                    if viewModel.book.isCurrentRead {
-                        Button("Mark as Finished") { showingFinishConfirm = true }
+                    switch viewModel.book.status {
+                    case .future:
+                        Button("Start Reading") {
+                            Task {
+                                await viewModel.setStatus(.current)
+                                onStatusChanged?(.current)
+                            }
+                        }
+                    case .current:
+                        Button("Mark as Finished") {
+                            Task {
+                                await viewModel.setStatus(.past)
+                                onStatusChanged?(.past)
+                            }
+                        }
+                        Button("Move to Book List") {
+                            Task {
+                                await viewModel.setStatus(.future)
+                                onStatusChanged?(.future)
+                            }
+                        }
+                    case .past:
+                        Button("Move to Book List") {
+                            Task {
+                                await viewModel.setStatus(.future)
+                                onStatusChanged?(.future)
+                            }
+                        }
+                        Button("Mark as Currently Reading") {
+                            Task {
+                                await viewModel.setStatus(.current)
+                                onStatusChanged?(.current)
+                            }
+                        }
                     }
+                    Divider()
                     Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
-            }
-        }
-        .confirmationDialog(
-            "Mark \"\(viewModel.book.title)\" as finished?",
-            isPresented: $showingFinishConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Mark as Finished", role: .none) {
-                Task { await viewModel.finishBook() }
             }
         }
         .confirmationDialog(
@@ -131,7 +156,7 @@ struct BookDetailView_Previews: PreviewProvider {
             BookDetailView(book: Book(
                 id: UUID(), clubId: UUID(),
                 title: "Dune", author: "Frank Herbert",
-                addedAt: Date(), finishedAt: nil
+                addedAt: Date(), finishedAt: nil, status: .future
             ))
         }
     }

@@ -6,9 +6,9 @@ final class LibraryViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
 
-    var currentRead: Book? { books.first { $0.isCurrentRead } }
-    var bookList: [Book] { books.filter { $0.isCurrentRead }.dropFirst().map { $0 } }
-    var pastReads: [Book] { books.filter { !$0.isCurrentRead } }
+    var currentReads: [Book] { books.filter { $0.status == .current } }
+    var bookList: [Book] { books.filter { $0.status == .future } }
+    var pastReads: [Book] { books.filter { $0.status == .past } }
 
     private static let cacheKey = "cached_books"
     private static let decoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
@@ -62,15 +62,11 @@ final class LibraryViewModel: ObservableObject {
         saveCache(books)
     }
 
-    func finishBook(_ book: Book) async {
-        do {
-            try await APIClient.shared.finishBook(bookId: book.id)
-            if let idx = books.firstIndex(where: { $0.id == book.id }) {
-                books[idx].finishedAt = Date()
-                saveCache(books)
-            }
-        } catch {
-            errorMessage = "Failed to mark book as finished."
+    func bookStatusChanged(_ book: Book, status: BookStatus) {
+        if let idx = books.firstIndex(where: { $0.id == book.id }) {
+            books[idx].status = status
+            books[idx].finishedAt = status == .past ? Date() : nil
+            saveCache(books)
         }
     }
 }

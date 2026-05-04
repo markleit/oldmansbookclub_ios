@@ -35,12 +35,13 @@ final class BookViewModel: ObservableObject {
         await ChatService.shared.sendText(bookId: book.id, body: text)
     }
 
-    func finishBook() async {
+    func setStatus(_ status: BookStatus) async {
         do {
-            try await APIClient.shared.finishBook(bookId: book.id)
-            book.finishedAt = Date()
+            try await APIClient.shared.setBookStatus(bookId: book.id, status: status)
+            book.status = status
+            book.finishedAt = status == .past ? Date() : nil
         } catch {
-            errorMessage = "Failed to mark book as finished."
+            errorMessage = "Failed to update book status."
         }
     }
 

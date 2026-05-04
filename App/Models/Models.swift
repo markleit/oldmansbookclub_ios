@@ -6,6 +6,10 @@ struct Club: Identifiable, Codable {
     var description: String?
 }
 
+enum BookStatus: String, Codable {
+    case future, current, past
+}
+
 struct Book: Identifiable, Codable {
     let id: UUID
     var clubId: UUID
@@ -14,8 +18,7 @@ struct Book: Identifiable, Codable {
     var coverBlobUrl: String?
     var addedAt: Date
     var finishedAt: Date?
-
-    var isCurrentRead: Bool { finishedAt == nil }
+    var status: BookStatus
 }
 
 struct User: Identifiable, Codable {

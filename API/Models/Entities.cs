@@ -62,5 +62,6 @@ public class Book
     public string? CoverBlobUrl { get; set; }
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
+    [Required] public string Status { get; set; } = "future"; // "future", "current", "past"
     public ICollection<Message> Messages { get; set; } = [];
 }
