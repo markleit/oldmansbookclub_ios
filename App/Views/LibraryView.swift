@@ -7,81 +7,76 @@ struct LibraryView: View {
     @State private var pastReadsExpanded = true
 
     var body: some View {
-        NavigationView {
-            Group {
-                if viewModel.isLoading {
-                    ProgressView()
-                } else {
-                    ScrollView {
-                        if let error = viewModel.errorMessage {
-                            VStack(spacing: 12) {
-                                Text(error).foregroundColor(.secondary)
-                                Button("Retry") { Task { await viewModel.load() } }
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 60)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+
+                    if let error = viewModel.errorMessage {
+                        VStack(spacing: 12) {
+                            Text(error).foregroundColor(.secondary)
+                            Button("Retry") { Task { await viewModel.load() } }
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 60)
+                    }
 
-                        VStack(alignment: .leading, spacing: 24) {
+                    // Currently Reading — always expanded
+                    if let current = viewModel.currentRead {
+                        VStack(alignment: .leading, spacing: 8) {
+                            SectionHeader(title: "CURRENTLY READING")
+                            NavigationLink(destination: BookDetailView(book: current, onDeleted: { viewModel.bookDeleted(current) })) {
+                                CurrentBookCard(book: current)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal)
+                        }
+                    }
 
-                            // Currently Reading — always expanded
-                            if let current = viewModel.currentRead {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    SectionHeader(title: "CURRENTLY READING")
-                                    NavigationLink(destination: BookDetailView(book: current, onDeleted: { viewModel.bookDeleted(current) })) {
-                                        CurrentBookCard(book: current)
+                    // Book List — collapsible
+                    if !viewModel.bookList.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            CollapsibleSectionHeader(title: "BOOK LIST", isExpanded: $bookListExpanded)
+                            if bookListExpanded {
+                                ForEach(viewModel.bookList) { book in
+                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
+                                        PastBookRow(book: book)
                                     }
                                     .buttonStyle(.plain)
                                     .padding(.horizontal)
+                                    Divider().padding(.leading)
                                 }
-                            }
-
-                            // Book List — collapsible
-                            if !viewModel.bookList.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    CollapsibleSectionHeader(title: "BOOK LIST", isExpanded: $bookListExpanded)
-                                    if bookListExpanded {
-                                        ForEach(viewModel.bookList) { book in
-                                            NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
-                                                PastBookRow(book: book)
-                                            }
-                                            .buttonStyle(.plain)
-                                            .padding(.horizontal)
-                                            Divider().padding(.leading)
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Past Reads — collapsible
-                            if !viewModel.pastReads.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    CollapsibleSectionHeader(title: "PAST READS", isExpanded: $pastReadsExpanded)
-                                    if pastReadsExpanded {
-                                        ForEach(viewModel.pastReads) { book in
-                                            NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
-                                                PastBookRow(book: book)
-                                            }
-                                            .buttonStyle(.plain)
-                                            .padding(.horizontal)
-                                            Divider().padding(.leading)
-                                        }
-                                    }
-                                }
-                            }
-
-                            if viewModel.books.isEmpty && viewModel.errorMessage == nil {
-                                Text("No books yet. Add one to get started.")
-                                    .foregroundColor(.secondary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.top, 60)
                             }
                         }
-                        .padding(.vertical)
                     }
-                    .refreshable { await viewModel.load() }
-                }
+
+                    // Past Reads — collapsible
+                    if !viewModel.pastReads.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            CollapsibleSectionHeader(title: "PAST READS", isExpanded: $pastReadsExpanded)
+                            if pastReadsExpanded {
+                                ForEach(viewModel.pastReads) { book in
+                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) })) {
+                                        PastBookRow(book: book)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal)
+                                    Divider().padding(.leading)
+                                }
+                            }
+                        }
+                    }
+
+                    if viewModel.books.isEmpty && viewModel.errorMessage == nil && !viewModel.isLoading {
+                        Text("No books yet. Add one to get started.")
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 60)
+                    }
+}
+                .padding(.vertical)
             }
+            .refreshable { await viewModel.load() }
+            .overlay { if viewModel.isLoading { ProgressView() } }
             .navigationTitle("Library")
             .task { await viewModel.load() }
             .toolbar {
