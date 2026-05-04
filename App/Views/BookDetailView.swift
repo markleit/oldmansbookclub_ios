@@ -119,6 +119,14 @@ struct BookDetailView: View {
                 }
             }
         }
+        .alert("Error", isPresented: Binding(
+            get: { viewModel.errorMessage != nil },
+            set: { if !$0 { viewModel.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { viewModel.errorMessage = nil }
+        } message: {
+            Text(viewModel.errorMessage ?? "")
+        }
         .task { await viewModel.load() }
         .onDisappear { Task { await viewModel.disconnect() } }
     }
@@ -179,29 +187,52 @@ struct VoiceMessageBubble: View {
     let isMe: Bool
     @State private var isPlaying = false
     @State private var player: AVPlayer?
+    @State private var progress: Double = 0
+    @State private var currentSeconds: Int = 0
+
+    private var totalSeconds: Int { message.durationSeconds ?? 0 }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Button {
                 togglePlayback()
             } label: {
-                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
-                    .font(.body)
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 24, height: 24)
             }
-            Image(systemName: "waveform")
-                .font(.title3)
-            if let duration = message.durationSeconds {
-                Text(formatDuration(duration))
-                    .font(.caption)
+
+            VStack(alignment: .leading, spacing: 4) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(isMe ? Color.white.opacity(0.35) : Color(.systemGray3))
+                            .frame(height: 3)
+                        Capsule()
+                            .fill(isMe ? Color.white : Color.accentColor)
+                            .frame(width: geo.size.width * progress, height: 3)
+                    }
+                }
+                .frame(height: 3)
+
+                Text(formatDuration(isPlaying ? currentSeconds : totalSeconds))
+                    .font(.caption2)
                     .monospacedDigit()
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
+        .frame(width: 200)
         .background(isMe ? Color.blue : Color(.systemGray5))
         .foregroundColor(isMe ? .white : .primary)
         .cornerRadius(16)
-        .onDisappear { player?.pause() }
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+            tickProgress()
+        }
+        .onDisappear {
+            player?.pause()
+            isPlaying = false
+        }
     }
 
     private func togglePlayback() {
@@ -209,12 +240,27 @@ struct VoiceMessageBubble: View {
             player?.pause()
             isPlaying = false
         } else {
-            guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
-            player = AVPlayer(url: url)
+            if player == nil {
+                guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+                player = AVPlayer(url: url)
+            }
             player?.play()
             isPlaying = true
-            NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
-                object: player?.currentItem, queue: .main) { _ in isPlaying = false }
+        }
+    }
+
+    private func tickProgress() {
+        guard let player, let item = player.currentItem else { return }
+        let duration = item.duration.seconds
+        let current = player.currentTime().seconds
+        guard duration.isFinite, duration > 0 else { return }
+        progress = min(current / duration, 1.0)
+        currentSeconds = Int(current)
+        if current >= duration - 0.05 {
+            isPlaying = false
+            progress = 0
+            currentSeconds = 0
+            player.seek(to: .zero)
         }
     }
 

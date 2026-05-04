@@ -97,12 +97,17 @@ final class BookViewModel: ObservableObject {
             isUploading = true
             defer { isUploading = false }
             do {
+                print("[Voice] getting upload URL for clubId=\(clubId)")
                 let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
-                guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+                print("[Voice] uploadUrl=\(response.uploadUrl) mediaUrl=\(response.mediaUrl)")
+                guard let uploadUrl = URL(string: response.uploadUrl) else { print("[Voice] bad uploadUrl"); return }
                 try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
+                print("[Voice] upload done, sending via SignalR duration=\(duration)")
                 await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
+                print("[Voice] sendVoice complete")
             } catch {
-                errorMessage = "Failed to send voice message."
+                print("[Voice] error: \(error)")
+                errorMessage = "Failed to send voice message: \(error.localizedDescription)"
             }
         } else {
             let granted: Bool
