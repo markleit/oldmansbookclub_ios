@@ -11,6 +11,8 @@ struct AddBookView: View {
     @State private var isSearching = false
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var searchResults: [APIClient.BookSearchResult] = []
+    @State private var showingPicker = false
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
@@ -53,9 +55,17 @@ struct AddBookView: View {
                         .onChange(of: title) { _ in scheduleSearch() }
                 }
 
-                Section("Author") {
-                    TextField("e.g. Frank Herbert", text: $author)
-                        .onChange(of: author) { _ in scheduleSearch() }
+                Section {
+                    TextField("Author", text: $author)
+                } header: {
+                    HStack {
+                        Text("Author")
+                        Spacer()
+                        if searchResults.count > 1 {
+                            Button("Choose edition") { showingPicker = true }
+                                .font(.caption)
+                        }
+                    }
                 }
 
                 if let error = errorMessage {
@@ -75,9 +85,14 @@ struct AddBookView: View {
                         ProgressView()
                     } else {
                         Button("Add") { Task { await add() } }
-                            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty ||
-                                      author.trimmingCharacters(in: .whitespaces).isEmpty)
+                            .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
+                }
+            }
+            .sheet(isPresented: $showingPicker) {
+                BookPickerSheet(results: searchResults) { result in
+                    apply(result)
+                    showingPicker = false
                 }
             }
         }
@@ -85,20 +100,34 @@ struct AddBookView: View {
 
     private func scheduleSearch() {
         searchTask?.cancel()
+        searchResults = []
         let t = title.trimmingCharacters(in: .whitespaces)
-        let a = author.trimmingCharacters(in: .whitespaces)
-        guard t.count >= 2 else { coverUrl = nil; return }
+        guard t.count >= 2 else {
+            author = ""
+            coverUrl = nil
+            return
+        }
         searchTask = Task {
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !Task.isCancelled else { return }
-            await searchCover(title: t, author: a)
+            await runSearch(title: t)
         }
     }
 
-    private func searchCover(title: String, author: String) async {
+    private func runSearch(title: String) async {
         isSearching = true
         defer { isSearching = false }
-        coverUrl = await APIClient.shared.searchBookCover(title: title, author: author)
+        let results = await APIClient.shared.searchBooks(title: title)
+        guard !Task.isCancelled else { return }
+        searchResults = results
+        if let first = results.first {
+            apply(first)
+        }
+    }
+
+    private func apply(_ result: APIClient.BookSearchResult) {
+        author = result.author
+        coverUrl = result.coverUrl
     }
 
     private func add() async {
@@ -117,5 +146,56 @@ struct AddBookView: View {
             errorMessage = "Failed to add book. Please try again."
         }
         isLoading = false
+    }
+}
+
+struct BookPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let results: [APIClient.BookSearchResult]
+    let onSelect: (APIClient.BookSearchResult) -> Void
+
+    var body: some View {
+        NavigationView {
+            List(results) { result in
+                Button {
+                    onSelect(result)
+                } label: {
+                    HStack(spacing: 12) {
+                        if let urlStr = result.coverUrl, let url = URL(string: urlStr) {
+                            AsyncImage(url: url) { image in
+                                image.resizable().scaledToFill()
+                            } placeholder: {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.2))
+                            }
+                            .frame(width: 40, height: 58)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        } else {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 40, height: 58)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(result.title)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                            if !result.author.isEmpty {
+                                Text(result.author)
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Choose Edition")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
     }
 }

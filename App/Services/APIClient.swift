@@ -107,28 +107,35 @@ final class APIClient {
         let coverUrl: String?
     }
 
-    func createBook(clubId: UUID, title: String, author: String, coverUrl: String?) async throws -> Book {
+    func createBook(clubId: UUID, title: String, author: String = "", coverUrl: String?) async throws -> Book {
         let body = CreateBookRequest(clubId: clubId, title: title, author: author, coverUrl: coverUrl)
         return try await post(path: "/books", body: body, authenticated: true)
     }
 
-    func searchBookCover(title: String, author: String) async -> String? {
+    struct BookSearchResult: Identifiable {
+        let id = UUID()
+        let title: String
+        let author: String
+        let coverUrl: String?
+    }
+
+    func searchBooks(title: String) async -> [BookSearchResult] {
         var components = URLComponents(string: "https://openlibrary.org/search.json")!
         components.queryItems = [
             .init(name: "title", value: title),
-            .init(name: "author", value: author),
-            .init(name: "limit", value: "1"),
-            .init(name: "fields", value: "cover_i,isbn")
+            .init(name: "limit", value: "5"),
+            .init(name: "fields", value: "title,author_name,cover_i")
         ]
-        guard let url = components.url else { return nil }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+        guard let url = components.url else { return [] }
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return [] }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let docs = json["docs"] as? [[String: Any]],
-              let first = docs.first else { return nil }
-        if let coverId = first["cover_i"] as? Int {
-            return "https://covers.openlibrary.org/b/id/\(coverId)-M.jpg"
+              let docs = json["docs"] as? [[String: Any]] else { return [] }
+        return docs.compactMap { doc in
+            guard let t = doc["title"] as? String else { return nil }
+            let author = (doc["author_name"] as? [String])?.first ?? ""
+            let coverUrl = (doc["cover_i"] as? Int).map { "https://covers.openlibrary.org/b/id/\($0)-M.jpg" }
+            return BookSearchResult(title: t, author: author, coverUrl: coverUrl)
         }
-        return nil
     }
 
     func finishBook(bookId: UUID) async throws {
