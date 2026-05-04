@@ -17,4 +17,4 @@ jobs:
       - name: Build for simulator
         run: |
           set -o pipefail
-          xcodebuild -project OldMansBookClub.xcodeproj -scheme OldMansBookClub -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 14' clean build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
+          xcodebuild -project OldMansBookClub.xcodeproj -scheme OldMansBookClub -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 16' clean build CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO
