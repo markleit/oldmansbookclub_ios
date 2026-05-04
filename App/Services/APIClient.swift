@@ -160,6 +160,29 @@ final class APIClient {
         }
     }
 
+    // MARK: - Media
+
+    struct UploadUrlResponse: Decodable {
+        let uploadUrl: String
+        let mediaUrl: String
+    }
+
+    func getUploadUrl(clubId: UUID) async throws -> UploadUrlResponse {
+        try await get(path: "/media/upload-url?clubId=\(clubId)")
+    }
+
+    func uploadMedia(data: Data, to uploadUrl: URL, contentType: String) async throws {
+        var request = URLRequest(url: uploadUrl)
+        request.httpMethod = "PUT"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue("\(data.count)", forHTTPHeaderField: "Content-Length")
+        request.httpBody = data
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     // MARK: - Messages
 
     func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {

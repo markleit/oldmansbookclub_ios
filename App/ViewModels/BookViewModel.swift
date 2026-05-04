@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 @MainActor
 final class BookViewModel: ObservableObject {
@@ -7,9 +8,12 @@ final class BookViewModel: ObservableObject {
     @Published var isLoadingMessages = false
     @Published var messageText = ""
     @Published var errorMessage: String?
+    @Published var pendingImage: UIImage?
+    @Published var isRecording = false
+    @Published var isUploading = false
 
-    // Tracks optimistically-inserted messages awaiting server echo: body → clientId
     private var pendingByBody: [String: UUID] = [:]
+    private let audioRecorder = AudioRecorder()
 
     init(book: Book) {
         self.book = book
@@ -64,6 +68,49 @@ final class BookViewModel: ObservableObject {
         pendingByBody[text] = clientId
 
         await ChatService.shared.sendText(bookId: book.id, body: text)
+    }
+
+    func sendPhoto() async {
+        guard let image = pendingImage,
+              let data = image.jpegData(compressionQuality: 0.8),
+              let clubId = TokenStore.shared.clubId else { return }
+        pendingImage = nil
+        isUploading = true
+        defer { isUploading = false }
+        do {
+            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+            try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
+            await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
+        } catch {
+            errorMessage = "Failed to send photo."
+        }
+    }
+
+    func toggleRecording() async {
+        if isRecording {
+            isRecording = false
+            guard let (url, duration) = audioRecorder.stop(),
+                  let data = try? Data(contentsOf: url),
+                  let clubId = TokenStore.shared.clubId else { return }
+            isUploading = true
+            defer { isUploading = false }
+            do {
+                let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+                guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+                try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
+                await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
+            } catch {
+                errorMessage = "Failed to send voice message."
+            }
+        } else {
+            do {
+                try audioRecorder.start()
+                isRecording = true
+            } catch {
+                errorMessage = "Could not start recording."
+            }
+        }
     }
 
     func setStatus(_ status: BookStatus) async {

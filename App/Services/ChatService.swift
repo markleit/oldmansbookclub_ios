@@ -66,6 +66,22 @@ final class ChatService: ObservableObject {
         }
     }
 
+    nonisolated func sendPhoto(bookId: UUID, mediaUrl: String) async {
+        do {
+            try await connection?.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
+        } catch {
+            print("SignalR send photo error: \(error)")
+        }
+    }
+
+    nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async {
+        do {
+            try await connection?.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
+        } catch {
+            print("SignalR send voice error: \(error)")
+        }
+    }
+
     nonisolated func disconnect() async {
         await connection?.stop()
         connection = nil

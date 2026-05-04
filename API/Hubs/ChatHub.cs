@@ -36,6 +36,12 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         await BroadcastAndNotify(bookId, message);
     }
 
+    public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
+    {
+        var message = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
+        await BroadcastAndNotify(bookId, message);
+    }
+
     private async Task<MessageDto> SaveMessageAsync(Guid bookId, MessageType type,
         string? body = null, string? mediaUrl = null, int? durationSeconds = null)
     {

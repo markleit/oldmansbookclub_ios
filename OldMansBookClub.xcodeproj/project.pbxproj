@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D395542233ADC1273F05370D /* AppDelegate.swift */; };
+		238255509291CD03907584E8 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */; };
 		26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
@@ -17,6 +18,7 @@
 		8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */; };
 		8491BB705E4FC317CFF6FCF7 /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = E03A3E7B2C78427DBBADED06 /* LibraryViewModel.swift */; };
 		882C4AA5AED7AF3D691F14CA /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */; };
+		8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6531FD0CE01104B5FBC19167 /* MessageInputView.swift */; };
 		958AF33D661E4DE915A5862A /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8FBEB2C7086C94FA433207 /* ChatService.swift */; };
 		A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88754FFD53578C83DEC2294D /* LibraryView.swift */; };
 		B085151687156DA2AC994199 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E0F879AC20F63014F28CB5 /* BookDetailView.swift */; };
@@ -30,15 +32,18 @@
 		010D3939D82C530D2050FDBA /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		024037128BCBBAFA0312E443 /* BookViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookViewModel.swift; sourceTree = "<group>"; };
 		02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubApp.swift; sourceTree = "<group>"; };
 		2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		35BB903519CCBE31B68D8F6A /* OldMansBookClub.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OldMansBookClub.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		59E0F879AC20F63014F28CB5 /* BookDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailView.swift; sourceTree = "<group>"; };
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
+		6531FD0CE01104B5FBC19167 /* MessageInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputView.swift; sourceTree = "<group>"; };
 		88754FFD53578C83DEC2294D /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		B561ED5FA32D5FF7BE41DA80 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		C5BDC572FF6DDD04153861DF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		CD42813D21DFB8362B19ACCF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D395542233ADC1273F05370D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		DEE74273F3039AFB33F97C01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -70,6 +75,7 @@
 			isa = PBXGroup;
 			children = (
 				2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */,
+				111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */,
 				EF8FBEB2C7086C94FA433207 /* ChatService.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 			);
@@ -101,6 +107,7 @@
 				59E0F879AC20F63014F28CB5 /* BookDetailView.swift */,
 				88754FFD53578C83DEC2294D /* LibraryView.swift */,
 				010D3939D82C530D2050FDBA /* LoginView.swift */,
+				6531FD0CE01104B5FBC19167 /* MessageInputView.swift */,
 				DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */,
 			);
 			path = Views;
@@ -120,6 +127,7 @@
 				D395542233ADC1273F05370D /* AppDelegate.swift */,
 				DEE74273F3039AFB33F97C01 /* Assets.xcassets */,
 				C5BDC572FF6DDD04153861DF /* ContentView.swift */,
+				CD42813D21DFB8362B19ACCF /* Info.plist */,
 				17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */,
 				0116884E101D0BEC9BE7977E /* Models */,
 				0DC96F159ED578CF4C8628B8 /* Services */,
@@ -204,6 +212,7 @@
 				882C4AA5AED7AF3D691F14CA /* APIClient.swift in Sources */,
 				8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */,
 				165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */,
+				238255509291CD03907584E8 /* AudioRecorder.swift in Sources */,
 				F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */,
 				B085151687156DA2AC994199 /* BookDetailView.swift in Sources */,
 				79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */,
@@ -212,6 +221,7 @@
 				A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */,
 				8491BB705E4FC317CFF6FCF7 /* LibraryViewModel.swift in Sources */,
 				FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */,
+				8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */,
 				3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */,
 				58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
@@ -283,7 +293,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -300,7 +310,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

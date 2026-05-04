@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -48,21 +49,15 @@ struct BookDetailView: View {
                 }
             }
 
-            Divider()
-
-            HStack(spacing: 12) {
-                TextField("Message…", text: $viewModel.messageText)
-                    .textFieldStyle(.roundedBorder)
-
-                Button {
-                    Task { await viewModel.sendMessage() }
-                } label: {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                }
-                .disabled(viewModel.messageText.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .padding()
+            MessageInputView(
+                text: $viewModel.messageText,
+                pendingImage: $viewModel.pendingImage,
+                isRecording: viewModel.isRecording,
+                isUploading: viewModel.isUploading,
+                onSend: { Task { await viewModel.sendMessage() } },
+                onSendPhoto: { Task { await viewModel.sendPhoto() } },
+                onToggleRecording: { Task { await viewModel.toggleRecording() } }
+            )
         }
         .navigationTitle(viewModel.book.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -142,18 +137,89 @@ struct MessageRow: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                Text(message.body ?? "")
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(isMe ? Color.blue : Color(.systemGray5))
-                    .foregroundColor(isMe ? .white : .primary)
-                    .cornerRadius(16)
+                messageBubble
                 Text(message.sentAt, style: .time)
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
             if !isMe { Spacer() }
         }
+    }
+
+    @ViewBuilder
+    private var messageBubble: some View {
+        switch message.type {
+        case .text:
+            Text(message.body ?? "")
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(isMe ? Color.blue : Color(.systemGray5))
+                .foregroundColor(isMe ? .white : .primary)
+                .cornerRadius(16)
+
+        case .photo:
+            if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Color(.systemGray5).overlay(ProgressView())
+                }
+                .frame(width: 200, height: 200)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+
+        case .voice:
+            VoiceMessageBubble(message: message, isMe: isMe)
+        }
+    }
+}
+
+struct VoiceMessageBubble: View {
+    let message: Message
+    let isMe: Bool
+    @State private var isPlaying = false
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                togglePlayback()
+            } label: {
+                Image(systemName: isPlaying ? "stop.fill" : "play.fill")
+                    .font(.body)
+            }
+            Image(systemName: "waveform")
+                .font(.title3)
+            if let duration = message.durationSeconds {
+                Text(formatDuration(duration))
+                    .font(.caption)
+                    .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isMe ? Color.blue : Color(.systemGray5))
+        .foregroundColor(isMe ? .white : .primary)
+        .cornerRadius(16)
+        .onDisappear { player?.pause() }
+    }
+
+    private func togglePlayback() {
+        if isPlaying {
+            player?.pause()
+            isPlaying = false
+        } else {
+            guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+            player = AVPlayer(url: url)
+            player?.play()
+            isPlaying = true
+            NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
+                object: player?.currentItem, queue: .main) { _ in isPlaying = false }
+        }
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 
