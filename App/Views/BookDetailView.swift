@@ -25,7 +25,7 @@ struct BookDetailView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 8) {
                             ForEach(viewModel.messages.reversed()) { message in
                                 MessageRow(message: message)
                                     .id(message.id)
@@ -167,13 +167,24 @@ struct MessageRow: View {
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color(.systemGray5).overlay(ProgressView())
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 200, height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                    } else {
+                        Color(.systemGray5)
+                            .frame(width: 200, height: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .overlay(
+                                phase.error != nil
+                                    ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
+                                    : AnyView(ProgressView())
+                            )
+                    }
                 }
-                .frame(width: 200, height: 200)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
 
         case .voice:

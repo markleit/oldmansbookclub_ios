@@ -126,36 +126,66 @@ struct MessageInputView: View {
 struct GrowingTextEditor: View {
     @Binding var text: String
     let placeholder: String
+    @State private var height: CGFloat = 36
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // Invisible replica drives height: starts single-line, grows up to 5 lines
-            Text(text.isEmpty ? " " : text)
-                .font(.body)
-                .lineLimit(5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(0)
+            GrowingTextView(text: $text, height: $height)
+                .frame(height: min(height, 120))
 
             if text.isEmpty {
                 Text(placeholder)
                     .font(.body)
                     .foregroundColor(Color(.placeholderText))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.leading, 12)
+                    .padding(.top, 8)
                     .allowsHitTesting(false)
             }
-
-            TextEditor(text: $text)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 0)
         }
         .background(Color(.systemGray6))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+struct GrowingTextView: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var height: CGFloat
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.font = UIFont.preferredFont(forTextStyle: .body)
+        tv.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
+        tv.textContainer.lineFragmentPadding = 0
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.delegate = context.coordinator
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if tv.text != text { tv.text = text }
+        recalcHeight(tv)
+    }
+
+    func recalcHeight(_ tv: UITextView) {
+        let size = tv.sizeThatFits(CGSize(width: tv.frame.width > 0 ? tv.frame.width : UIScreen.main.bounds.width, height: .infinity))
+        let newHeight = max(size.height, 36)
+        if abs(newHeight - height) > 0.5 {
+            DispatchQueue.main.async { height = newHeight }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: GrowingTextView
+        init(_ parent: GrowingTextView) { self.parent = parent }
+
+        func textViewDidChange(_ tv: UITextView) {
+            parent.text = tv.text
+            parent.recalcHeight(tv)
+        }
     }
 }
 
