@@ -176,6 +176,7 @@ final class APIClient {
         request.httpMethod = "PUT"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("\(data.count)", forHTTPHeaderField: "Content-Length")
+        request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
         request.httpBody = data
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
