@@ -16,7 +16,7 @@ struct AddBookView: View {
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
                 Section("Cover") {
                     HStack {
@@ -155,7 +155,7 @@ struct BookPickerSheet: View {
     let onSelect: (APIClient.BookSearchResult) -> Void
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List(results) { result in
                 Button {
                     onSelect(result)
