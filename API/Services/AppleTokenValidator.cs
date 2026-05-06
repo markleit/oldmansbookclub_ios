@@ -12,7 +12,7 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, ILogger<A
     public async Task<string?> ValidateAsync(string identityToken, string bundleId)
     {
         var keys = await FetchApplePublicKeysAsync();
-        var handler = new JwtSecurityTokenHandler();
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
 
         var validationParams = new TokenValidationParameters
         {
