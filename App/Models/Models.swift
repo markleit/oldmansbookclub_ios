@@ -24,6 +24,8 @@ struct Book: Identifiable, Codable {
 struct User: Identifiable, Codable {
     let id: UUID
     var displayName: String
+    var nickname: String?
+    var avatarUrl: String?
 }
 
 struct Message: Identifiable, Codable {
@@ -31,6 +33,7 @@ struct Message: Identifiable, Codable {
     var clubId: UUID
     var senderId: UUID
     var senderName: String
+    var senderAvatarUrl: String?
     var type: MessageType
     var body: String?
     var mediaUrl: String?

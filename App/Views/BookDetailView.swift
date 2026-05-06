@@ -137,14 +137,17 @@ struct MessageRow: View {
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
-        HStack {
-            if isMe { Spacer() }
+        HStack(alignment: .bottom, spacing: 8) {
+            if isMe {
+                Spacer()
+            } else {
+                avatarView
+                    .frame(width: 32, height: 32)
+            }
             VStack(alignment: isMe ? .trailing : .leading, spacing: 2) {
-                if !isMe {
-                    Text(message.senderName)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Text(message.senderName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 messageBubble
                 Text(message.sentAt, style: .time)
                     .font(.caption2)
@@ -152,6 +155,32 @@ struct MessageRow: View {
             }
             if !isMe { Spacer() }
         }
+    }
+
+    @ViewBuilder
+    private var avatarView: some View {
+        if let urlStr = message.senderAvatarUrl, let url = URL(string: urlStr) {
+            AsyncImage(url: url) { phase in
+                if let img = phase.image {
+                    img.resizable().scaledToFill()
+                } else {
+                    avatarPlaceholder
+                }
+            }
+            .clipShape(Circle())
+        } else {
+            avatarPlaceholder
+        }
+    }
+
+    private var avatarPlaceholder: some View {
+        Circle()
+            .fill(Color(.systemGray4))
+            .overlay(
+                Text(String(message.senderName.prefix(1)).uppercased())
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white)
+            )
     }
 
     @ViewBuilder

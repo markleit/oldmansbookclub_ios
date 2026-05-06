@@ -46,7 +46,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName)));
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl)));
     }
 
     [HttpPost("apple")]
@@ -68,7 +68,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName)));
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl)));
     }
 
     private string GenerateJwt(User user)

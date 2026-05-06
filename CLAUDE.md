@@ -90,7 +90,3 @@ Mac firewall rule "MacBook-Dev" (IP `50.46.238.7`) has been added to Azure SQL �
 
 ## Known gaps / next up
 
-- Book cover images — placeholder gray boxes in UI; `coverBlobUrl` exists in model and `BlobService` exists in API, just needs wiring up in iOS views
-- `TokenStore` uses `UserDefaults` not Keychain (CLAUDE.md previously said Keychain — that was wrong)
-- Voice/photo messages — `MessageType` supports them but `MessageRow` only renders text
-- Only one "current read" supported — `currentRead` returns `books.first { $0.isCurrentRead }`

@@ -107,7 +107,7 @@ public class BooksController(AppDbContext db) : ControllerBase
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
-                m.Id, m.ClubId, m.SenderId, m.Sender.DisplayName,
+                m.Id, m.ClubId, m.SenderId, m.Sender.Nickname ?? m.Sender.DisplayName, m.Sender.AvatarUrl,
                 m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt))
             .ToListAsync();
     }

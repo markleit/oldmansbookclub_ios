@@ -4,13 +4,15 @@ public record AppleAuthRequest(string IdentityToken, string DisplayName);
 public record DevLoginRequest(string DisplayName);
 public record AuthResponse(string AccessToken, UserDto User);
 
-public record UserDto(Guid Id, string DisplayName);
+public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl);
+public record UpdateProfileRequest(string? Nickname, string? AvatarUrl);
 
 public record MessageDto(
     Guid Id,
     Guid ClubId,
     Guid SenderId,
     string SenderName,
+    string? SenderAvatarUrl,
     MessageType Type,
     string? Body,
     string? MediaUrl,

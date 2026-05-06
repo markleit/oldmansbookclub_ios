@@ -49,6 +49,9 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         var user = await db.Users.FindAsync(userId)
             ?? throw new HubException("User not found");
 
+        // Use nickname if set, fall back to display name
+        var senderName = user.EffectiveName;
+
         var book = await db.Books.FindAsync(bookId)
             ?? throw new HubException("Book not found");
 
@@ -66,7 +69,7 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         db.Messages.Add(message);
         await db.SaveChangesAsync();
 
-        return ToDto(message, user.DisplayName);
+        return ToDto(message, senderName, user.AvatarUrl);
     }
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto)
@@ -85,10 +88,10 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
     }
 
     private Guid GetUserId() =>
-        Guid.Parse(Context.UserIdentifier
+        Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
 
-    private static MessageDto ToDto(Message m, string senderName) => new(
-        m.Id, m.ClubId, m.SenderId, senderName,
+    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl) => new(
+        m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,
         m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt);
 }

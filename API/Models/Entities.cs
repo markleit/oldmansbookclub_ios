@@ -7,9 +7,13 @@ public class User
     public Guid Id { get; set; } = Guid.NewGuid();
     [Required] public string AppleSubject { get; set; } = "";
     [Required] public string DisplayName { get; set; } = "";
+    public string? Nickname { get; set; }
+    public string? AvatarUrl { get; set; }
     public string? DeviceToken { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<Membership> Memberships { get; set; } = [];
+
+    public string EffectiveName => Nickname ?? DisplayName;
 }
 
 public class Club

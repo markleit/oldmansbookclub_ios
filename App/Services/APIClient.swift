@@ -62,6 +62,8 @@ final class APIClient {
     struct UserResponse: Decodable {
         let id: UUID
         let displayName: String
+        let nickname: String?
+        let avatarUrl: String?
     }
 
     func signInWithApple(identityToken: String, displayName: String) async throws -> AuthResponse {
@@ -171,6 +173,22 @@ final class APIClient {
         try await post(path: "/media/upload-url?clubId=\(clubId)", body: EmptyRequest(), authenticated: true)
     }
 
+    func getAvatarUploadUrl() async throws -> UploadUrlResponse {
+        try await post(path: "/media/avatar-upload-url", body: EmptyRequest(), authenticated: true)
+    }
+
+    // MARK: - Users
+
+    struct UpdateProfileRequest: Encodable {
+        let nickname: String?
+        let avatarUrl: String?
+    }
+
+    func updateProfile(nickname: String?, avatarUrl: String?) async throws -> UserResponse {
+        let body = UpdateProfileRequest(nickname: nickname, avatarUrl: avatarUrl)
+        return try await patch(path: "/users/me", body: body)
+    }
+
     func uploadMedia(data: Data, to uploadUrl: URL, contentType: String) async throws {
         var request = URLRequest(url: uploadUrl)
         request.httpMethod = "PUT"
@@ -246,6 +264,24 @@ final class APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if authenticated, let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(body)
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return try decoder.decode(Response.self, from: data)
+    }
+
+    private func patch<Body: Encodable, Response: Decodable>(
+        path: String,
+        body: Body
+    ) async throws -> Response {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try encoder.encode(body)
