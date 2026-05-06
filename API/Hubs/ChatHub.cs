@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BookClubApi.Data;
 using BookClubApi.Models;
 using BookClubApi.Services;
@@ -10,6 +11,11 @@ namespace BookClubApi.Hubs;
 [Authorize]
 public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 {
+    // bookId -> set of userIds currently viewing that book
+    private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, bool>> _activeViewers = new();
+    // connectionId -> bookId, so we can clean up on disconnect
+    private static readonly ConcurrentDictionary<string, Guid> _connectionBook = new();
+
     public async Task JoinBook(Guid bookId)
     {
         var userId = GetUserId();
@@ -19,8 +25,22 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         var isMember = await db.Memberships
             .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
 
-        if (isMember)
-            await Groups.AddToGroupAsync(Context.ConnectionId, bookId.ToString());
+        if (!isMember) return;
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, bookId.ToString());
+        _activeViewers.GetOrAdd(bookId, _ => new()).TryAdd(userId, true);
+        _connectionBook[Context.ConnectionId] = bookId;
+    }
+
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (_connectionBook.TryRemove(Context.ConnectionId, out var bookId))
+        {
+            var userId = Guid.TryParse(Context.User?.FindFirst("sub")?.Value, out var id) ? id : Guid.Empty;
+            if (userId != Guid.Empty && _activeViewers.TryGetValue(bookId, out var viewers))
+                viewers.TryRemove(userId, out _);
+        }
+        return base.OnDisconnectedAsync(exception);
     }
 
     public async Task SendTextMessage(Guid bookId, string body)
@@ -78,8 +98,14 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
     {
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
+        var activeInBook = _activeViewers.TryGetValue(bookId, out var viewers)
+            ? viewers.Keys.ToHashSet()
+            : [];
+
         var offlineTokens = await db.Memberships
-            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId)
+            .Where(m => m.ClubId == dto.ClubId
+                     && m.UserId != dto.SenderId
+                     && !activeInBook.Contains(m.UserId))
             .Select(m => m.User.DeviceToken)
             .Where(t => t != null)
             .Cast<string>()
