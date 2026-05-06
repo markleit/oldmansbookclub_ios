@@ -19,6 +19,10 @@ targets:
       - path: App
     entitlements:
       path: App/OldMansBookClub.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
+        aps-environment: production
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
       INFOPLIST_FILE: App/Info.plist
