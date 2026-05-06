@@ -34,7 +34,13 @@ builder.Services.AddSignalR()
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();
 builder.Services.AddScoped<BlobService>();
-builder.Services.AddScoped<NotificationService>();
+builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddHttpClient("apns", client =>
+{
+    client.BaseAddress = new Uri("https://api.push.apple.com");
+    client.DefaultRequestVersion = System.Net.HttpVersion.Version20;
+    client.DefaultVersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrHigher;
+});
 
 // JWT Auth
 var jwtKey = builder.Configuration["Jwt:Secret"]
