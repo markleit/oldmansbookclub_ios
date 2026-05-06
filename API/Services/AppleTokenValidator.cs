@@ -4,7 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace BookClubApi.Services;
 
-public class AppleTokenValidator(IHttpClientFactory httpClientFactory)
+public class AppleTokenValidator(IHttpClientFactory httpClientFactory, ILogger<AppleTokenValidator> logger)
 {
     private const string AppleKeysUrl = "https://appleid.apple.com/auth/keys";
     private const string AppleIssuer = "https://appleid.apple.com";
@@ -27,8 +27,9 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory)
             var principal = handler.ValidateToken(identityToken, validationParams, out _);
             return principal.FindFirst("sub")?.Value;
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogWarning("Apple token validation failed: {Message}", ex.Message);
             return null;
         }
     }
