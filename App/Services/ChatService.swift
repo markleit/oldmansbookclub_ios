@@ -33,7 +33,8 @@ final class ChatService: ObservableObject {
             .withUrl(url: url)
             .build()
 
-        await connection?.on("NewMessage") { [weak self] (dto: MessageDto) async in
+        let onMessage = onMessageReceived
+        await connection?.on("NewMessage") { (dto: MessageDto) async in
             let message = Message(
                 id: dto.id,
                 clubId: dto.clubId,
@@ -46,7 +47,7 @@ final class ChatService: ObservableObject {
                 sentAt: dto.sentAt
             )
             await MainActor.run {
-                self?.onMessageReceived?(message)
+                onMessage?(message)
             }
         }
 
