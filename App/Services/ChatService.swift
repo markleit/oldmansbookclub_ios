@@ -50,36 +50,20 @@ final class ChatService: ObservableObject {
             }
         }
 
-        do {
-            try await connection?.start()
-            try await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
-        } catch {
-            print("SignalR connect error: \(error)")
-        }
+        try? await connection?.start()
+        try? await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
     }
 
-    nonisolated func sendText(bookId: UUID, body: String) async {
-        do {
-            try await connection?.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
-        } catch {
-            print("SignalR send error: \(error)")
-        }
+    nonisolated func sendText(bookId: UUID, body: String) async throws {
+        try await connection?.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
     }
 
-    nonisolated func sendPhoto(bookId: UUID, mediaUrl: String) async {
-        do {
-            try await connection?.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
-        } catch {
-            print("SignalR send photo error: \(error)")
-        }
+    nonisolated func sendPhoto(bookId: UUID, mediaUrl: String) async throws {
+        try await connection?.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
-    nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async {
-        do {
-            try await connection?.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
-        } catch {
-            print("SignalR send voice error: \(error)")
-        }
+    nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async throws {
+        try await connection?.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
     }
 
     nonisolated func disconnect() async {

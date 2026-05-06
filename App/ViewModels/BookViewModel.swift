@@ -68,7 +68,11 @@ final class BookViewModel: ObservableObject {
         messages.insert(optimistic, at: 0)
         pendingByBody[text] = clientId
 
-        await ChatService.shared.sendText(bookId: book.id, body: text)
+        do {
+            try await ChatService.shared.sendText(bookId: book.id, body: text)
+        } catch {
+            errorMessage = "Failed to send message."
+        }
     }
 
     func sendPhoto() async {
@@ -82,7 +86,7 @@ final class BookViewModel: ObservableObject {
             let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
             guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
-            await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
+            try await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
         } catch {
             errorMessage = "Failed to send photo."
         }
@@ -100,7 +104,7 @@ final class BookViewModel: ObservableObject {
                 let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { return }
                 try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
-                await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
+                try await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
             } catch {
                 errorMessage = "Failed to send voice message."
             }
