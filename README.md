@@ -36,6 +36,44 @@ iOS app and ASP.NET Core API for a private book club — members browse a shared
 
 ## Architecture
 
+### System diagram
+
+```
+┌─────────────────────────────────────────────────────┐
+│  iOS App (SwiftUI)                                  │
+│                                                     │
+│  LoginView ──► POST /auth/apple ──────────────────► │──┐
+│                                                     │  │
+│  LibraryView / BookDetailView                       │  │
+│    │                                                │  │
+│    ├─ REST (URLSession) ──► APIClient ──────────── ─│──┤
+│    │                                                │  │
+│    └─ WebSocket (SignalR) ──► ChatService ─────────►│──┤
+│                                                     │  │
+│  ProfileView ──► PUT (SAS URL direct upload) ──────►│──┤
+└─────────────────────────────────────────────────────┘  │
+                                                         │
+         ┌───────────────────────────────────────────────┘
+         ▼
+┌─────────────────────────┐     ┌──────────────────────┐
+│  ASP.NET Core API       │     │  Azure SignalR        │
+│  (Azure App Service)    │◄───►│  Service             │
+│                         │     └──────────────────────┘
+│  /auth/*                │
+│  /clubs, /books         │     ┌──────────────────────┐
+│  /users/me              │◄───►│  Azure SQL Database  │
+│  /media/upload-url      │     └──────────────────────┘
+│  /notifications/register│
+│  /hubs/chat (SignalR)   │     ┌──────────────────────┐
+│                         │◄───►│  Azure Blob Storage  │
+└─────────────────────────┘     │  (media + avatars)   │
+         │                      └──────────────────────┘
+         │
+         ▼                      ┌──────────────────────┐
+  APNs (push)  ────────────────►│  iOS device          │
+                                └──────────────────────┘
+```
+
 ### Two components
 
 ```
@@ -71,6 +109,40 @@ oldmansbookclub_ios/
 ### JSON serialization
 
 API uses `JsonNamingPolicy.SnakeCaseLower` throughout. `APIClient` mirrors this with `.convertToSnakeCase` encoding and `.convertFromSnakeCase` decoding, so no manual key mapping is needed.
+
+## Architectural Decisions
+
+### 1. Azure SignalR Service over self-hosted WebSockets
+
+**Decision:** Use the managed Azure SignalR Service rather than running WebSocket connections directly on the API process.
+
+**Why:** Azure App Service on the free/shared tiers has strict connection limits and no sticky sessions, which breaks stateful WebSocket servers. Azure SignalR offloads connection state entirely — the API just calls `Clients.Group(...).SendAsync(...)` and the service handles fan-out to all connected clients. The hub code stays simple and the API process stays stateless.
+
+**Where this would be wrong:** Self-hosted apps (VMs, containers with a load balancer you control) where you can configure sticky sessions. Azure SignalR adds cost and a network hop; raw WebSockets are fine there.
+
+### 2. SAS URLs for media upload — client uploads directly to Blob Storage
+
+**Decision:** The API generates a short-lived Azure Blob Storage SAS URL and returns it to the client. The client PUTs bytes directly to Blob Storage; no media data passes through the API server.
+
+**Why:** Routing multi-megabyte audio and photo uploads through an App Service instance would consume instance memory and egress bandwidth for work the storage layer handles natively. SAS URLs are scoped to a single blob with a short TTL (few minutes), so the client can't write anywhere outside the intended path.
+
+**Where this would be wrong:** If you need server-side processing (transcoding, content moderation) before the file is stored. Then you want the data to land on the server first, or use a storage event trigger into a processing pipeline.
+
+### 3. SQL (relational) over a document store
+
+**Decision:** Azure SQL with EF Core rather than Cosmos DB or a document database.
+
+**Why:** The data is naturally relational — users belong to clubs, books belong to clubs, messages belong to books and reference users. Enforcing these relationships at the database layer prevents orphaned records without application-level cleanup logic. EF Core migrations give an auditable schema history. For a small club app the query patterns are simple and SQL is a better fit than paying for Cosmos RU capacity.
+
+**Where this would be wrong:** Very high write throughput (thousands of messages per second across many clubs) where SQL contention becomes a bottleneck, or if you need multi-region active-active writes. A document store with partition-per-club would scale further horizontally.
+
+### 4. Push notifications only to offline users
+
+**Decision:** When a new message arrives, APNs push is sent only to club members who are not currently connected to the SignalR group for that book.
+
+**Why:** A user with the book open already receives the message via the `NewMessage` SignalR event in real time. Sending them a push notification too causes a redundant badge + sound while they're actively reading. The hub tracks active viewers in a `ConcurrentDictionary` and excludes them from the APNs token query.
+
+**Where this would be wrong:** Multi-device scenarios where a user has the app open on one device but wants a notification on another. The current implementation keys on user ID, not device, so any active connection suppresses all their pushes. Worth revisiting if multi-device support is added.
 
 ## Repo Structure
 
