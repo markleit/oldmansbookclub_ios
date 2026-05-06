@@ -27,7 +27,11 @@ public class UsersController(AppDbContext db) : ControllerBase
         if (user is null) return NotFound();
 
         if (req.Nickname is not null) user.Nickname = req.Nickname.Trim().Length > 0 ? req.Nickname.Trim() : null;
-        if (req.AvatarUrl is not null) user.AvatarUrl = req.AvatarUrl;
+        if (req.AvatarUrl is not null)
+        {
+            if (!IsOwnBlobUrl(req.AvatarUrl)) return BadRequest("Invalid avatar URL.");
+            user.AvatarUrl = req.AvatarUrl;
+        }
 
         await db.SaveChangesAsync();
         return ToDto(user);
@@ -36,6 +40,11 @@ public class UsersController(AppDbContext db) : ControllerBase
     private Guid GetUserId() =>
         Guid.Parse(User.FindFirst("sub")?.Value
             ?? throw new UnauthorizedAccessException());
+
+    private static bool IsOwnBlobUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == "https" &&
+        uri.Host.EndsWith(".blob.core.windows.net");
 
     private static UserDto ToDto(User u) => new(u.Id, u.DisplayName, u.Nickname, u.AvatarUrl);
 }

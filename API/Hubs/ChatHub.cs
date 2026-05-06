@@ -31,6 +31,7 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 
     public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds)
     {
+        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         var message = await SaveMessageAsync(bookId, MessageType.Voice,
             mediaUrl: mediaUrl, durationSeconds: durationSeconds);
         await BroadcastAndNotify(bookId, message);
@@ -38,6 +39,7 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 
     public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
     {
+        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         var message = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
         await BroadcastAndNotify(bookId, message);
     }
@@ -90,6 +92,11 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
     private Guid GetUserId() =>
         Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
+
+    private static bool IsOwnBlobUrl(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        uri.Scheme == "https" &&
+        uri.Host.EndsWith(".blob.core.windows.net");
 
     private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl) => new(
         m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,

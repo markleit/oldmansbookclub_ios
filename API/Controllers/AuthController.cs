@@ -5,6 +5,7 @@ using BookClubApi.Data;
 using BookClubApi.Models;
 using BookClubApi.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -12,6 +13,7 @@ namespace BookClubApi.Controllers;
 
 [ApiController]
 [Route("[controller]")]
+[EnableRateLimiting("auth")]
 public class AuthController(
     AppDbContext db,
     AppleTokenValidator appleValidator,
@@ -87,7 +89,7 @@ public class AuthController(
             issuer: config["Jwt:Issuer"],
             audience: config["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(30),
+            expires: DateTime.UtcNow.AddDays(7),
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
         return new JwtSecurityTokenHandler().WriteToken(token);

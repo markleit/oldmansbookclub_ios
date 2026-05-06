@@ -114,36 +114,17 @@ final class APIClient {
         return try await post(path: "/books", body: body, authenticated: true)
     }
 
-    struct BookSearchResult: Identifiable {
+    struct BookSearchResult: Identifiable, Decodable {
         let id = UUID()
         let title: String
         let author: String
         let coverUrl: String?
+        enum CodingKeys: String, CodingKey { case title, author, coverUrl }
     }
 
-    private static let googleBooksApiKey = "AIzaSyDTRMqMpatAG2Masvnhw5za5eFJOJi5Ej0"
-
     func searchBooks(title: String) async -> [BookSearchResult] {
-        var components = URLComponents(string: "https://www.googleapis.com/books/v1/volumes")!
-        components.queryItems = [
-            .init(name: "q", value: "intitle:\(title)"),
-            .init(name: "maxResults", value: "5"),
-            .init(name: "printType", value: "books"),
-            .init(name: "key", value: Self.googleBooksApiKey)
-        ]
-        guard let url = components.url else { return [] }
-        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return [] }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let items = json["items"] as? [[String: Any]] else { return [] }
-        return items.compactMap { item in
-            guard let info = item["volumeInfo"] as? [String: Any],
-                  let t = info["title"] as? String else { return nil }
-            let author = (info["authors"] as? [String])?.first ?? ""
-            let coverUrl = (info["imageLinks"] as? [String: Any])
-                .flatMap { $0["thumbnail"] as? String }
-                .map { $0.replacingOccurrences(of: "http://", with: "https://") }
-            return BookSearchResult(title: t, author: author, coverUrl: coverUrl)
-        }
+        guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return [] }
+        return (try? await get(path: "/books/search?q=\(encoded)")) ?? []
     }
 
     struct SetStatusRequest: Encodable { let status: String }

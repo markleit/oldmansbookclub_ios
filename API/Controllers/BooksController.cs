@@ -9,7 +9,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class BooksController(AppDbContext db) : ControllerBase
+public class BooksController(AppDbContext db, IConfiguration config, IHttpClientFactory http) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -27,6 +27,33 @@ public class BooksController(AppDbContext db) : ControllerBase
             .ThenByDescending(b => b.AddedAt)
             .Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status))
             .ToListAsync();
+    }
+
+    [HttpGet("search")]
+    public async Task<IEnumerable<BookSearchResult>> SearchBooks([FromQuery] string q)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return [];
+
+        var apiKey = config["GoogleBooks:ApiKey"];
+        var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=5&printType=books&key={apiKey}";
+
+        var client = http.CreateClient();
+        var json = await client.GetFromJsonAsync<System.Text.Json.JsonElement>(url);
+
+        if (!json.TryGetProperty("items", out var items)) return [];
+
+        return items.EnumerateArray().Select(item =>
+        {
+            var info = item.GetProperty("volumeInfo");
+            var title = info.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+            var author = info.TryGetProperty("authors", out var a) && a.GetArrayLength() > 0
+                ? a[0].GetString() ?? "" : "";
+            string? coverUrl = null;
+            if (info.TryGetProperty("imageLinks", out var links) &&
+                links.TryGetProperty("thumbnail", out var thumb))
+                coverUrl = thumb.GetString()?.Replace("http://", "https://");
+            return new BookSearchResult(title, author, coverUrl);
+        }).ToList();
     }
 
     [HttpPost]
@@ -87,15 +114,15 @@ public class BooksController(AppDbContext db) : ControllerBase
     }
 
     [HttpGet("{bookId}/messages")]
-    public async Task<IEnumerable<MessageDto>> GetMessages(
+    public async Task<ActionResult<IEnumerable<MessageDto>>> GetMessages(
         Guid bookId, [FromQuery] DateTime? before, [FromQuery] int limit = 50)
     {
         var book = await db.Books.FindAsync(bookId);
-        if (book is null) return [];
+        if (book is null) return NotFound();
 
         var isMember = await db.Memberships
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
-        if (!isMember) return [];
+        if (!isMember) return Forbid();
 
         var query = db.Messages
             .Where(m => m.BookId == bookId && m.DeletedAt == null);

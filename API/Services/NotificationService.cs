@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BookClubApi.Models;
 using Microsoft.Azure.NotificationHubs;
 
@@ -12,23 +13,22 @@ public class NotificationService(IConfiguration config)
 
     public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message)
     {
-        var senderName = message.SenderName;
-        var body = message.Type == MessageType.Voice
-            ? $"{senderName} sent a voice message"
+        var alertBody = message.Type == MessageType.Voice
+            ? $"{message.SenderName} sent a voice message"
             : message.Body?.Length > 50
-                ? $"{senderName}: {message.Body[..50]}..."
-                : $"{senderName}: {message.Body}";
+                ? $"{message.SenderName}: {message.Body[..50]}..."
+                : $"{message.SenderName}: {message.Body}";
 
-        var payload = $$"""
+        var payload = JsonSerializer.Serialize(new
+        {
+            aps = new
             {
-                "aps": {
-                    "alert": {"title": "Book Club", "body": "{{body}}"},
-                    "sound": "default",
-                    "badge": 1
-                },
-                "clubId": "{{message.ClubId}}"
-            }
-            """;
+                alert = new { title = "Book Club", body = alertBody },
+                sound = "default",
+                badge = 1
+            },
+            clubId = message.ClubId.ToString()
+        });
 
         var tasks = deviceTokens.Select(token =>
             _hub.SendAppleNativeNotificationAsync(payload, [token]));

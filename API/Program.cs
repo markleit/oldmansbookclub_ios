@@ -1,8 +1,10 @@
 using System.Text;
+using System.Threading.RateLimiting;
 using BookClubApi.Data;
 using BookClubApi.Hubs;
 using BookClubApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -68,6 +70,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = 429;
+    // Auth endpoints: 10 attempts per minute per IP
+    options.AddFixedWindowLimiter("auth", o =>
+    {
+        o.Window = TimeSpan.FromMinutes(1);
+        o.PermitLimit = 10;
+        o.QueueLimit = 0;
+    });
+    // Media upload-url endpoints: 30 per minute per user
+    options.AddFixedWindowLimiter("media", o =>
+    {
+        o.Window = TimeSpan.FromMinutes(1);
+        o.PermitLimit = 30;
+        o.QueueLimit = 0;
+    });
+});
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -76,6 +97,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

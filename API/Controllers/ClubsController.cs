@@ -21,9 +21,9 @@ public class ClubsController(AppDbContext db) : ControllerBase
             .ToListAsync();
 
     [HttpPost]
-    public async Task<ActionResult<Club>> CreateClub([FromBody] Club club)
+    public async Task<ActionResult<Club>> CreateClub([FromBody] CreateClubRequest request)
     {
-        club.Id = Guid.NewGuid();
+        var club = new Club { Name = request.Name, Description = request.Description };
         db.Clubs.Add(club);
         db.Memberships.Add(new Membership { UserId = UserId, ClubId = club.Id });
         await db.SaveChangesAsync();
@@ -31,12 +31,12 @@ public class ClubsController(AppDbContext db) : ControllerBase
     }
 
     [HttpGet("{clubId}/messages")]
-    public async Task<IEnumerable<MessageDto>> GetMessages(
+    public async Task<ActionResult<IEnumerable<MessageDto>>> GetMessages(
         Guid clubId, [FromQuery] DateTime? before, [FromQuery] int limit = 50)
     {
         var isMember = await db.Memberships
             .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId);
-        if (!isMember) return [];
+        if (!isMember) return Forbid();
 
         var query = db.Messages
             .Where(m => m.ClubId == clubId && m.DeletedAt == null);
@@ -56,6 +56,17 @@ public class ClubsController(AppDbContext db) : ControllerBase
     [HttpPost("{clubId}/members")]
     public async Task<IActionResult> AddMember(Guid clubId, [FromBody] Guid userId)
     {
+        var callerIsMember = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId);
+        if (!callerIsMember) return Forbid();
+
+        var targetExists = await db.Users.AnyAsync(u => u.Id == userId);
+        if (!targetExists) return NotFound("User not found.");
+
+        var alreadyMember = await db.Memberships
+            .AnyAsync(m => m.UserId == userId && m.ClubId == clubId);
+        if (alreadyMember) return Conflict("User is already a member.");
+
         db.Memberships.Add(new Membership { UserId = userId, ClubId = clubId });
         await db.SaveChangesAsync();
         return Ok();
