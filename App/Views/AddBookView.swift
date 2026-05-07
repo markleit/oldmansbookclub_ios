@@ -18,41 +18,37 @@ struct AddBookView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Cover") {
-                    HStack {
-                        if isSearching {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 80, height: 120)
-                                .overlay(ProgressView().scaleEffect(0.7))
-                        } else if let url = coverUrl, let imageUrl = URL(string: url) {
-                            AsyncImage(url: imageUrl) { image in
-                                image.resizable().scaledToFill()
-                            } placeholder: {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color.gray.opacity(0.2))
-                            }
-                            .frame(width: 80, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                        } else {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.gray.opacity(0.2))
-                                .frame(width: 80, height: 120)
-                                .overlay(
-                                    Text("Cover\npreview")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.center)
-                                )
-                        }
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section("Title") {
+                Section {
                     TextField("e.g. Dune", text: $title)
                         .onChange(of: title) { _ in scheduleSearch() }
+                } header: {
+                    Text("Title")
+                } footer: {
+                    Text("Start typing to search for cover art and author.")
+                }
+
+                if isSearching || coverUrl != nil {
+                    Section("Cover") {
+                        HStack {
+                            if isSearching {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 80, height: 120)
+                                    .overlay(ProgressView().scaleEffect(0.7))
+                            } else if let url = coverUrl, let imageUrl = URL(string: url) {
+                                AsyncImage(url: imageUrl) { image in
+                                    image.resizable().scaledToFill()
+                                } placeholder: {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.gray.opacity(0.2))
+                                }
+                                .frame(width: 80, height: 120)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
 
                 Section {
