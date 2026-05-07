@@ -9,7 +9,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class BooksController(AppDbContext db, IConfiguration config, IHttpClientFactory http) : ControllerBase
+public class BooksController(AppDbContext db, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -35,15 +35,34 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
         if (string.IsNullOrWhiteSpace(q)) return [];
 
         var apiKey = config["GoogleBooks:ApiKey"];
+        logger.LogInformation("Book search: q={Q} hasApiKey={HasKey}", q, !string.IsNullOrEmpty(apiKey));
+
         var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=5&printType=books";
         if (!string.IsNullOrEmpty(apiKey)) url += $"&key={apiKey}";
 
         var client = http.CreateClient();
-        var response = await client.GetAsync(url);
-        if (!response.IsSuccessStatusCode) return [];
+        HttpResponseMessage response;
+        try { response = await client.GetAsync(url); }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Google Books HTTP request failed");
+            return [];
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            logger.LogWarning("Google Books returned {Status}: {Body}", (int)response.StatusCode, body[..Math.Min(500, body.Length)]);
+            return [];
+        }
+
         var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
 
-        if (!json.TryGetProperty("items", out var items)) return [];
+        if (!json.TryGetProperty("items", out var items))
+        {
+            logger.LogInformation("Google Books returned no items for q={Q}", q);
+            return [];
+        }
 
         return items.EnumerateArray().Select(item =>
         {
