@@ -119,7 +119,7 @@ final class APIClient {
         let title: String
         let author: String
         let coverUrl: String?
-        enum CodingKeys: String, CodingKey { case title, author; case coverUrl = "cover_url" }
+        enum CodingKeys: String, CodingKey { case title, author, coverUrl }
     }
 
     func searchBooks(title: String) async -> [BookSearchResult] {
