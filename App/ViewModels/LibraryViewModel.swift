@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class LibraryViewModel: ObservableObject {
     @Published var books: [Book] = []
+    @Published var clubId: UUID? = TokenStore.shared.clubId
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -35,7 +36,9 @@ final class LibraryViewModel: ObservableObject {
             TokenStore.shared.clubId = clubs.first?.id
         }
 
-        guard TokenStore.shared.clubId != nil else {
+        clubId = TokenStore.shared.clubId
+
+        guard clubId != nil else {
             isLoading = false
             return
         }

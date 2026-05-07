@@ -69,6 +69,19 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
+        var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
+        if (!isMember)
+        {
+            var club = await db.Clubs.FirstOrDefaultAsync();
+            if (club is null)
+            {
+                club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
+                db.Clubs.Add(club);
+            }
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
+            await db.SaveChangesAsync();
+        }
+
         var token = GenerateJwt(user);
         return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl)));
     }

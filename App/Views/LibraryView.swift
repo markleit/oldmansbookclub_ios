@@ -89,9 +89,7 @@ struct LibraryView: View {
                 }
             }
             .sheet(isPresented: $showingAddBook) {
-                if let clubId = TokenStore.shared.clubId {
-                    AddBookView(clubId: clubId) { book in viewModel.bookCreated(book) }
-                }
+                AddBookSheetWrapper(viewModel: viewModel)
             }
         }
     }
@@ -200,6 +198,38 @@ struct PastBookRow: View {
                 .foregroundColor(.secondary)
         }
         .padding(.vertical, 4)
+    }
+}
+
+struct AddBookSheetWrapper: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var viewModel: LibraryViewModel
+
+    var body: some View {
+        if let clubId = viewModel.clubId {
+            AddBookView(clubId: clubId) { book in viewModel.bookCreated(book) }
+        } else {
+            NavigationStack {
+                VStack(spacing: 16) {
+                    if viewModel.isLoading {
+                        ProgressView("Loading…")
+                    } else {
+                        Text("Couldn't load club info.")
+                            .foregroundColor(.secondary)
+                        Button("Retry") { Task { await viewModel.load() } }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .navigationTitle("Add Book")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                }
+                .task { await viewModel.load() }
+            }
+        }
     }
 }
 
