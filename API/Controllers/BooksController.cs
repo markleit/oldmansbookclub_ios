@@ -92,6 +92,7 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
+        await db.Messages.Where(m => m.BookId == bookId).ExecuteDeleteAsync();
         db.Books.Remove(book);
         await db.SaveChangesAsync();
         return NoContent();
