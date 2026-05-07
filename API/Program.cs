@@ -33,6 +33,7 @@ builder.Services.AddSignalR()
     {
         options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeConverter());
     })
     .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]);
 
