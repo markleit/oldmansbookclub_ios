@@ -44,7 +44,7 @@ final class ChatService: ObservableObject {
                 body: dto.body,
                 mediaUrl: dto.mediaUrl,
                 durationSeconds: dto.durationSeconds,
-                sentAt: dto.sentAt
+                sentAt: dto.sentAtDate
             )
             await MainActor.run {
                 onMessage?(message)
@@ -87,5 +87,11 @@ private struct MessageDto: Decodable {
     let body: String?
     let mediaUrl: String?
     let durationSeconds: Int?
-    let sentAt: Date
+    let sentAt: String
+
+    var sentAtDate: Date {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: sentAt) ?? Date()
+    }
 }
