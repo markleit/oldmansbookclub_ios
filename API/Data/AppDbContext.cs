@@ -20,6 +20,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Message>()
             .HasIndex(m => new { m.ClubId, m.SentAt });
 
+        modelBuilder.Entity<Message>()
+            .HasOne(m => m.Book)
+            .WithMany(b => b.Messages)
+            .HasForeignKey(m => m.BookId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         modelBuilder.Entity<User>()
             .HasIndex(u => u.AppleSubject)
             .IsUnique();
