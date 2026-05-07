@@ -35,7 +35,8 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
         if (string.IsNullOrWhiteSpace(q)) return [];
 
         var apiKey = config["GoogleBooks:ApiKey"];
-        var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=5&printType=books&key={apiKey}";
+        var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=5&printType=books";
+        if (!string.IsNullOrEmpty(apiKey)) url += $"&key={apiKey}";
 
         var client = http.CreateClient();
         var json = await client.GetFromJsonAsync<System.Text.Json.JsonElement>(url);
