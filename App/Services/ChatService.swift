@@ -51,6 +51,10 @@ final class ChatService: ObservableObject {
             }
         }
 
+        await connection?.onReconnected {
+            try? await self.connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
+        }
+
         try? await connection?.start()
         try? await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
     }
