@@ -39,7 +39,9 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
         if (!string.IsNullOrEmpty(apiKey)) url += $"&key={apiKey}";
 
         var client = http.CreateClient();
-        var json = await client.GetFromJsonAsync<System.Text.Json.JsonElement>(url);
+        var response = await client.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return [];
+        var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
 
         if (!json.TryGetProperty("items", out var items)) return [];
 
