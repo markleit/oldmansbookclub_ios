@@ -29,6 +29,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 // Azure SignalR
 builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    })
     .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]);
 
 // Services
