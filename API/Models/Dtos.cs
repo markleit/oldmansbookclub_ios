@@ -8,6 +8,7 @@ public record AuthResponse(string AccessToken, UserDto User);
 
 public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl);
 public record UpdateProfileRequest(
+    [MaxLength(200)] string? DisplayName,
     [MaxLength(50)] string? Nickname,
     [MaxLength(2048)] string? AvatarUrl);
 

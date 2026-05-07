@@ -161,12 +161,13 @@ final class APIClient {
     // MARK: - Users
 
     struct UpdateProfileRequest: Encodable {
+        let displayName: String?
         let nickname: String?
         let avatarUrl: String?
     }
 
-    func updateProfile(nickname: String?, avatarUrl: String?) async throws -> UserResponse {
-        let body = UpdateProfileRequest(nickname: nickname, avatarUrl: avatarUrl)
+    func updateProfile(displayName: String?, nickname: String?, avatarUrl: String?) async throws -> UserResponse {
+        let body = UpdateProfileRequest(displayName: displayName, nickname: nickname, avatarUrl: avatarUrl)
         return try await patch(path: "/users/me", body: body)
     }
 

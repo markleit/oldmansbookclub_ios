@@ -26,6 +26,7 @@ public class UsersController(AppDbContext db) : ControllerBase
         var user = await db.Users.FindAsync(userId);
         if (user is null) return NotFound();
 
+        if (!string.IsNullOrWhiteSpace(req.DisplayName)) user.DisplayName = req.DisplayName.Trim();
         if (req.Nickname is not null) user.Nickname = req.Nickname.Trim().Length > 0 ? req.Nickname.Trim() : null;
         if (req.AvatarUrl is not null)
         {

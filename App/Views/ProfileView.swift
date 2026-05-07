@@ -10,10 +10,6 @@ struct ProfileView: View {
     @State private var showCamera = false
     @State private var photosItem: PhotosPickerItem?
 
-    private var displayName: String {
-        TokenStore.shared.displayName ?? "Book Club Member"
-    }
-
     var body: some View {
         NavigationStack {
             Form {
@@ -28,14 +24,18 @@ struct ProfileView: View {
                     .padding(.vertical, 8)
                 }
 
-                Section("Display Name") {
-                    Text(displayName)
-                        .foregroundColor(.secondary)
+                Section("Name") {
+                    TextField("Your name", text: $viewModel.displayName)
+                        .autocorrectionDisabled()
                 }
 
-                Section("Nickname") {
-                    TextField("Optional — shown in chat instead of display name", text: $viewModel.nickname)
+                Section {
+                    TextField("Nickname (optional)", text: $viewModel.nickname)
                         .autocorrectionDisabled()
+                } header: {
+                    Text("Nickname")
+                } footer: {
+                    Text("If set, shown in chat instead of your name.")
                 }
 
                 Section {
@@ -146,6 +146,7 @@ struct CameraPickerView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
+        picker.cameraDevice = .front
         picker.delegate = context.coordinator
         return picker
     }

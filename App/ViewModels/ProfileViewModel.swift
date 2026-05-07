@@ -3,6 +3,7 @@ import UIKit
 
 @MainActor
 final class ProfileViewModel: ObservableObject {
+    @Published var displayName: String
     @Published var nickname: String
     @Published var avatarUrl: String?
     @Published var pendingImage: UIImage?
@@ -11,6 +12,7 @@ final class ProfileViewModel: ObservableObject {
     @Published var saveSuccess = false
 
     init() {
+        displayName = TokenStore.shared.displayName ?? ""
         nickname = TokenStore.shared.nickname ?? ""
         avatarUrl = TokenStore.shared.avatarUrl
     }
@@ -31,14 +33,17 @@ final class ProfileViewModel: ObservableObject {
                 )
                 finalAvatarUrl = uploadResp.mediaUrl
             }
-            let trimmed = nickname.trimmingCharacters(in: .whitespaces)
-            let nicknameToSend = trimmed.isEmpty ? nil : trimmed
+            let trimmedName = displayName.trimmingCharacters(in: .whitespaces)
+            let trimmedNick = nickname.trimmingCharacters(in: .whitespaces)
             let updated = try await APIClient.shared.updateProfile(
-                nickname: nicknameToSend,
+                displayName: trimmedName.isEmpty ? nil : trimmedName,
+                nickname: trimmedNick.isEmpty ? nil : trimmedNick,
                 avatarUrl: finalAvatarUrl
             )
+            TokenStore.shared.displayName = updated.displayName
             TokenStore.shared.nickname = updated.nickname
             TokenStore.shared.avatarUrl = updated.avatarUrl
+            displayName = updated.displayName
             avatarUrl = updated.avatarUrl
             pendingImage = nil
             saveSuccess = true
