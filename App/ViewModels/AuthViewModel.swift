@@ -41,7 +41,9 @@ final class AuthViewModel: ObservableObject {
                     TokenStore.shared.save(
                         token: response.accessToken,
                         userId: response.user.id,
-                        displayName: response.user.displayName
+                        displayName: response.user.displayName,
+                        nickname: response.user.nickname,
+                        avatarUrl: response.user.avatarUrl
                     )
                     isAuthenticated = true
                 } catch {
@@ -67,7 +69,9 @@ final class AuthViewModel: ObservableObject {
                 TokenStore.shared.save(
                     token: response.accessToken,
                     userId: response.user.id,
-                    displayName: response.user.displayName
+                    displayName: response.user.displayName,
+                    nickname: response.user.nickname,
+                    avatarUrl: response.user.avatarUrl
                 )
                 isAuthenticated = true
             } catch {

@@ -59,6 +59,13 @@ struct ProfileView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+                }
+            }
             .navigationTitle("Profile")
             .confirmationDialog("Change Photo", isPresented: $showImageOptions, titleVisibility: .visible) {
                 Button("Choose from Library") { showLibraryPicker = true }
