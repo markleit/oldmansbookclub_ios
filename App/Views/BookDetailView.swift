@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import Speech
 
 struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -229,14 +230,38 @@ struct VoiceMessageBubble: View {
     @State private var player: AVPlayer?
     @State private var progress: Double = 0
     @State private var currentSeconds: Int = 0
+    @State private var showTranscription = false
+    @State private var transcription: String?
+    @State private var isTranscribing = false
 
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
 
     var body: some View {
+        Group {
+            if showTranscription {
+                transcriptionView
+            } else {
+                audioView
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(isMe ? Color.blue : Color(.systemGray5))
+        .foregroundColor(isMe ? .white : .primary)
+        .cornerRadius(16)
+        .animation(.easeInOut(duration: 0.2), value: showTranscription)
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+            tickProgress()
+        }
+        .onDisappear {
+            player?.pause()
+            isPlaying = false
+        }
+    }
+
+    private var audioView: some View {
         HStack(spacing: 10) {
-            Button {
-                togglePlayback()
-            } label: {
+            Button { togglePlayback() } label: {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 24, height: 24)
@@ -259,20 +284,58 @@ struct VoiceMessageBubble: View {
                     .font(.caption2)
                     .monospacedDigit()
             }
+
+            Button {
+                player?.pause()
+                isPlaying = false
+                showTranscription = true
+                if transcription == nil && !isTranscribing {
+                    Task { await transcribe() }
+                }
+            } label: {
+                if isTranscribing {
+                    ProgressView().scaleEffect(0.65).frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 14))
+                        .opacity(0.7)
+                }
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: 200)
-        .background(isMe ? Color.blue : Color(.systemGray5))
-        .foregroundColor(isMe ? .white : .primary)
-        .cornerRadius(16)
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-            tickProgress()
+        .frame(width: 220)
+    }
+
+    private var transcriptionView: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Group {
+                if isTranscribing {
+                    HStack(spacing: 6) {
+                        ProgressView().scaleEffect(0.7)
+                        Text("Transcribing…")
+                            .font(.caption)
+                            .italic()
+                    }
+                } else if let text = transcription {
+                    Text(text)
+                        .font(.subheadline)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Transcription unavailable.")
+                        .font(.caption)
+                        .italic()
+                        .opacity(0.7)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                showTranscription = false
+            } label: {
+                Image(systemName: "waveform")
+                    .font(.system(size: 16))
+            }
         }
-        .onDisappear {
-            player?.pause()
-            isPlaying = false
-        }
+        .frame(minWidth: 220, maxWidth: 300)
     }
 
     private func togglePlayback() {
@@ -306,6 +369,39 @@ struct VoiceMessageBubble: View {
 
     private func formatDuration(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func transcribe() async {
+        isTranscribing = true
+        defer { isTranscribing = false }
+
+        let status = await withCheckedContinuation { cont in
+            SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
+        }
+        guard status == .authorized else { return }
+
+        guard let urlStr = message.mediaUrl, let remoteURL = URL(string: urlStr) else { return }
+
+        guard let (tmpURL, _) = try? await URLSession.shared.download(from: remoteURL) else { return }
+        let m4aURL = tmpURL.deletingPathExtension().appendingPathExtension("m4a")
+        try? FileManager.default.moveItem(at: tmpURL, to: m4aURL)
+        defer { try? FileManager.default.removeItem(at: m4aURL) }
+
+        guard let recognizer = SFSpeechRecognizer(), recognizer.isAvailable else { return }
+
+        let request = SFSpeechURLRecognitionRequest(url: m4aURL)
+        request.shouldReportPartialResults = false
+
+        let result = try? await withCheckedThrowingContinuation { (cont: CheckedContinuation<SFSpeechRecognitionResult, Error>) in
+            var finished = false
+            recognizer.recognitionTask(with: request) { result, error in
+                guard !finished else { return }
+                if let error { finished = true; cont.resume(throwing: error) }
+                else if let result, result.isFinal { finished = true; cont.resume(returning: result) }
+            }
+        }
+
+        transcription = result?.bestTranscription.formattedString
     }
 }
 

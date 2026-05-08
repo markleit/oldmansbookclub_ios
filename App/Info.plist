@@ -30,6 +30,8 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Used to transcribe voice messages.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Used for sending voice messages.</string>
     <key>NSCameraUsageDescription</key>
