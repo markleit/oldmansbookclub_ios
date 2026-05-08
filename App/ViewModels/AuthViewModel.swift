@@ -52,7 +52,7 @@ final class AuthViewModel: ObservableObject {
                 } catch APIError.pendingApproval {
                     errorMessage = "Your account is pending club approval. Try again once the admin has added you."
                 } catch {
-                    errorMessage = "Sign in failed: \(error)"
+                    errorMessage = "Sign in failed. Please try again."
                 }
             }
         }
