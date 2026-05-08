@@ -5,7 +5,9 @@
       "Bash(xcrun simctl io * screenshot *)",
       "Bash(plutil -p *)",
       "Bash(lsof -i :*)",
-      "Bash(az account show *)"
+      "Bash(az account show *)",
+      "Bash(az webapp log tail *)",
+      "Bash(xcode-select -p)"
     ]
   }
 }

@@ -69,6 +69,9 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
+        if (!user.IsApproved)
+            return Unauthorized("This club is invite-only. Ask the club admin to approve your account.");
+
         var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
         if (!isMember)
         {
