@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BookClubApi.Models;
 
-public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email);
+public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null);
 public record DevLoginRequest(string DisplayName);
 public record AuthResponse(string AccessToken, UserDto User);
 
