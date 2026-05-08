@@ -20,7 +20,7 @@ namespace BookClubApi.Migrations
                 column: "BookId",
                 principalTable: "Books",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+                onDelete: ReferentialAction.NoAction);
         }
 
         /// <inheritdoc />

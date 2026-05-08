@@ -24,7 +24,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(m => m.Book)
             .WithMany(b => b.Messages)
             .HasForeignKey(m => m.BookId)
-            .OnDelete(DeleteBehavior.Cascade);
+            .OnDelete(DeleteBehavior.NoAction);
 
         modelBuilder.Entity<User>()
             .HasIndex(u => u.AppleSubject)

@@ -244,7 +244,7 @@ namespace BookClubApi.Migrations
                     b.HasOne("BookClubApi.Models.Book", "Book")
                         .WithMany("Messages")
                         .HasForeignKey("BookId")
-                        .OnDelete(DeleteBehavior.Cascade);
+                        .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("BookClubApi.Models.Club", "Club")
                         .WithMany("Messages")
