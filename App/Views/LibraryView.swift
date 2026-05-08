@@ -35,7 +35,7 @@ struct LibraryView: View {
                             SectionHeader(title: "CURRENTLY READING")
                             ForEach(viewModel.currentReads) { book in
                                 NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
-                                    CurrentBookCard(book: book)
+                                    CurrentBookCard(book: book, refreshToken: viewModel.imageRefreshToken)
                                 }
                                 .buttonStyle(.plain)
                                 .padding(.horizontal)
@@ -50,7 +50,7 @@ struct LibraryView: View {
                             if bookListExpanded {
                                 ForEach(viewModel.bookList) { book in
                                     NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
-                                        PastBookRow(book: book)
+                                        PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
                                     }
                                     .buttonStyle(.plain)
                                     .padding(.horizontal)
@@ -67,7 +67,7 @@ struct LibraryView: View {
                             if pastReadsExpanded {
                                 ForEach(viewModel.pastReads) { book in
                                     NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
-                                        PastBookRow(book: book)
+                                        PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
                                     }
                                     .buttonStyle(.plain)
                                     .padding(.horizontal)
@@ -141,22 +141,11 @@ struct CollapsibleSectionHeader: View {
 
 struct CurrentBookCard: View {
     let book: Book
+    var refreshToken: UUID = UUID()
 
     var body: some View {
         HStack(spacing: 16) {
-            if let urlStr = book.coverBlobUrl, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.3))
-                }
-                .frame(width: 80, height: 120)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 80, height: 120)
-            }
+            CachedBookCover(urlString: book.coverBlobUrl, width: 80, height: 120, cornerRadius: 8, refreshToken: refreshToken)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(book.title)
@@ -181,22 +170,11 @@ struct CurrentBookCard: View {
 
 struct PastBookRow: View {
     let book: Book
+    var refreshToken: UUID = UUID()
 
     var body: some View {
         HStack(spacing: 12) {
-            if let urlStr = book.coverBlobUrl, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 4).fill(Color.gray.opacity(0.3))
-                }
-                .frame(width: 36, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            } else {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color.gray.opacity(0.3))
-                    .frame(width: 36, height: 52)
-            }
+            CachedBookCover(urlString: book.coverBlobUrl, width: 36, height: 52, cornerRadius: 4, refreshToken: refreshToken)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(book.title).font(.headline).foregroundColor(.primary)

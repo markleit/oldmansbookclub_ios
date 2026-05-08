@@ -6,6 +6,13 @@ struct OldMansBookClubApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var auth = AuthViewModel()
 
+    init() {
+        URLCache.shared = URLCache(
+            memoryCapacity: 50 * 1024 * 1024,
+            diskCapacity: 200 * 1024 * 1024
+        )
+    }
+
     var body: some Scene {
         WindowGroup {
             if auth.isAuthenticated {

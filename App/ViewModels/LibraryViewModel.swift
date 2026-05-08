@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 @MainActor
 final class LibraryViewModel: ObservableObject {
@@ -7,6 +8,7 @@ final class LibraryViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var isOffline = false
     @Published var errorMessage: String?
+    @Published var imageRefreshToken = UUID()
 
     var currentReads: [Book] { books.filter { $0.status == .current } }
     var bookList: [Book] { books.filter { $0.status == .future } }
@@ -15,6 +17,8 @@ final class LibraryViewModel: ObservableObject {
     private static let cacheKey = "cached_books"
     private static let decoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
     private static let encoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
+
+    private var networkMonitor: NWPathMonitor?
 
     private func loadCache() {
         guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
@@ -29,6 +33,7 @@ final class LibraryViewModel: ObservableObject {
 
     func load() async {
         loadCache()
+        isOffline = false
         isLoading = books.isEmpty
         errorMessage = nil
 
@@ -48,7 +53,7 @@ final class LibraryViewModel: ObservableObject {
             let fetched = try await APIClient.shared.getMyBooks()
             books = fetched
             saveCache(fetched)
-            isOffline = false
+            imageRefreshToken = UUID()
         } catch {
             if books.isEmpty {
                 errorMessage = "Unable to load books. Check your connection."
@@ -57,6 +62,21 @@ final class LibraryViewModel: ObservableObject {
             }
         }
         isLoading = false
+        startNetworkMonitorIfNeeded()
+    }
+
+    private func startNetworkMonitorIfNeeded() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        networkMonitor = monitor
+        var prevStatus: NWPath.Status?
+        monitor.pathUpdateHandler = { [weak self] path in
+            let wasOffline = prevStatus.map { $0 != .satisfied } ?? false
+            prevStatus = path.status
+            guard wasOffline, path.status == .satisfied else { return }
+            Task { await self?.load() }
+        }
+        monitor.start(queue: DispatchQueue(label: "library-net-monitor"))
     }
 
     func bookCreated(_ book: Book) {

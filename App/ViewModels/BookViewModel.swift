@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import AVFoundation
+import Network
 
 @MainActor
 final class BookViewModel: ObservableObject {
@@ -18,30 +19,36 @@ final class BookViewModel: ObservableObject {
 
     private var pendingByBody: [String: UUID] = [:]
     private let audioRecorder = AudioRecorder()
+    private var networkMonitor: NWPathMonitor?
 
     init(book: Book) {
         self.book = book
     }
 
     func load() async {
-        if let cached = CacheService.shared.load([Message].self, key: cacheKey), !cached.isEmpty {
+        let hasCachedState: Bool
+        if let cached = CacheService.shared.load([Message].self, key: cacheKey) {
             messages = cached
+            hasCachedState = true
+        } else {
+            hasCachedState = false
         }
-        isLoadingMessages = messages.isEmpty
+        isOffline = false
+        isLoadingMessages = !hasCachedState
 
         do {
             let fetched = try await APIClient.shared.getMessages(bookId: book.id)
             messages = fetched
             CacheService.shared.save(fetched, key: cacheKey)
-            isOffline = false
         } catch {
-            if messages.isEmpty {
-                errorMessage = "Failed to load discussion."
-            } else {
+            if hasCachedState {
                 isOffline = true
+            } else {
+                errorMessage = "Failed to load discussion."
             }
         }
         isLoadingMessages = false
+        startNetworkMonitorIfNeeded()
 
         guard !isOffline else { return }
 
@@ -161,6 +168,22 @@ final class BookViewModel: ObservableObject {
     }
 
     func disconnect() async {
+        networkMonitor?.cancel()
+        networkMonitor = nil
         await ChatService.shared.disconnect()
+    }
+
+    private func startNetworkMonitorIfNeeded() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        networkMonitor = monitor
+        var prevStatus: NWPath.Status?
+        monitor.pathUpdateHandler = { [weak self] path in
+            let wasOffline = prevStatus.map { $0 != .satisfied } ?? false
+            prevStatus = path.status
+            guard wasOffline, path.status == .satisfied else { return }
+            Task { await self?.load() }
+        }
+        monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }
 }
