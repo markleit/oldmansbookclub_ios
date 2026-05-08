@@ -1,5 +1,17 @@
 import Foundation
 
+enum APIError: LocalizedError {
+    case pendingApproval
+    case serverError(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .pendingApproval: return "Your account is pending club approval. Try again once the admin has added you."
+        case .serverError(let code): return "Server error (\(code))."
+        }
+    }
+}
+
 final class APIClient {
     static let shared = APIClient()
 
@@ -52,6 +64,7 @@ final class APIClient {
     struct AppleAuthRequest: Encodable {
         let identityToken: String
         let displayName: String
+        let email: String?
     }
 
     struct AuthResponse: Decodable {
@@ -64,10 +77,11 @@ final class APIClient {
         let displayName: String
         let nickname: String?
         let avatarUrl: String?
+        let isAdmin: Bool
     }
 
-    func signInWithApple(identityToken: String, displayName: String) async throws -> AuthResponse {
-        let body = AppleAuthRequest(identityToken: identityToken, displayName: displayName)
+    func signInWithApple(identityToken: String, displayName: String, email: String?) async throws -> AuthResponse {
+        let body = AppleAuthRequest(identityToken: identityToken, displayName: displayName, email: email)
         return try await post(path: "/auth/apple", body: body, authenticated: false)
     }
 
@@ -220,6 +234,31 @@ final class APIClient {
         }
     }
 
+    // MARK: - Admin
+
+    struct PendingUser: Identifiable, Decodable {
+        let id: UUID
+        let displayName: String
+        let email: String?
+        let createdAt: Date
+    }
+
+    func pendingUsers() async throws -> [PendingUser] {
+        try await get(path: "/admin/pending-users")
+    }
+
+    func approveUser(id: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)/approve")!)
+        request.httpMethod = "POST"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyResponse: Decodable {}
 
     // MARK: - Helpers
@@ -250,9 +289,13 @@ final class APIClient {
         }
         request.httpBody = try encoder.encode(body)
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if body.contains("invite-only") { throw APIError.pendingApproval }
+            throw URLError(.userAuthenticationRequired)
         }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }
 

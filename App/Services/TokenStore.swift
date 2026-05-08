@@ -12,6 +12,7 @@ final class TokenStore {
     private let clubIdKey = "club_id"
     private let nicknameKey = "user_nickname"
     private let avatarUrlKey = "user_avatar_url"
+    private let isAdminKey = "user_is_admin"
 
     private init() {
         // Migrate any existing UserDefaults token into Keychain on first run
@@ -99,14 +100,20 @@ final class TokenStore {
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: clubIdKey) }
     }
 
+    var isAdmin: Bool {
+        get { UserDefaults.standard.bool(forKey: isAdminKey) }
+        set { UserDefaults.standard.set(newValue, forKey: isAdminKey) }
+    }
+
     var isAuthenticated: Bool { token != nil }
 
-    func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil) {
+    func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false) {
         self.token = token
         self.userId = userId
         self.displayName = displayName
         self.nickname = nickname
         self.avatarUrl = avatarUrl
+        self.isAdmin = isAdmin
     }
 
     func clear() {
@@ -116,5 +123,6 @@ final class TokenStore {
         clubId = nil
         nickname = nil
         avatarUrl = nil
+        isAdmin = false
     }
 }

@@ -48,7 +48,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl)));
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl, user.IsAdmin)));
     }
 
     [HttpPost("apple")]
@@ -64,8 +64,13 @@ public class AuthController(
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == appleSubject);
         if (user is null)
         {
-            user = new User { AppleSubject = appleSubject, DisplayName = request.DisplayName };
+            user = new User { AppleSubject = appleSubject, DisplayName = request.DisplayName, Email = request.Email };
             db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+        else if (user.Email is null && request.Email is not null)
+        {
+            user.Email = request.Email;
             await db.SaveChangesAsync();
         }
 
@@ -86,7 +91,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl)));
+        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl, user.IsAdmin)));
     }
 
     private string GenerateJwt(User user)

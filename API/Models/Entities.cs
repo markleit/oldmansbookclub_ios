@@ -10,7 +10,9 @@ public class User
     [MaxLength(50)] public string? Nickname { get; set; }
     [MaxLength(2048)] public string? AvatarUrl { get; set; }
     [MaxLength(512)] public string? DeviceToken { get; set; }
+    [MaxLength(255)] public string? Email { get; set; }
     public bool IsApproved { get; set; } = false;
+    public bool IsAdmin { get; set; } = false;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<Membership> Memberships { get; set; } = [];
 

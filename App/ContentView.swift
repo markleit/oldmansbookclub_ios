@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    private var isAdmin: Bool { TokenStore.shared.isAdmin }
+
     var body: some View {
         TabView {
             LibraryView()
@@ -12,6 +14,13 @@ struct ContentView: View {
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.circle")
                 }
+
+            if isAdmin {
+                AdminView()
+                    .tabItem {
+                        Label("Admin", systemImage: "person.badge.key.fill")
+                    }
+            }
         }
     }
 }

@@ -27,6 +27,7 @@ final class AuthViewModel: ObservableObject {
             } else {
                 displayName = TokenStore.shared.displayName ?? "Book Club Member"
             }
+            let email = credential.email
 
             isLoading = true
             errorMessage = nil
@@ -36,16 +37,20 @@ final class AuthViewModel: ObservableObject {
                 do {
                     let response = try await APIClient.shared.signInWithApple(
                         identityToken: identityToken,
-                        displayName: displayName
+                        displayName: displayName,
+                        email: email
                     )
                     TokenStore.shared.save(
                         token: response.accessToken,
                         userId: response.user.id,
                         displayName: response.user.displayName,
                         nickname: response.user.nickname,
-                        avatarUrl: response.user.avatarUrl
+                        avatarUrl: response.user.avatarUrl,
+                        isAdmin: response.user.isAdmin
                     )
                     isAuthenticated = true
+                } catch APIError.pendingApproval {
+                    errorMessage = "Your account is pending club approval. Try again once the admin has added you."
                 } catch {
                     errorMessage = "Sign in failed. Please try again."
                 }
@@ -71,7 +76,8 @@ final class AuthViewModel: ObservableObject {
                     userId: response.user.id,
                     displayName: response.user.displayName,
                     nickname: response.user.nickname,
-                    avatarUrl: response.user.avatarUrl
+                    avatarUrl: response.user.avatarUrl,
+                    isAdmin: response.user.isAdmin
                 )
                 isAuthenticated = true
             } catch {

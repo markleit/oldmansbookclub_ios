@@ -47,5 +47,5 @@ public class UsersController(AppDbContext db) : ControllerBase
         uri.Scheme == "https" &&
         uri.Host.EndsWith(".blob.core.windows.net");
 
-    private static UserDto ToDto(User u) => new(u.Id, u.DisplayName, u.Nickname, u.AvatarUrl);
+    private static UserDto ToDto(User u) => new(u.Id, u.DisplayName, u.Nickname, u.AvatarUrl, u.IsAdmin);
 }

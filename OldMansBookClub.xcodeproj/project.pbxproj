@@ -23,6 +23,7 @@
 		958AF33D661E4DE915A5862A /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8FBEB2C7086C94FA433207 /* ChatService.swift */; };
 		A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88754FFD53578C83DEC2294D /* LibraryView.swift */; };
 		B085151687156DA2AC994199 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E0F879AC20F63014F28CB5 /* BookDetailView.swift */; };
+		BC028A1177F026A4999F388C /* AdminView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69018BA34CF925339F43265 /* AdminView.swift */; };
 		CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BDC572FF6DDD04153861DF /* ContentView.swift */; };
 		D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */; };
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
@@ -46,9 +47,11 @@
 		88754FFD53578C83DEC2294D /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		B561ED5FA32D5FF7BE41DA80 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.entitlements; sourceTree = "<group>"; };
 		C5BDC572FF6DDD04153861DF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD42813D21DFB8362B19ACCF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D395542233ADC1273F05370D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		D69018BA34CF925339F43265 /* AdminView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminView.swift; sourceTree = "<group>"; };
 		DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		DEE74273F3039AFB33F97C01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E03A3E7B2C78427DBBADED06 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
@@ -109,6 +112,7 @@
 			isa = PBXGroup;
 			children = (
 				5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */,
+				D69018BA34CF925339F43265 /* AdminView.swift */,
 				59E0F879AC20F63014F28CB5 /* BookDetailView.swift */,
 				88754FFD53578C83DEC2294D /* LibraryView.swift */,
 				010D3939D82C530D2050FDBA /* LoginView.swift */,
@@ -134,6 +138,7 @@
 				C5BDC572FF6DDD04153861DF /* ContentView.swift */,
 				40CB6C91B09B06C1D5531269 /* Extensions.swift */,
 				CD42813D21DFB8362B19ACCF /* Info.plist */,
+				BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */,
 				17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */,
 				0116884E101D0BEC9BE7977E /* Models */,
 				0DC96F159ED578CF4C8628B8 /* Services */,
@@ -175,6 +180,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					C643C6351EFA917C7252CD36 = {
+						DevelopmentTeam = AKV2XU3684;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 5C0DEB41C3EB1F8DB5505D50 /* Build configuration list for PBXProject "OldMansBookClub" */;
@@ -217,6 +226,7 @@
 			files = (
 				882C4AA5AED7AF3D691F14CA /* APIClient.swift in Sources */,
 				8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */,
+				BC028A1177F026A4999F388C /* AdminView.swift in Sources */,
 				165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */,
 				238255509291CD03907584E8 /* AudioRecorder.swift in Sources */,
 				F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */,
@@ -300,14 +310,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AKV2XU3684;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.oldmansbookclub;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -317,14 +332,19 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = AKV2XU3684;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.oldmansbookclub;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
