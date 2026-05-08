@@ -7,11 +7,14 @@ final class BookViewModel: ObservableObject {
     @Published var book: Book
     @Published var messages: [Message] = []
     @Published var isLoadingMessages = false
+    @Published var isOffline = false
     @Published var messageText = ""
     @Published var errorMessage: String?
     @Published var pendingImage: UIImage?
     @Published var isRecording = false
     @Published var isUploading = false
+
+    private var cacheKey: String { "messages_\(book.id)" }
 
     private var pendingByBody: [String: UUID] = [:]
     private let audioRecorder = AudioRecorder()
@@ -21,13 +24,26 @@ final class BookViewModel: ObservableObject {
     }
 
     func load() async {
-        isLoadingMessages = true
+        if let cached = CacheService.shared.load([Message].self, key: cacheKey), !cached.isEmpty {
+            messages = cached
+        }
+        isLoadingMessages = messages.isEmpty
+
         do {
-            messages = try await APIClient.shared.getMessages(bookId: book.id)
+            let fetched = try await APIClient.shared.getMessages(bookId: book.id)
+            messages = fetched
+            CacheService.shared.save(fetched, key: cacheKey)
+            isOffline = false
         } catch {
-            errorMessage = "Failed to load discussion."
+            if messages.isEmpty {
+                errorMessage = "Failed to load discussion."
+            } else {
+                isOffline = true
+            }
         }
         isLoadingMessages = false
+
+        guard !isOffline else { return }
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }

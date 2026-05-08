@@ -5,6 +5,7 @@ final class LibraryViewModel: ObservableObject {
     @Published var books: [Book] = []
     @Published var clubId: UUID? = TokenStore.shared.clubId
     @Published var isLoading = false
+    @Published var isOffline = false
     @Published var errorMessage: String?
 
     var currentReads: [Book] { books.filter { $0.status == .current } }
@@ -47,9 +48,12 @@ final class LibraryViewModel: ObservableObject {
             let fetched = try await APIClient.shared.getMyBooks()
             books = fetched
             saveCache(fetched)
+            isOffline = false
         } catch {
             if books.isEmpty {
-                errorMessage = "Error: \(error)"
+                errorMessage = "Unable to load books. Check your connection."
+            } else {
+                isOffline = true
             }
         }
         isLoading = false

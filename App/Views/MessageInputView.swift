@@ -6,6 +6,7 @@ struct MessageInputView: View {
     @Binding var pendingImage: UIImage?
     var isRecording: Bool
     var isUploading: Bool
+    var isOffline: Bool = false
     var onSend: () -> Void
     var onSendPhoto: () -> Void
     var onToggleRecording: () -> Void
@@ -21,93 +22,102 @@ struct MessageInputView: View {
         VStack(spacing: 0) {
             Divider()
 
-            // Pending image thumbnail
-            if let image = pendingImage {
-                HStack {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 64, height: 64)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(alignment: .topTrailing) {
-                            Button {
-                                pendingImage = nil
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.white, .black)
-                                    .font(.title3)
+            if isOffline {
+                Label("You're offline — messages are read-only", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+            } else {
+                // Pending image thumbnail
+                if let image = pendingImage {
+                    HStack {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    pendingImage = nil
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.white, .black)
+                                        .font(.title3)
+                                }
+                                .offset(x: 6, y: -6)
                             }
-                            .offset(x: 6, y: -6)
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+
+                HStack(alignment: .bottom, spacing: 8) {
+
+                    // Camera
+                    Button {
+                        showingCamera = true
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+
+                    // Photo picker
+                    PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                    .onChange(of: selectedPhotoItem) { item in
+                        Task {
+                            if let data = try? await item?.loadTransferable(type: Data.self),
+                               let image = UIImage(data: data) {
+                                pendingImage = image
+                            }
+                            selectedPhotoItem = nil
                         }
-                    Spacer()
+                    }
+
+                    // Growing text input
+                    GrowingTextEditor(text: $text, placeholder: "Message…")
+
+                    // Walkie-talkie / send button
+                    if isUploading {
+                        ProgressView()
+                            .frame(width: 32, height: 32)
+                    } else if hasContent {
+                        Button {
+                            if pendingImage != nil {
+                                onSendPhoto()
+                            } else {
+                                onSend()
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 28, weight: .semibold))
+                                .foregroundColor(.accentColor)
+                                .frame(width: 44, height: 44)
+                        }
+                    } else {
+                        Button {
+                            onToggleRecording()
+                        } label: {
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 28, weight: .semibold))
+                                .foregroundColor(isRecording ? .red : .accentColor)
+                                .frame(width: 44, height: 44)
+                                .scaleEffect(isRecording ? 1.15 : 1.0)
+                                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true),
+                                           value: isRecording)
+                        }
+                    }
                 }
                 .padding(.horizontal)
-                .padding(.top, 8)
+                .padding(.vertical, 8)
             }
-
-            HStack(alignment: .bottom, spacing: 8) {
-
-                // Camera
-                Button {
-                    showingCamera = true
-                } label: {
-                    Image(systemName: "camera.fill")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                }
-
-                // Photo picker
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                }
-                .onChange(of: selectedPhotoItem) { item in
-                    Task {
-                        if let data = try? await item?.loadTransferable(type: Data.self),
-                           let image = UIImage(data: data) {
-                            pendingImage = image
-                        }
-                        selectedPhotoItem = nil
-                    }
-                }
-
-                // Growing text input
-                GrowingTextEditor(text: $text, placeholder: "Message…")
-
-                // Walkie-talkie / send button
-                if isUploading {
-                    ProgressView()
-                        .frame(width: 32, height: 32)
-                } else if hasContent {
-                    Button {
-                        if pendingImage != nil {
-                            onSendPhoto()
-                        } else {
-                            onSend()
-                        }
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundColor(.accentColor)
-                            .frame(width: 44, height: 44)
-                    }
-                } else {
-                    Button {
-                        onToggleRecording()
-                    } label: {
-                        Image(systemName: "mic.fill")
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundColor(isRecording ? .red : .accentColor)
-                            .frame(width: 44, height: 44)
-                            .scaleEffect(isRecording ? 1.15 : 1.0)
-                            .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true),
-                                       value: isRecording)
-                    }
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
         }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in

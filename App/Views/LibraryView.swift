@@ -8,7 +8,16 @@ struct LibraryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            VStack(spacing: 0) {
+                if viewModel.isOffline {
+                    Label("Offline — showing cached library", systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(Color(.systemGray6))
+                }
+                ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
 
                     if let error = viewModel.errorMessage {
@@ -91,6 +100,7 @@ struct LibraryView: View {
             .sheet(isPresented: $showingAddBook) {
                 AddBookSheetWrapper(viewModel: viewModel)
             }
+            } // VStack
         }
     }
 }

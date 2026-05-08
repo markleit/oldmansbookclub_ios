@@ -17,6 +17,15 @@ struct BookDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if viewModel.isOffline {
+                Label("Offline — showing cached messages", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color(.systemGray6))
+            }
+
             if viewModel.isLoadingMessages {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.messages.isEmpty {
@@ -55,6 +64,7 @@ struct BookDetailView: View {
                 pendingImage: $viewModel.pendingImage,
                 isRecording: viewModel.isRecording,
                 isUploading: viewModel.isUploading,
+                isOffline: viewModel.isOffline,
                 onSend: { Task { await viewModel.sendMessage() } },
                 onSendPhoto: { Task { await viewModel.sendPhoto() } },
                 onToggleRecording: { Task { await viewModel.toggleRecording() } }
