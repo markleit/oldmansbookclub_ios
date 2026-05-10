@@ -1,5 +1,6 @@
 using BookClubApi.Data;
 using BookClubApi.Models;
+using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class UsersController(AppDbContext db) : ControllerBase
+public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
 {
     [HttpGet("me")]
     public async Task<ActionResult<UserDto>> GetMe()
@@ -16,7 +17,7 @@ public class UsersController(AppDbContext db) : ControllerBase
         var userId = GetUserId();
         var user = await db.Users.FindAsync(userId);
         if (user is null) return NotFound();
-        return ToDto(user);
+        return await ToDto(user);
     }
 
     [HttpPatch("me")]
@@ -35,7 +36,7 @@ public class UsersController(AppDbContext db) : ControllerBase
         }
 
         await db.SaveChangesAsync();
-        return ToDto(user);
+        return await ToDto(user);
     }
 
     private Guid GetUserId() =>
@@ -47,5 +48,11 @@ public class UsersController(AppDbContext db) : ControllerBase
         uri.Scheme == "https" &&
         uri.Host.EndsWith(".blob.core.windows.net");
 
-    private static UserDto ToDto(User u) => new(u.Id, u.DisplayName, u.Nickname, u.AvatarUrl, u.IsAdmin);
+    private async Task<UserDto> ToDto(User u)
+    {
+        var avatarUrl = u.AvatarUrl is not null
+            ? await blob.GenerateAvatarReadUrlAsync(u.Id)
+            : null;
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin);
+    }
 }

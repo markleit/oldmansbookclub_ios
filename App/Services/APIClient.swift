@@ -180,6 +180,10 @@ final class APIClient {
         let avatarUrl: String?
     }
 
+    func getMe() async throws -> UserResponse {
+        try await get(path: "/users/me")
+    }
+
     func updateProfile(displayName: String?, nickname: String?, avatarUrl: String?) async throws -> UserResponse {
         let body = UpdateProfileRequest(displayName: displayName, nickname: nickname, avatarUrl: avatarUrl)
         return try await patch(path: "/users/me", body: body)

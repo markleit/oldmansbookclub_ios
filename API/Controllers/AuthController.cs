@@ -17,8 +17,17 @@ namespace BookClubApi.Controllers;
 public class AuthController(
     AppDbContext db,
     AppleTokenValidator appleValidator,
-    IConfiguration config) : ControllerBase
+    IConfiguration config,
+    BlobService blob) : ControllerBase
 {
+    private async Task<UserDto> BuildUserDto(User u)
+    {
+        var avatarUrl = u.AvatarUrl is not null
+            ? await blob.GenerateAvatarReadUrlAsync(u.Id)
+            : null;
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin);
+    }
+
     [HttpPost("dev-login")]
     public async Task<ActionResult<AuthResponse>> DevLogin([FromBody] DevLoginRequest request)
     {
@@ -48,7 +57,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl, user.IsAdmin)));
+        return Ok(new AuthResponse(token, await BuildUserDto(user)));
     }
 
     [HttpPost("apple")]
@@ -91,7 +100,7 @@ public class AuthController(
         }
 
         var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, new UserDto(user.Id, user.DisplayName, user.Nickname, user.AvatarUrl, user.IsAdmin)));
+        return Ok(new AuthResponse(token, await BuildUserDto(user)));
     }
 
     private string GenerateJwt(User user)

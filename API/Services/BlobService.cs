@@ -39,8 +39,15 @@ public class BlobService
         var uploadUrl = await GenerateUserDelegationSasAsync(AvatarContainer, blobName,
             BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(10));
 
-        // Avatar container is publicly readable — return plain URL, no SAS needed
+        // Return the plain blob URL; callers generate SAS read URLs separately via GenerateAvatarReadUrlAsync
         return (uploadUrl, blobClient.Uri.ToString());
+    }
+
+    public Task<string> GenerateAvatarReadUrlAsync(Guid userId)
+    {
+        var blobName = $"{userId}/avatar.jpg";
+        return GenerateUserDelegationSasAsync(AvatarContainer, blobName,
+            BlobSasPermissions.Read, TimeSpan.FromDays(7));
     }
 
     private async Task<string> GenerateUserDelegationSasAsync(
