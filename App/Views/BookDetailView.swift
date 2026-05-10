@@ -238,6 +238,7 @@ struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
     @State private var isPlaying = false
+    @State private var speakerEnabled = true
     @State private var player: AVPlayer?
     @State private var progress: Double = 0
     @State private var currentSeconds: Int = 0
@@ -297,6 +298,13 @@ struct VoiceMessageBubble: View {
                     .monospacedDigit()
             }
 
+            Button { toggleSpeaker() } label: {
+                Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "earbuds")
+                    .font(.system(size: 14))
+                    .opacity(0.8)
+                    .frame(width: 24, height: 24)
+            }
+
             RoutePickerView(tintColor: isMe ? .white : .label)
                 .frame(width: 24, height: 24)
 
@@ -317,7 +325,7 @@ struct VoiceMessageBubble: View {
                 }
             }
         }
-        .frame(width: 248)
+        .frame(width: 275)
     }
 
     private var transcriptionView: some View {
@@ -361,13 +369,25 @@ struct VoiceMessageBubble: View {
         } else {
             if player == nil {
                 guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
-                try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
-                try? AVAudioSession.sharedInstance().setActive(true)
                 player = AVPlayer(url: url)
             }
+            activateAudioSession()
             player?.play()
             isPlaying = true
         }
+    }
+
+    private func toggleSpeaker() {
+        speakerEnabled.toggle()
+        if isPlaying { activateAudioSession() }
+    }
+
+    private func activateAudioSession() {
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playAndRecord, mode: .spokenAudio,
+                                 options: [.allowBluetooth, .allowBluetoothA2DP])
+        try? session.setActive(true)
+        try? session.overrideOutputAudioPort(speakerEnabled ? .speaker : .none)
     }
 
     private func tickProgress() {
