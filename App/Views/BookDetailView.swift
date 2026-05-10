@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import AVKit
 import Speech
 
 struct BookDetailView: View {
@@ -266,6 +267,7 @@ struct VoiceMessageBubble: View {
         .onDisappear {
             player?.pause()
             isPlaying = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
@@ -295,6 +297,9 @@ struct VoiceMessageBubble: View {
                     .monospacedDigit()
             }
 
+            RoutePickerView(tintColor: isMe ? .white : .label)
+                .frame(width: 24, height: 24)
+
             Button {
                 player?.pause()
                 isPlaying = false
@@ -312,7 +317,7 @@ struct VoiceMessageBubble: View {
                 }
             }
         }
-        .frame(width: 220)
+        .frame(width: 248)
     }
 
     private var transcriptionView: some View {
@@ -352,9 +357,12 @@ struct VoiceMessageBubble: View {
         if isPlaying {
             player?.pause()
             isPlaying = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         } else {
             if player == nil {
                 guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+                try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+                try? AVAudioSession.sharedInstance().setActive(true)
                 player = AVPlayer(url: url)
             }
             player?.play()
@@ -412,6 +420,21 @@ struct VoiceMessageBubble: View {
         }
 
         transcription = result?.bestTranscription.formattedString
+    }
+}
+
+struct RoutePickerView: UIViewRepresentable {
+    var tintColor: UIColor = .label
+
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.tintColor = tintColor
+        view.activeTintColor = .systemBlue
+        return view
+    }
+
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
+        uiView.tintColor = tintColor
     }
 }
 
