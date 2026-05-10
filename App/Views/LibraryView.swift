@@ -43,10 +43,10 @@ struct LibraryView: View {
                         }
                     }
 
-                    // Book List — collapsible
+                    // Future Reads — collapsible
                     if !viewModel.bookList.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
-                            CollapsibleSectionHeader(title: "BOOK LIST", isExpanded: $bookListExpanded)
+                            CollapsibleSectionHeader(title: "FUTURE READS", isExpanded: $bookListExpanded)
                             if bookListExpanded {
                                 ForEach(viewModel.bookList) { book in
                                     NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {

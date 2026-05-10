@@ -90,14 +90,14 @@ struct BookDetailView: View {
                                 onStatusChanged?(.past)
                             }
                         }
-                        Button("Move to Book List") {
+                        Button("Move to Future Reads") {
                             Task {
                                 await viewModel.setStatus(.future)
                                 onStatusChanged?(.future)
                             }
                         }
                     case .past:
-                        Button("Move to Book List") {
+                        Button("Move to Future Reads") {
                             Task {
                                 await viewModel.setStatus(.future)
                                 onStatusChanged?(.future)
