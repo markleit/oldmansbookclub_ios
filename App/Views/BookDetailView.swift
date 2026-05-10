@@ -238,7 +238,7 @@ struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
     @State private var isPlaying = false
-    @State private var speakerEnabled = true
+    @State private var speakerEnabled = false
     @State private var player: AVPlayer?
     @State private var progress: Double = 0
     @State private var currentSeconds: Int = 0
