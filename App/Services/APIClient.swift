@@ -85,6 +85,13 @@ final class APIClient {
         return try await post(path: "/auth/apple", body: body, authenticated: false)
     }
 
+    struct DemoLoginRequest: Encodable { let passphrase: String }
+
+    func demoLogin(passphrase: String) async throws -> AuthResponse {
+        let body = DemoLoginRequest(passphrase: passphrase)
+        return try await post(path: "/auth/demo-login", body: body, authenticated: false)
+    }
+
     #if targetEnvironment(simulator)
     struct DevLoginRequest: Encodable { let displayName: String }
 

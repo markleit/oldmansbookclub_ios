@@ -3,6 +3,8 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject var auth: AuthViewModel
+    @State private var showDemoLogin = false
+    @State private var passphraseInput = ""
 
     var body: some View {
         VStack(spacing: 24) {
@@ -11,6 +13,9 @@ struct LoginView: View {
             Image(systemName: "books.vertical.fill")
                 .font(.system(size: 64))
                 .foregroundColor(.primary)
+                .onLongPressGesture(minimumDuration: 2) {
+                    showDemoLogin = true
+                }
 
             Text("Old Man's Book Club")
                 .font(.largeTitle)
@@ -53,6 +58,17 @@ struct LoginView: View {
             }
 
             Spacer().frame(height: 40)
+        }
+        .alert("Reviewer Access", isPresented: $showDemoLogin) {
+            SecureField("Passphrase", text: $passphraseInput)
+            Button("Sign In") {
+                let p = passphraseInput
+                passphraseInput = ""
+                auth.demoLogin(passphrase: p)
+            }
+            Button("Cancel", role: .cancel) { passphraseInput = "" }
+        } message: {
+            Text("Enter the reviewer passphrase to continue.")
         }
     }
 }

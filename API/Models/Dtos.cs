@@ -4,6 +4,7 @@ namespace BookClubApi.Models;
 
 public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null);
 public record DevLoginRequest(string DisplayName);
+public record DemoLoginRequest(string Passphrase);
 public record AuthResponse(string AccessToken, UserDto User);
 
 public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin);

@@ -28,6 +28,43 @@ public class AuthController(
         return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin);
     }
 
+    private const string DemoPassphrase = "BookClub2026";
+
+    [HttpPost("demo-login")]
+    public async Task<ActionResult<AuthResponse>> DemoLogin([FromBody] DemoLoginRequest request)
+    {
+        if (request.Passphrase != DemoPassphrase)
+            return Unauthorized();
+
+        const string reviewerSubject = "apple_reviewer";
+        var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == reviewerSubject);
+        if (user is null)
+        {
+            user = new User { AppleSubject = reviewerSubject, DisplayName = "Reviewer", IsApproved = true };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+        else if (!user.IsApproved)
+        {
+            user.IsApproved = true;
+            await db.SaveChangesAsync();
+        }
+
+        var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
+        if (!isMember)
+        {
+            var club = await db.Clubs.FirstOrDefaultAsync();
+            if (club is not null)
+            {
+                db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
+                await db.SaveChangesAsync();
+            }
+        }
+
+        var token = GenerateJwt(user);
+        return Ok(new AuthResponse(token, await BuildUserDto(user)));
+    }
+
     [HttpPost("dev-login")]
     public async Task<ActionResult<AuthResponse>> DevLogin([FromBody] DevLoginRequest request)
     {

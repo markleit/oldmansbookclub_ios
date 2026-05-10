@@ -63,6 +63,28 @@ final class AuthViewModel: ObservableObject {
         isAuthenticated = false
     }
 
+    func demoLogin(passphrase: String) {
+        isLoading = true
+        errorMessage = nil
+        Task {
+            defer { isLoading = false }
+            do {
+                let response = try await APIClient.shared.demoLogin(passphrase: passphrase)
+                TokenStore.shared.save(
+                    token: response.accessToken,
+                    userId: response.user.id,
+                    displayName: response.user.displayName,
+                    nickname: response.user.nickname,
+                    avatarUrl: response.user.avatarUrl,
+                    isAdmin: response.user.isAdmin
+                )
+                isAuthenticated = true
+            } catch {
+                errorMessage = "Invalid passphrase."
+            }
+        }
+    }
+
     #if targetEnvironment(simulator)
     func devLogin() {
         isLoading = true
