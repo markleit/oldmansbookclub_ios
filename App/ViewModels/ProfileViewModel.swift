@@ -7,6 +7,7 @@ final class ProfileViewModel: ObservableObject {
     @Published var nickname: String
     @Published var avatarUrl: String?
     @Published var pendingImage: UIImage?
+    @Published var displayImage: UIImage?
     @Published var isSaving = false
     @Published var errorMessage: String?
     @Published var saveSuccess = false
@@ -31,7 +32,10 @@ final class ProfileViewModel: ObservableObject {
                     to: URL(string: uploadResp.uploadUrl)!,
                     contentType: "image/jpeg"
                 )
-                finalAvatarUrl = uploadResp.mediaUrl
+                // Append timestamp so AsyncImage treats each upload as a new URL,
+                // bypassing any stale URLCache entry for the same blob path.
+                let ts = Int(Date().timeIntervalSince1970)
+                finalAvatarUrl = uploadResp.mediaUrl + "?t=\(ts)"
             }
             let trimmedName = displayName.trimmingCharacters(in: .whitespaces)
             let trimmedNick = nickname.trimmingCharacters(in: .whitespaces)
@@ -45,6 +49,7 @@ final class ProfileViewModel: ObservableObject {
             TokenStore.shared.avatarUrl = updated.avatarUrl
             displayName = updated.displayName
             avatarUrl = updated.avatarUrl
+            displayImage = pendingImage
             pendingImage = nil
             saveSuccess = true
         } catch {

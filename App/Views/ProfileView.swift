@@ -106,7 +106,7 @@ struct ProfileView: View {
     private var avatarView: some View {
         ZStack(alignment: .bottomTrailing) {
             Group {
-                if let image = viewModel.pendingImage {
+                if let image = viewModel.pendingImage ?? viewModel.displayImage {
                     Image(uiImage: image)
                         .resizable().scaledToFill()
                 } else if let urlStr = viewModel.avatarUrl, let url = URL(string: urlStr) {
