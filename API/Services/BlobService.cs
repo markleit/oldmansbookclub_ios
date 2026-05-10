@@ -31,7 +31,7 @@ public class BlobService
     public async Task<(string UploadUrl, string AvatarUrl)> GenerateAvatarUploadUrlAsync(Guid userId)
     {
         var containerClient = _client.GetBlobContainerClient(AvatarContainer);
-        await containerClient.CreateIfNotExistsAsync(PublicAccessType.Blob);
+        await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
 
         var blobName = $"{userId}/avatar.jpg";
         var blobClient = containerClient.GetBlobClient(blobName);
