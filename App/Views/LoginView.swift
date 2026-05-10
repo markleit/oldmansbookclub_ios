@@ -13,6 +13,8 @@ struct LoginView: View {
             Image(systemName: "books.vertical.fill")
                 .font(.system(size: 64))
                 .foregroundColor(.primary)
+                .padding(16)
+                .contentShape(Rectangle())
                 .onLongPressGesture(minimumDuration: 2) {
                     showDemoLogin = true
                 }
