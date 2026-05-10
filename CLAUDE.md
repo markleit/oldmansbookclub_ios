@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **iOS deployment target:** iOS 16.0+
 - **Bundle ID:** `com.example.oldmansbookclub` (placeholder — needs replacing before distribution)
 - **API:** Deployed to Azure App Service (Norway East, VS subscription)
-- **API base URL:** `https://oldmansbookclub-api.azurewebsites.net`
+- **API base URL:** configured in `APIClient.swift` (production) and `appsettings.Development.json` (local)
 
 ## Build
 
@@ -71,11 +71,11 @@ The API uses `JsonNamingPolicy.SnakeCaseLower` — all JSON keys are snake_case 
 The iOS app uses `#if targetEnvironment(simulator)` to point at `http://localhost:5235` instead of Azure. The login screen shows a **Dev Login (Simulator)** button (compile-time only, not in release builds) that hits `POST /auth/dev-login` — only available when the API runs in Development mode.
 
 To run locally:
-1. `cd API && dotnet run` — requires `appsettings.Development.json` (not in repo, pull from Azure with `az login` then `az webapp config appsettings list`)
+1. `cd API && dotnet run` — requires `appsettings.Development.json` (not in repo)
 2. Build and run in Xcode simulator
 3. Tap "Dev Login (Simulator)"
 
-Mac firewall rule "MacBook-Dev" (IP `50.46.238.7`) has been added to Azure SQL — if your IP changes, add a new rule via `az sql server firewall-rule create`.
+Azure SQL firewall must allow your dev machine's IP — add a rule via `az sql server firewall-rule create` if your IP changes.
 
 `NSAllowsLocalNetworking: true` is set in the app plist (via `project.yml`) to allow HTTP to localhost in the simulator.
 
