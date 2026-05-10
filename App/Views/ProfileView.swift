@@ -67,6 +67,7 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("Profile")
+            .task { await viewModel.loadAvatar() }
             .confirmationDialog("Change Photo", isPresented: $showImageOptions, titleVisibility: .visible) {
                 Button("Choose from Library") { showLibraryPicker = true }
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -106,17 +107,9 @@ struct ProfileView: View {
     private var avatarView: some View {
         ZStack(alignment: .bottomTrailing) {
             Group {
-                if let image = viewModel.pendingImage ?? viewModel.displayImage {
+                if let image = viewModel.pendingImage ?? viewModel.displayImage ?? viewModel.loadedAvatarImage {
                     Image(uiImage: image)
                         .resizable().scaledToFill()
-                } else if let urlStr = viewModel.avatarUrl, let url = URL(string: urlStr) {
-                    AsyncImage(url: url) { phase in
-                        if let img = phase.image {
-                            img.resizable().scaledToFill()
-                        } else {
-                            avatarPlaceholder
-                        }
-                    }
                 } else {
                     avatarPlaceholder
                 }

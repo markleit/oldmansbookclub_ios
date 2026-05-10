@@ -9,6 +9,7 @@ final class ProfileViewModel: ObservableObject {
     @Published var pendingImage: UIImage?
     @Published var displayImage: UIImage?
     @Published var isSaving = false
+    @Published var loadedAvatarImage: UIImage?
     @Published var errorMessage: String?
     @Published var saveSuccess = false
 
@@ -16,6 +17,13 @@ final class ProfileViewModel: ObservableObject {
         displayName = TokenStore.shared.displayName ?? ""
         nickname = TokenStore.shared.nickname ?? ""
         avatarUrl = TokenStore.shared.avatarUrl
+    }
+
+    func loadAvatar() async {
+        guard let urlStr = avatarUrl, let url = URL(string: urlStr) else { return }
+        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
+        loadedAvatarImage = UIImage(data: data)
     }
 
     func save() async {
