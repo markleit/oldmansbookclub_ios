@@ -22,7 +22,7 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
-        aps-environment: production
+        aps-environment: $(APS_ENVIRONMENT)
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
       INFOPLIST_FILE: App/Info.plist
@@ -31,5 +31,8 @@ targets:
       DEVELOPMENT_TEAM: AKV2XU3684
       MARKETING_VERSION: 1.0.0
       CURRENT_PROJECT_VERSION: 2
+    configFiles:
+      Debug: Configs/Debug.xcconfig
+      Release: Configs/Release.xcconfig
     dependencies:
       - package: SignalRClient
