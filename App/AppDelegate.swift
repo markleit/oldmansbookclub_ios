@@ -45,19 +45,24 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) {
         let userInfo = response.notification.request.content.userInfo
         if let bookIdStr = userInfo["bookId"] as? String, let bookId = UUID(uuidString: bookIdStr) {
-            DispatchQueue.main.async {
-                DeepLinkCoordinator.shared.pendingBookId = bookId
-            }
+            DeepLinkCoordinator.shared.pendingBookId = bookId
         }
         completionHandler()
     }
 
-    // Show notifications as banners while app is in foreground
+    // Suppress notification if the user is already viewing that chat; show for all others
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        let userInfo = notification.request.content.userInfo
+        if let bookIdStr = userInfo["bookId"] as? String,
+           let bookId = UUID(uuidString: bookIdStr),
+           ChatService.shared.currentBookId == bookId {
+            completionHandler([])
+            return
+        }
         completionHandler([.banner, .list, .sound, .badge])
     }
 }
