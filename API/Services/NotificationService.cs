@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using BookClubApi.Models;
@@ -53,16 +54,14 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             var key = new ECDsaSecurityKey(ecdsa) { KeyId = _keyId };
             var credentials = new SigningCredentials(key, SecurityAlgorithms.EcdsaSha256);
 
-            var now = DateTime.UtcNow;
+            var now = DateTimeOffset.UtcNow;
             var token = new JwtSecurityToken(
                 issuer: _teamId,
-                claims: [],
-                notBefore: now,
-                expires: now.AddMinutes(60),
+                claims: [new Claim("iat", now.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)],
                 signingCredentials: credentials);
 
             _cachedToken = new JwtSecurityTokenHandler().WriteToken(token);
-            _tokenExpiry = DateTime.UtcNow.AddMinutes(55);
+            _tokenExpiry = now.AddMinutes(55).UtcDateTime;
             return _cachedToken;
         }
     }
