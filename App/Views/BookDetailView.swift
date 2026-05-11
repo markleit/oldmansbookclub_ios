@@ -299,7 +299,7 @@ struct VoiceMessageBubble: View {
             }
 
             Button { toggleSpeaker() } label: {
-                Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "earbuds")
+                Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
                     .font(.system(size: 14))
                     .opacity(0.8)
                     .frame(width: 24, height: 24)
@@ -384,10 +384,10 @@ struct VoiceMessageBubble: View {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .spokenAudio,
-                                 options: [.allowBluetooth, .allowBluetoothA2DP])
+        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        if speakerEnabled { options.insert(.defaultToSpeaker) }
+        try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: options)
         try? session.setActive(true)
-        try? session.overrideOutputAudioPort(speakerEnabled ? .speaker : .none)
     }
 
     private func tickProgress() {
