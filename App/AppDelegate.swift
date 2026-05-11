@@ -13,6 +13,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Cold launch: notification payload is in launchOptions before any view exists
+        if let notification = launchOptions?[.remoteNotification] as? [String: Any],
+           let bookIdStr = notification["bookId"] as? String,
+           let bookId = UUID(uuidString: bookIdStr) {
+            DeepLinkCoordinator.shared.pendingBookId = bookId
+        }
         return true
     }
 

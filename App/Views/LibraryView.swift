@@ -122,8 +122,9 @@ struct LibraryView: View {
     private func navigateToPendingBook() {
         guard let bookId = deepLink.pendingBookId,
               let book = viewModel.books.first(where: { $0.id == bookId }) else { return }
-        navigationPath = NavigationPath()
-        navigationPath.append(book)
+        var newPath = NavigationPath()
+        newPath.append(book)
+        navigationPath = newPath
         deepLink.pendingBookId = nil
     }
 }
