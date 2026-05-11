@@ -1,0 +1,49 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 3 AM UTC daily
+  workflow_dispatch:        # allow manual trigger
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Export database to BACPAC
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          az sql db export \
+            --admin-password "${{ secrets.SQL_ADMIN_PASSWORD }}" \
+            --admin-user bookclubadmin \
+            --name bookclubdb \
+            --resource-group oldmansbookclub-rg \
+            --server oldmansbookclub-db \
+            --storage-key "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+            --storage-key-type StorageAccessKey \
+            --storage-uri "https://oldmansbookclubstore.blob.core.windows.net/backups/bookclubdb-${DATE}.bacpac"
+          echo "Backup complete: bookclubdb-${DATE}.bacpac"
+
+      - name: Delete backups older than 30 days
+        run: |
+          CUTOFF=$(date -d '30 days ago' +%Y-%m-%d)
+          az storage blob list \
+            --container-name backups \
+            --account-name oldmansbookclubstore \
+            --account-key "${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+            --query "[].name" -o tsv | while read blob; do
+              # extract date from filename bookclubdb-YYYY-MM-DD.bacpac
+              BLOB_DATE=$(echo "$blob" | grep -oP '\d{4}-\d{2}-\d{2}')
+              if [[ "$BLOB_DATE" < "$CUTOFF" ]]; then
+                az storage blob delete \
+                  --container-name backups \
+                  --name "$blob" \
+                  --account-name oldmansbookclubstore \
+                  --account-key "${{ secrets.STORAGE_ACCOUNT_KEY }}"
+                echo "Deleted old backup: $blob"
+              fi
+            done
