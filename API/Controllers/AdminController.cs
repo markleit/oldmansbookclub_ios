@@ -34,6 +34,21 @@ public class AdminController(AppDbContext db) : ControllerBase
         return NoContent();
     }
 
+    [HttpDelete("users/{id}")]
+    public async Task<IActionResult> DeleteUser(Guid id)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var sub = User.FindFirst("sub")?.Value;
+        if (Guid.TryParse(sub, out var callerId) && callerId == id)
+            return BadRequest("Cannot delete your own account.");
+        var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == id);
+        if (user is null) return NotFound();
+        db.Memberships.RemoveRange(user.Memberships);
+        db.Users.Remove(user);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     private async Task<bool> IsAdminAsync()
     {
         var sub = User.FindFirst("sub")?.Value;

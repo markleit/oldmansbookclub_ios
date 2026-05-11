@@ -274,6 +274,18 @@ final class APIClient {
         }
     }
 
+    func deleteUser(id: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyResponse: Decodable {}
 
     // MARK: - Helpers
