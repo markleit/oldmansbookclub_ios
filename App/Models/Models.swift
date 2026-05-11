@@ -39,6 +39,44 @@ struct Message: Identifiable, Codable {
     var mediaUrl: String?
     var durationSeconds: Int?
     var sentAt: Date
+    var isDeleted: Bool = false
+    var isForwarded: Bool = false
+}
+
+extension Message {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        clubId = try c.decode(UUID.self, forKey: .clubId)
+        senderId = try c.decode(UUID.self, forKey: .senderId)
+        senderName = try c.decode(String.self, forKey: .senderName)
+        senderAvatarUrl = try c.decodeIfPresent(String.self, forKey: .senderAvatarUrl)
+        type = try c.decode(MessageType.self, forKey: .type)
+        body = try c.decodeIfPresent(String.self, forKey: .body)
+        mediaUrl = try c.decodeIfPresent(String.self, forKey: .mediaUrl)
+        durationSeconds = try c.decodeIfPresent(Int.self, forKey: .durationSeconds)
+        sentAt = try c.decode(Date.self, forKey: .sentAt)
+        isDeleted = try c.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+        isForwarded = try c.decodeIfPresent(Bool.self, forKey: .isForwarded) ?? false
+    }
+}
+
+struct SavedMessage: Identifiable, Decodable {
+    let id: UUID
+    let messageId: UUID
+    let senderName: String
+    let type: MessageType
+    let body: String?
+    let mediaUrl: String?
+    let durationSeconds: Int?
+    let sentAt: Date
+    let savedAt: Date
+    let isDeleted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id = "savedId"
+        case messageId, senderName, type, body, mediaUrl, durationSeconds, sentAt, savedAt, isDeleted
+    }
 }
 
 enum MessageType: String, Codable {

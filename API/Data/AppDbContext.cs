@@ -10,6 +10,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Membership> Memberships => Set<Membership>();
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<Book> Books => Set<Book>();
+    public DbSet<SavedMessage> SavedMessages => Set<SavedMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -29,5 +30,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<User>()
             .HasIndex(u => u.AppleSubject)
             .IsUnique();
+
+        modelBuilder.Entity<SavedMessage>()
+            .HasIndex(s => new { s.UserId, s.MessageId })
+            .IsUnique();
+
+        modelBuilder.Entity<SavedMessage>()
+            .HasOne(s => s.Message)
+            .WithMany()
+            .HasForeignKey(s => s.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SavedMessage>()
+            .HasOne(s => s.User)
+            .WithMany()
+            .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
     }
 }

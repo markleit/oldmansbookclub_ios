@@ -64,8 +64,56 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
+    public async Task DeleteMessage(Guid messageId)
+    {
+        var userId = GetUserId();
+        var message = await db.Messages.FindAsync(messageId)
+            ?? throw new HubException("Message not found.");
+
+        if (message.SenderId != userId)
+            throw new HubException("You can only delete your own messages.");
+
+        if (message.DeletedAt != null) return;
+
+        message.DeletedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        await Clients.Group(message.BookId.ToString()!).SendAsync("MessageDeleted", new
+        {
+            messageId,
+            bookId = message.BookId
+        });
+    }
+
+    public async Task ForwardMessage(Guid bookId, Guid messageId)
+    {
+        var userId = GetUserId();
+
+        var hasSaved = await db.SavedMessages
+            .AnyAsync(s => s.UserId == userId && s.MessageId == messageId);
+        if (!hasSaved) throw new HubException("Message not in your saved list.");
+
+        var original = await db.Messages.FindAsync(messageId)
+            ?? throw new HubException("Message not found.");
+
+        if (original.DeletedAt != null) throw new HubException("Cannot forward a deleted message.");
+
+        var book = await db.Books.FindAsync(bookId)
+            ?? throw new HubException("Book not found.");
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
+        if (!isMember) throw new HubException("Not a member of this club.");
+
+        var (message, bookTitle) = await SaveMessageAsync(bookId, original.Type,
+            body: original.Body, mediaUrl: original.MediaUrl,
+            durationSeconds: original.DurationSeconds, isForwarded: true);
+
+        await BroadcastAndNotify(bookId, message, bookTitle);
+    }
+
     private async Task<(MessageDto dto, string bookTitle)> SaveMessageAsync(Guid bookId, MessageType type,
-        string? body = null, string? mediaUrl = null, int? durationSeconds = null)
+        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false)
     {
         var userId = GetUserId();
         var user = await db.Users.FindAsync(userId)
@@ -82,7 +130,8 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
             Type = type,
             Body = body,
             MediaUrl = mediaUrl,
-            DurationSeconds = durationSeconds
+            DurationSeconds = durationSeconds,
+            IsForwarded = isForwarded
         };
 
         db.Messages.Add(message);
@@ -123,5 +172,6 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 
     private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl) => new(
         m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,
-        m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt);
+        m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt,
+        m.DeletedAt != null, m.IsForwarded);
 }

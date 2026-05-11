@@ -8,6 +8,7 @@ final class ChatService: ObservableObject {
     nonisolated(unsafe) private(set) var currentBookId: UUID?
 
     var onMessageReceived: ((Message) -> Void)?
+    var onMessageDeleted: ((UUID) -> Void)?
 
     private init() {}
 
@@ -44,15 +45,29 @@ final class ChatService: ObservableObject {
                 body: dto.body,
                 mediaUrl: dto.mediaUrl,
                 durationSeconds: dto.durationSeconds,
-                sentAt: dto.sentAtDate
+                sentAt: dto.sentAtDate,
+                isDeleted: dto.isDeleted,
+                isForwarded: dto.isForwarded
             )
             await MainActor.run {
                 onMessage?(message)
             }
         }
 
+        let onDeleted = onMessageDeleted
+        await connection?.on("MessageDeleted") { (payload: DeletedPayload) async in
+            await MainActor.run {
+                onDeleted?(payload.messageId)
+            }
+        }
+
         await connection?.onReconnected {
             try? await self.connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
+        }
+
+        await connection?.onClosed { [weak self] _ in
+            self?.connection = nil
+            self?.currentBookId = nil
         }
 
         try? await connection?.start()
@@ -69,6 +84,14 @@ final class ChatService: ObservableObject {
 
     nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async throws {
         try await connection?.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
+    }
+
+    nonisolated func deleteMessage(messageId: UUID) async throws {
+        try await connection?.invoke(method: "DeleteMessage", arguments: messageId.uuidString)
+    }
+
+    nonisolated func forwardMessage(bookId: UUID, messageId: UUID) async throws {
+        try await connection?.invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
     }
 
     nonisolated func disconnect() async {
@@ -88,10 +111,16 @@ private struct MessageDto: Decodable {
     let mediaUrl: String?
     let durationSeconds: Int?
     let sentAt: String
+    let isDeleted: Bool
+    let isForwarded: Bool
 
     var sentAtDate: Date {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: sentAt) ?? Date()
     }
+}
+
+private struct DeletedPayload: Decodable {
+    let messageId: UUID
 }

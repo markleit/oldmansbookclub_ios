@@ -30,7 +30,22 @@ public record MessageDto(
     string? Body,
     string? MediaUrl,
     int? DurationSeconds,
-    DateTime SentAt
+    DateTime SentAt,
+    bool IsDeleted,
+    bool IsForwarded
+);
+
+public record SavedMessageDto(
+    Guid SavedId,
+    Guid MessageId,
+    string SenderName,
+    MessageType Type,
+    string? Body,
+    string? MediaUrl,
+    int? DurationSeconds,
+    DateTime SentAt,
+    DateTime SavedAt,
+    bool IsDeleted
 );
 
 public record SendTextRequest(string Body);

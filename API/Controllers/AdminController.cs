@@ -112,7 +112,8 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
             {
                 var dto = new MessageDto(msg.Id, msg.ClubId, msg.SenderId,
                     sender.EffectiveName, sender.AvatarUrl, msg.Type,
-                    msg.Body, msg.MediaUrl, msg.DurationSeconds, msg.SentAt);
+                    msg.Body, msg.MediaUrl, msg.DurationSeconds, msg.SentAt,
+                    IsDeleted: false, IsForwarded: false);
                 await notifications.SendNewMessageAsync(deviceTokens, dto, book.Title);
             }
         }

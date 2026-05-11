@@ -55,9 +55,20 @@ public class Message
     public int? DurationSeconds { get; set; }
     public DateTime SentAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
+    public bool IsForwarded { get; set; } = false;
 }
 
 public enum MessageType { Text, Voice, Photo }
+
+public class SavedMessage
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public DateTime SavedAt { get; set; } = DateTime.UtcNow;
+}
 
 public class Book
 {

@@ -147,8 +147,7 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
-        var query = db.Messages
-            .Where(m => m.BookId == bookId && m.DeletedAt == null);
+        var query = db.Messages.Where(m => m.BookId == bookId);
 
         if (before.HasValue)
             query = query.Where(m => m.SentAt < before.Value);
@@ -157,8 +156,16 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
-                m.Id, m.ClubId, m.SenderId, m.Sender.Nickname ?? m.Sender.DisplayName, m.Sender.AvatarUrl,
-                m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt))
+                m.Id, m.ClubId, m.SenderId,
+                m.DeletedAt == null ? (m.Sender.Nickname ?? m.Sender.DisplayName) : "",
+                m.DeletedAt == null ? m.Sender.AvatarUrl : null,
+                m.Type,
+                m.DeletedAt == null ? m.Body : null,
+                m.DeletedAt == null ? m.MediaUrl : null,
+                m.DeletedAt == null ? m.DurationSeconds : null,
+                m.SentAt,
+                m.DeletedAt != null,
+                m.IsForwarded))
             .ToListAsync();
     }
 }

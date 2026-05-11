@@ -10,9 +10,11 @@ struct MessageInputView: View {
     var onSend: () -> Void
     var onSendPhoto: () -> Void
     var onToggleRecording: () -> Void
+    var onShowSaved: () -> Void
 
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingCamera = false
+    @State private var showingPhotoPicker = false
 
     private var hasContent: Bool {
         !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil
@@ -56,21 +58,29 @@ struct MessageInputView: View {
 
                 HStack(alignment: .bottom, spacing: 8) {
 
-                    // Camera
-                    Button {
-                        showingCamera = true
+                    // + menu: photo library, camera, saved messages
+                    Menu {
+                        Button {
+                            showingPhotoPicker = true
+                        } label: {
+                            Label("Photo Library", systemImage: "photo")
+                        }
+                        Button {
+                            showingCamera = true
+                        } label: {
+                            Label("Camera", systemImage: "camera")
+                        }
+                        Button {
+                            onShowSaved()
+                        } label: {
+                            Label("Saved Messages", systemImage: "bookmark")
+                        }
                     } label: {
-                        Image(systemName: "camera.fill")
-                            .font(.title3)
-                            .foregroundColor(.secondary)
-                    }
-
-                    // Photo picker
-                    PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Image(systemName: "plus.circle.fill")
                             .font(.title3)
                             .foregroundColor(.secondary)
                     }
+                    .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
                     .onChange(of: selectedPhotoItem) { item in
                         Task {
                             if let data = try? await item?.loadTransferable(type: Data.self),

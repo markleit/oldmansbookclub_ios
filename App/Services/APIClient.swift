@@ -224,6 +224,34 @@ final class APIClient {
         return try await get(path: path)
     }
 
+    func getSavedMessages() async throws -> [SavedMessage] {
+        try await get(path: "/messages/saved")
+    }
+
+    func saveMessage(messageId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/save")!)
+        request.httpMethod = "POST"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func unsaveMessage(messageId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/save")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyRequest: Encodable {}
 
     // MARK: - Notifications

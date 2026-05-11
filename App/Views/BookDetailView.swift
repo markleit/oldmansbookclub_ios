@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AVFoundation
 import AVKit
 import Speech
@@ -38,7 +39,7 @@ struct BookDetailView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(viewModel.messages.reversed()) { message in
-                                MessageRow(message: message)
+                                MessageRow(message: message, viewModel: viewModel)
                                     .id(message.id)
                             }
                         }
@@ -68,52 +69,15 @@ struct BookDetailView: View {
                 isOffline: viewModel.isOffline,
                 onSend: { Task { await viewModel.sendMessage() } },
                 onSendPhoto: { Task { await viewModel.sendPhoto() } },
-                onToggleRecording: { Task { await viewModel.toggleRecording() } }
+                onToggleRecording: { Task { await viewModel.toggleRecording() } },
+                onShowSaved: { viewModel.showSavedMessages = true }
             )
         }
         .navigationTitle(viewModel.book.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    switch viewModel.book.status {
-                    case .future:
-                        Button("Start Reading") {
-                            Task {
-                                await viewModel.setStatus(.current)
-                                onStatusChanged?(.current)
-                            }
-                        }
-                    case .current:
-                        Button("Mark as Finished") {
-                            Task {
-                                await viewModel.setStatus(.past)
-                                onStatusChanged?(.past)
-                            }
-                        }
-                        Button("Move to Future Reads") {
-                            Task {
-                                await viewModel.setStatus(.future)
-                                onStatusChanged?(.future)
-                            }
-                        }
-                    case .past:
-                        Button("Move to Future Reads") {
-                            Task {
-                                await viewModel.setStatus(.future)
-                                onStatusChanged?(.future)
-                            }
-                        }
-                        Button("Mark as Currently Reading") {
-                            Task {
-                                await viewModel.setStatus(.current)
-                                onStatusChanged?(.current)
-                            }
-                        }
-                    }
-                    Divider()
-                    Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
-                } label: {
+                Menu { bookMenuItems } label: {
                     Image(systemName: "ellipsis.circle")
                 }
             }
@@ -139,34 +103,111 @@ struct BookDetailView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+        .sheet(isPresented: $viewModel.showSavedMessages) {
+            SavedMessagesSheet(viewModel: viewModel)
+        }
         .task { await viewModel.load() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            Task { await viewModel.load() }
+        }
         .onDisappear { Task { await viewModel.disconnect() } }
+    }
+
+    @ViewBuilder
+    private var bookMenuItems: some View {
+        switch viewModel.book.status {
+        case .future:
+            Button("Start Reading") {
+                Task { await viewModel.setStatus(.current); onStatusChanged?(.current) }
+            }
+        case .current:
+            Button("Mark as Finished") {
+                Task { await viewModel.setStatus(.past); onStatusChanged?(.past) }
+            }
+            Button("Move to Future Reads") {
+                Task { await viewModel.setStatus(.future); onStatusChanged?(.future) }
+            }
+        case .past:
+            Button("Move to Future Reads") {
+                Task { await viewModel.setStatus(.future); onStatusChanged?(.future) }
+            }
+            Button("Mark as Currently Reading") {
+                Task { await viewModel.setStatus(.current); onStatusChanged?(.current) }
+            }
+        }
+        Divider()
+        Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
     }
 }
 
 struct MessageRow: View {
     let message: Message
+    @ObservedObject var viewModel: BookViewModel
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if isMe {
                 Spacer()
-            } else {
+            } else if !message.isDeleted {
                 avatarView
                     .frame(width: 32, height: 32)
+            } else {
+                Color.clear.frame(width: 32, height: 32)
             }
             VStack(alignment: isMe ? .trailing : .leading, spacing: 2) {
-                Text(message.senderName)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                messageBubble
-                Text(message.sentAt, style: .time)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                if message.isDeleted {
+                    deletedBubble
+                } else {
+                    nameLabel
+                    messageBubble
+                    Text(message.sentAt, style: .time)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
             if !isMe { Spacer() }
         }
+        .contextMenu {
+            if !message.isDeleted {
+                Button {
+                    Task { await viewModel.saveMessage(id: message.id) }
+                } label: {
+                    Label("Save", systemImage: "bookmark")
+                }
+                if isMe {
+                    Button(role: .destructive) {
+                        Task { await viewModel.deleteMessage(id: message.id) }
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                }
+            }
+        }
+    }
+
+    private var nameLabel: some View {
+        Group {
+            if message.isForwarded {
+                Text("Forwarded by \(message.senderName)")
+                    .italic()
+            } else {
+                Text(message.senderName)
+            }
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+
+    private var deletedBubble: some View {
+        Text("This message was deleted")
+            .font(.subheadline)
+            .italic()
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(.systemGray6))
+            .cornerRadius(16)
     }
 
     @ViewBuilder

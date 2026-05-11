@@ -14,6 +14,9 @@ final class BookViewModel: ObservableObject {
     @Published var pendingImage: UIImage?
     @Published var isRecording = false
     @Published var isUploading = false
+    @Published var showSavedMessages = false
+    @Published var savedMessages: [SavedMessage] = []
+    @Published var isLoadingSaved = false
 
     private var cacheKey: String { "messages_\(book.id)" }
 
@@ -55,7 +58,6 @@ final class BookViewModel: ObservableObject {
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
 
-            // If this is an echo of an optimistic message we inserted, replace it
             if let body = message.body,
                message.senderId == TokenStore.shared.userId,
                let clientId = self.pendingByBody[body] {
@@ -68,6 +70,17 @@ final class BookViewModel: ObservableObject {
 
             self.messages.insert(message, at: 0)
         }
+
+        ChatService.shared.onMessageDeleted = { [weak self] messageId in
+            guard let self else { return }
+            if let idx = self.messages.firstIndex(where: { $0.id == messageId }) {
+                self.messages[idx].isDeleted = true
+                self.messages[idx].body = nil
+                self.messages[idx].mediaUrl = nil
+                self.messages[idx].durationSeconds = nil
+            }
+        }
+
         await ChatService.shared.connect(bookId: book.id)
     }
 
@@ -150,6 +163,53 @@ final class BookViewModel: ObservableObject {
             } catch {
                 errorMessage = "Could not start recording."
             }
+        }
+    }
+
+    func deleteMessage(id: UUID) async {
+        do {
+            try await ChatService.shared.deleteMessage(messageId: id)
+        } catch {
+            errorMessage = "Failed to delete message."
+        }
+    }
+
+    func saveMessage(id: UUID) async {
+        do {
+            try await APIClient.shared.saveMessage(messageId: id)
+        } catch {
+            errorMessage = "Failed to save message."
+        }
+    }
+
+    func loadSavedMessages() async {
+        isLoadingSaved = true
+        defer { isLoadingSaved = false }
+        do {
+            savedMessages = try await APIClient.shared.getSavedMessages()
+        } catch {
+            errorMessage = "Failed to load saved messages."
+        }
+    }
+
+    func unsaveSavedMessage(savedMessage: SavedMessage) async {
+        savedMessages.removeAll { $0.id == savedMessage.id }
+        do {
+            try await APIClient.shared.unsaveMessage(messageId: savedMessage.messageId)
+        } catch {
+            savedMessages.append(savedMessage)
+            errorMessage = "Failed to remove saved message."
+        }
+    }
+
+    func forwardMessage(savedMessage: SavedMessage) async {
+        showSavedMessages = false
+        isUploading = true
+        defer { isUploading = false }
+        do {
+            try await ChatService.shared.forwardMessage(bookId: book.id, messageId: savedMessage.messageId)
+        } catch {
+            errorMessage = "Failed to forward message."
         }
     }
 
