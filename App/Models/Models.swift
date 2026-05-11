@@ -10,7 +10,7 @@ enum BookStatus: String, Codable {
     case future, current, past
 }
 
-struct Book: Identifiable, Codable {
+struct Book: Identifiable, Codable, Hashable {
     let id: UUID
     var clubId: UUID
     var title: String

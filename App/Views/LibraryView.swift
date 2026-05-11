@@ -2,12 +2,14 @@ import SwiftUI
 
 struct LibraryView: View {
     @StateObject private var viewModel = LibraryViewModel()
+    @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingAddBook = false
     @State private var bookListExpanded = true
     @State private var pastReadsExpanded = true
+    @State private var navigationPath = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
                 if viewModel.isOffline {
                     Label("Offline — showing cached library", systemImage: "wifi.slash")
@@ -34,7 +36,7 @@ struct LibraryView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             SectionHeader(title: "CURRENTLY READING")
                             ForEach(viewModel.currentReads) { book in
-                                NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
+                                NavigationLink(value: book) {
                                     CurrentBookCard(book: book, refreshToken: viewModel.imageRefreshToken)
                                 }
                                 .buttonStyle(.plain)
@@ -49,7 +51,7 @@ struct LibraryView: View {
                             CollapsibleSectionHeader(title: "FUTURE READS", isExpanded: $bookListExpanded)
                             if bookListExpanded {
                                 ForEach(viewModel.bookList) { book in
-                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
+                                    NavigationLink(value: book) {
                                         PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
                                     }
                                     .buttonStyle(.plain)
@@ -66,7 +68,7 @@ struct LibraryView: View {
                             CollapsibleSectionHeader(title: "PAST READS", isExpanded: $pastReadsExpanded)
                             if pastReadsExpanded {
                                 ForEach(viewModel.pastReads) { book in
-                                    NavigationLink(destination: BookDetailView(book: book, onDeleted: { viewModel.bookDeleted(book) }, onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) })) {
+                                    NavigationLink(value: book) {
                                         PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
                                     }
                                     .buttonStyle(.plain)
@@ -89,7 +91,20 @@ struct LibraryView: View {
             .refreshable { await viewModel.load() }
             .overlay { if viewModel.isLoading { ProgressView() } }
             .navigationTitle("Library")
-            .task { await viewModel.load() }
+            .navigationDestination(for: Book.self) { book in
+                BookDetailView(
+                    book: book,
+                    onDeleted: { viewModel.bookDeleted(book) },
+                    onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) }
+                )
+            }
+            .task {
+                await viewModel.load()
+                navigateToPendingBook()
+            }
+            .onChange(of: deepLink.pendingBookId) { _ in
+                navigateToPendingBook()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAddBook = true } label: {
@@ -102,6 +117,14 @@ struct LibraryView: View {
             }
             } // VStack
         }
+    }
+
+    private func navigateToPendingBook() {
+        guard let bookId = deepLink.pendingBookId,
+              let book = viewModel.books.first(where: { $0.id == bookId }) else { return }
+        navigationPath = NavigationPath()
+        navigationPath.append(book)
+        deepLink.pendingBookId = nil
     }
 }
 

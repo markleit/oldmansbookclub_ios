@@ -158,7 +158,7 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
             .ToListAsync();
 
         if (offlineTokens.Count > 0)
-            await notifications.SendNewMessageAsync(offlineTokens, dto, bookTitle);
+            await notifications.SendNewMessageAsync(offlineTokens, dto, bookTitle, bookId);
     }
 
     private Guid GetUserId() =>

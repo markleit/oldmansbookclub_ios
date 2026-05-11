@@ -66,7 +66,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         }
     }
 
-    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club")
+    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default)
     {
         var alertBody = message.Type switch
         {
@@ -85,7 +85,8 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
                 sound = "default",
                 badge = 1
             },
-            clubId = message.ClubId.ToString()
+            clubId = message.ClubId.ToString(),
+            bookId = bookId.ToString()
         });
 
         var bearerToken = GetBearerToken();
