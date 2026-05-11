@@ -33,6 +33,7 @@ public class AdminController(AppDbContext db, IConfiguration config) : Controlle
     private const string TestAudioUrl =
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c8/Example.ogg/Example.ogg.mp3";
 
+    [AllowAnonymous]
     [HttpPost("seed-messages")]
     public async Task<IActionResult> SeedMessages([FromBody] SeedMessagesRequest req)
     {
