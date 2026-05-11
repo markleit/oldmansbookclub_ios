@@ -22,7 +22,7 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
-        aps-environment: $(APS_ENVIRONMENT)
+        aps-environment: development
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
