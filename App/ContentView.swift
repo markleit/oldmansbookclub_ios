@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    private var isAdmin: Bool { TokenStore.shared.isAdmin }
+    @AppStorage("user_is_admin") private var isAdmin = false
 
     var body: some View {
         TabView {

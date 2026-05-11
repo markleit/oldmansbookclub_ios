@@ -274,6 +274,13 @@ final class APIClient {
         }
     }
 
+    struct SetRoleRequest: Encodable { let isAdmin: Bool }
+
+    func setUserRole(id: UUID, isAdmin: Bool) async throws {
+        let body = SetRoleRequest(isAdmin: isAdmin)
+        let _: EmptyResponse = try await post(path: "/admin/users/\(id)/set-role", body: body, authenticated: true)
+    }
+
     func deleteUser(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)")!)
         request.httpMethod = "DELETE"

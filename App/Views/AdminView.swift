@@ -113,6 +113,13 @@ struct AdminView: View {
                                 } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
+                                Button {
+                                    Task { await setRole(member.id, isAdmin: !member.isAdmin) }
+                                } label: {
+                                    Label(member.isAdmin ? "Remove Admin" : "Make Admin",
+                                          systemImage: member.isAdmin ? "person.fill.xmark" : "person.badge.key.fill")
+                                }
+                                .tint(member.isAdmin ? .orange : .blue)
                             }
                         }
                     }
@@ -150,6 +157,24 @@ struct AdminView: View {
             members.removeAll { $0.id == id }
         } catch {
             errorMessage = "Failed to delete user."
+        }
+    }
+
+    private func setRole(_ id: UUID, isAdmin: Bool) async {
+        do {
+            try await APIClient.shared.setUserRole(id: id, isAdmin: isAdmin)
+            if let idx = members.firstIndex(where: { $0.id == id }) {
+                let m = members[idx]
+                members[idx] = APIClient.UserResponse(
+                    id: m.id, displayName: m.displayName,
+                    nickname: m.nickname, avatarUrl: m.avatarUrl,
+                    isAdmin: isAdmin)
+            }
+            if id == myId {
+                TokenStore.shared.isAdmin = isAdmin
+            }
+        } catch {
+            errorMessage = "Failed to update role."
         }
     }
 }

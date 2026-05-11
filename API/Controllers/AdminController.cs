@@ -34,6 +34,20 @@ public class AdminController(AppDbContext db) : ControllerBase
         return NoContent();
     }
 
+    [HttpPost("users/{id}/set-role")]
+    public async Task<IActionResult> SetRole(Guid id, [FromBody] SetRoleRequest req)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var sub = User.FindFirst("sub")?.Value;
+        if (Guid.TryParse(sub, out var callerId) && callerId == id && !req.IsAdmin)
+            return BadRequest("Cannot remove your own admin role.");
+        var user = await db.Users.FindAsync(id);
+        if (user is null) return NotFound();
+        user.IsAdmin = req.IsAdmin;
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpDelete("users/{id}")]
     public async Task<IActionResult> DeleteUser(Guid id)
     {

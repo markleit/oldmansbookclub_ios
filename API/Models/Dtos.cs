@@ -37,6 +37,7 @@ public record SendTextRequest(string Body);
 public record SendVoiceRequest(string MediaUrl, int DurationSeconds);
 public record UploadUrlResponse(string UploadUrl, string MediaUrl);
 public record RegisterDeviceRequest(string DeviceToken);
+public record SetRoleRequest(bool IsAdmin);
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl);
 public record SetBookStatusRequest(string Status);
