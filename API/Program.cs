@@ -36,7 +36,8 @@ builder.Services.AddSignalR()
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeConverter());
     })
-    .AddAzureSignalR("Endpoint=https://oldmansbookclub-signalr.service.signalr.net;AuthType=aad;Version=1.0;");
+    .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
+        ?? "Endpoint=https://oldmansbookclub-signalr.service.signalr.net;AuthType=aad;Version=1.0;");
 
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();
