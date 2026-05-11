@@ -9,8 +9,96 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class AdminController(AppDbContext db) : ControllerBase
+public class AdminController(AppDbContext db, IConfiguration config) : ControllerBase
 {
+    private static readonly string[] SampleTexts =
+    [
+        "I wasn't expecting that twist at all. Anyone else see it coming?",
+        "The pacing in this section feels a bit slow but I trust where it's going.",
+        "That dialogue between the two main characters was genuinely moving.",
+        "I had to reread that chapter twice. Dense but worth it.",
+        "The world-building here is exceptional. So much depth.",
+        "Not sure I buy the main character's motivation in this part.",
+        "This is exactly why I recommended this book. Incredible writing.",
+        "Anyone else reading this on the commute? Hard to put down.",
+        "The author's use of perspective shifts is doing a lot of heavy lifting.",
+        "I've read this author before but this one hits differently.",
+        "That ending to the chapter left me wanting more immediately.",
+        "Remind me — what did we decide about the meeting time next week?",
+        "Strong contender for book of the year for me.",
+        "The symbolism is a bit on the nose but I'm still enjoying it.",
+        "Can't believe we almost didn't pick this one."
+    ];
+
+    private const string TestAudioUrl =
+        "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c8/Example.ogg/Example.ogg.mp3";
+
+    [HttpPost("seed-messages")]
+    public async Task<IActionResult> SeedMessages([FromBody] SeedMessagesRequest req)
+    {
+        var seedKey = config["Seeding:Key"];
+        var headerKey = Request.Headers["X-Seed-Key"].FirstOrDefault();
+        if (headerKey != seedKey && !await IsAdminAsync()) return Forbid();
+
+        var book = await db.Books.FirstOrDefaultAsync(b =>
+            EF.Functions.Like(b.Title, $"%{req.BookTitle}%"));
+        if (book is null) return NotFound(new { error = $"No book matching '{req.BookTitle}' found." });
+
+        User? sender = req.SenderName is not null
+            ? await db.Users.FirstOrDefaultAsync(u => u.DisplayName == req.SenderName)
+            : await db.Users.FirstOrDefaultAsync(u => u.DisplayName == "TestUser");
+
+        if (sender is null)
+        {
+            var sub = User.FindFirst("sub")?.Value;
+            if (Guid.TryParse(sub, out var adminId))
+                sender = await db.Users.FindAsync(adminId);
+        }
+        if (sender is null) return NotFound(new { error = "No sender found." });
+
+        var type = req.Type.ToLowerInvariant() switch
+        {
+            "voice" or "audio" => MessageType.Voice,
+            "photo" or "image" => MessageType.Photo,
+            _ => MessageType.Text
+        };
+
+        var count = Math.Clamp(req.Count, 1, 20);
+        var messages = new List<Message>();
+
+        for (var i = 0; i < count; i++)
+        {
+            var msg = new Message
+            {
+                ClubId = book.ClubId,
+                BookId = book.Id,
+                SenderId = sender.Id,
+                Type = type,
+                SentAt = DateTime.UtcNow.AddSeconds(-(count - i))
+            };
+
+            switch (type)
+            {
+                case MessageType.Text:
+                    msg.Body = SampleTexts[Random.Shared.Next(SampleTexts.Length)];
+                    break;
+                case MessageType.Photo:
+                    msg.MediaUrl = $"https://picsum.photos/seed/{Guid.NewGuid()}/600/400";
+                    break;
+                case MessageType.Voice:
+                    msg.MediaUrl = TestAudioUrl;
+                    msg.DurationSeconds = Random.Shared.Next(5, 45);
+                    break;
+            }
+
+            messages.Add(msg);
+        }
+
+        db.Messages.AddRange(messages);
+        await db.SaveChangesAsync();
+        return Ok(new { created = messages.Count, book = book.Title, sender = sender.DisplayName });
+    }
+
     [HttpGet("pending-users")]
     public async Task<ActionResult<List<PendingUserDto>>> GetPendingUsers()
     {
