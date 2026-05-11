@@ -8,7 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace BookClubApi.Services;
 
-public class NotificationService(IConfiguration config, IHttpClientFactory httpClientFactory)
+public class NotificationService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<NotificationService> logger)
 {
     private readonly string _keyId = config["Apns:KeyId"]
         ?? throw new InvalidOperationException("Apns:KeyId not configured");
@@ -22,6 +22,18 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
     private readonly Lock _tokenLock = new();
     private string? _cachedToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
+
+    private Task<HttpResponseMessage> SendToApnsAsync(HttpClient client, string bearerToken, string deviceToken, string payload)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/3/device/{deviceToken}");
+        request.Version = HttpVersion.Version20;
+        request.Headers.Authorization = new AuthenticationHeaderValue("bearer", bearerToken);
+        request.Headers.Add("apns-topic", _bundleId);
+        request.Headers.Add("apns-push-type", "alert");
+        request.Headers.Add("apns-priority", "10");
+        request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        return client.SendAsync(request);
+    }
 
     private string GetBearerToken()
     {
@@ -78,18 +90,40 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         });
 
         var bearerToken = GetBearerToken();
-        var client = httpClientFactory.CreateClient("apns");
+        var prodClient = httpClientFactory.CreateClient("apns");
+        var sandboxClient = httpClientFactory.CreateClient("apns-sandbox");
 
         var tasks = deviceTokens.Select(async deviceToken =>
         {
-            var request = new HttpRequestMessage(HttpMethod.Post, $"/3/device/{deviceToken}");
-            request.Version = HttpVersion.Version20;
-            request.Headers.Authorization = new AuthenticationHeaderValue("bearer", bearerToken);
-            request.Headers.Add("apns-topic", _bundleId);
-            request.Headers.Add("apns-push-type", "alert");
-            request.Headers.Add("apns-priority", "10");
-            request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
-            await client.SendAsync(request);
+            var response = await SendToApnsAsync(prodClient, bearerToken, deviceToken, payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                if ((int)response.StatusCode == 400 && body.Contains("BadDeviceToken"))
+                {
+                    // Token might be from a sandbox/dev build — retry on sandbox
+                    var sandboxResponse = await SendToApnsAsync(sandboxClient, bearerToken, deviceToken, payload);
+                    if (!sandboxResponse.IsSuccessStatusCode)
+                    {
+                        var sandboxBody = await sandboxResponse.Content.ReadAsStringAsync();
+                        logger.LogWarning("APNs sandbox push failed for token {Token}: {Status} {Body}",
+                            deviceToken[..8], (int)sandboxResponse.StatusCode, sandboxBody);
+                    }
+                    else
+                    {
+                        logger.LogInformation("APNs sandbox push sent to {Token}", deviceToken[..8]);
+                    }
+                }
+                else
+                {
+                    logger.LogWarning("APNs push failed for token {Token}: {Status} {Body}",
+                        deviceToken[..8], (int)response.StatusCode, body);
+                }
+            }
+            else
+            {
+                logger.LogInformation("APNs push sent to {Token}", deviceToken[..8]);
+            }
         });
 
         await Task.WhenAll(tasks);

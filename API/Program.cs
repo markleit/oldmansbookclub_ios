@@ -48,6 +48,12 @@ builder.Services.AddHttpClient("apns", client =>
     client.DefaultRequestVersion = System.Net.HttpVersion.Version20;
     client.DefaultVersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrHigher;
 });
+builder.Services.AddHttpClient("apns-sandbox", client =>
+{
+    client.BaseAddress = new Uri("https://api.sandbox.push.apple.com");
+    client.DefaultRequestVersion = System.Net.HttpVersion.Version20;
+    client.DefaultVersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrHigher;
+});
 
 // JWT Auth
 var jwtKey = builder.Configuration["Jwt:Secret"]
