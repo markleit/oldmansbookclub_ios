@@ -125,7 +125,11 @@ struct BookDetailView: View {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            Task { await viewModel.load() }
+            Task {
+                // Force-clear any stale connection from OS background suspension
+                await ChatService.shared.disconnect()
+                await viewModel.load()
+            }
         }
         .onDisappear { Task { await viewModel.disconnect() } }
     }

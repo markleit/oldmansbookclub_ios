@@ -37,6 +37,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {}
 
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        Task {
+            try? await UNUserNotificationCenter.current().setBadgeCount(0)
+        }
+    }
+
     // Called when user taps a notification
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,

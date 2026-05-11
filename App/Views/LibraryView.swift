@@ -105,6 +105,9 @@ struct LibraryView: View {
             .onChange(of: deepLink.pendingBookId) { _ in
                 navigateToPendingBook()
             }
+            .onChange(of: viewModel.books) { _ in
+                navigateToPendingBook()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAddBook = true } label: {
@@ -122,10 +125,19 @@ struct LibraryView: View {
     private func navigateToPendingBook() {
         guard let bookId = deepLink.pendingBookId,
               let book = viewModel.books.first(where: { $0.id == bookId }) else { return }
-        var newPath = NavigationPath()
-        newPath.append(book)
-        navigationPath = newPath
         deepLink.pendingBookId = nil
+        if navigationPath.isEmpty {
+            var newPath = NavigationPath()
+            newPath.append(book)
+            navigationPath = newPath
+        } else {
+            // Pop to root first so SwiftUI can settle before pushing the new destination
+            navigationPath = NavigationPath()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(50))
+                navigationPath.append(book)
+            }
+        }
     }
 }
 
