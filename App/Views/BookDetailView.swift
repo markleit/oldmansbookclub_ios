@@ -3,6 +3,7 @@ import UIKit
 import AVFoundation
 import AVKit
 import Speech
+import UserNotifications
 
 struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -119,7 +120,10 @@ struct BookDetailView: View {
                     .animation(.spring(duration: 0.3), value: viewModel.messageSaved)
             }
         }
-        .task { await viewModel.load() }
+        .task {
+            await viewModel.load()
+            try? await UNUserNotificationCenter.current().setBadgeCount(0)
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await viewModel.load() }
         }
