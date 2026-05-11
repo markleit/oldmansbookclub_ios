@@ -57,6 +57,8 @@ final class APIClient {
         return URLSession(configuration: config)
     }()
 
+    var onUnauthorized: (() -> Void)?
+
     private init() {}
 
     // MARK: - Auth
@@ -350,9 +352,9 @@ final class APIClient {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }
 
@@ -391,9 +393,9 @@ final class APIClient {
         }
         request.httpBody = try encoder.encode(body)
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }
 }

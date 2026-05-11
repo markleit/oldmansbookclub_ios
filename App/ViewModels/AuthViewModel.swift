@@ -3,9 +3,21 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
-    @Published var isAuthenticated = TokenStore.shared.isAuthenticated
+    @Published var isAuthenticated: Bool
     @Published var isLoading = false
     @Published var errorMessage: String?
+
+    init() {
+        if TokenStore.shared.isTokenExpired {
+            TokenStore.shared.clear()
+            isAuthenticated = false
+        } else {
+            isAuthenticated = TokenStore.shared.isAuthenticated
+        }
+        APIClient.shared.onUnauthorized = { [weak self] in
+            Task { @MainActor [weak self] in self?.signOut() }
+        }
+    }
 
     func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
         switch result {

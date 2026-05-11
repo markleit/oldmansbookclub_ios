@@ -107,6 +107,21 @@ final class TokenStore {
 
     var isAuthenticated: Bool { token != nil }
 
+    var isTokenExpired: Bool {
+        guard let token else { return false }
+        let parts = token.components(separatedBy: ".")
+        guard parts.count == 3 else { return true }
+        var base64 = parts[1]
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder > 0 { base64 += String(repeating: "=", count: 4 - remainder) }
+        guard let data = Data(base64Encoded: base64),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let exp = json["exp"] as? TimeInterval else { return true }
+        return Date(timeIntervalSince1970: exp) < Date()
+    }
+
     func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false) {
         self.token = token
         self.userId = userId
