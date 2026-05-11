@@ -239,6 +239,7 @@ struct VoiceMessageBubble: View {
     let isMe: Bool
     @State private var isPlaying = false
     @State private var speakerEnabled = false
+    @State private var isExternalRouteActive = false
     @State private var player: AVPlayer?
     @State private var progress: Double = 0
     @State private var currentSeconds: Int = 0
@@ -264,6 +265,10 @@ struct VoiceMessageBubble: View {
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
         .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
             tickProgress()
+        }
+        .onAppear { updateRouteState() }
+        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
+            updateRouteState()
         }
         .onDisappear {
             player?.pause()
@@ -298,11 +303,13 @@ struct VoiceMessageBubble: View {
                     .monospacedDigit()
             }
 
-            Button { toggleSpeaker() } label: {
-                Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    .font(.system(size: 14))
-                    .opacity(0.8)
-                    .frame(width: 24, height: 24)
+            if !isExternalRouteActive {
+                Button { toggleSpeaker() } label: {
+                    Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.system(size: 14))
+                        .opacity(0.8)
+                        .frame(width: 24, height: 24)
+                }
             }
 
             RoutePickerView(tintColor: isMe ? .white : .label)
@@ -380,6 +387,19 @@ struct VoiceMessageBubble: View {
     private func toggleSpeaker() {
         speakerEnabled.toggle()
         if isPlaying { activateAudioSession() }
+    }
+
+    private func updateRouteState() {
+        let externalPorts: Set<AVAudioSession.Port> = [
+            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones
+        ]
+        let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
+            .contains { externalPorts.contains($0.portType) }
+        if hasExternal && speakerEnabled {
+            speakerEnabled = false
+            if isPlaying { activateAudioSession() }
+        }
+        isExternalRouteActive = hasExternal
     }
 
     private func activateAudioSession() {
