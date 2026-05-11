@@ -1,5 +1,6 @@
 using BookClubApi.Data;
 using BookClubApi.Models;
+using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class AdminController(AppDbContext db, IConfiguration config) : ControllerBase
+public class AdminController(AppDbContext db, IConfiguration config, NotificationService notifications) : ControllerBase
 {
     private static readonly string[] SampleTexts =
     [
@@ -97,6 +98,25 @@ public class AdminController(AppDbContext db, IConfiguration config) : Controlle
 
         db.Messages.AddRange(messages);
         await db.SaveChangesAsync();
+
+        var deviceTokens = await db.Memberships
+            .Where(m => m.ClubId == book.ClubId && m.UserId != sender.Id)
+            .Select(m => m.User.DeviceToken)
+            .Where(t => t != null)
+            .Cast<string>()
+            .ToListAsync();
+
+        if (deviceTokens.Count > 0)
+        {
+            foreach (var msg in messages)
+            {
+                var dto = new MessageDto(msg.Id, msg.ClubId, msg.SenderId,
+                    sender.EffectiveName, sender.AvatarUrl, msg.Type,
+                    msg.Body, msg.MediaUrl, msg.DurationSeconds, msg.SentAt);
+                await notifications.SendNewMessageAsync(deviceTokens, dto, book.Title);
+            }
+        }
+
         return Ok(new { created = messages.Count, book = book.Title, sender = sender.DisplayName });
     }
 

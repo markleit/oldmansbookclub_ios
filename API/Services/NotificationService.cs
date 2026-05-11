@@ -55,19 +55,22 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         }
     }
 
-    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message)
+    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club")
     {
-        var alertBody = message.Type == MessageType.Voice
-            ? $"{message.SenderName} sent a voice message"
-            : message.Body?.Length > 50
-                ? $"{message.SenderName}: {message.Body[..50]}..."
-                : $"{message.SenderName}: {message.Body}";
+        var alertBody = message.Type switch
+        {
+            MessageType.Voice => $"{message.SenderName} sent a voice message",
+            MessageType.Photo => $"{message.SenderName} sent a photo",
+            _ => message.Body?.Length > 60
+                ? $"{message.SenderName}: {message.Body[..60]}…"
+                : $"{message.SenderName}: {message.Body}"
+        };
 
         var payload = JsonSerializer.Serialize(new
         {
             aps = new
             {
-                alert = new { title = "Book Club", body = alertBody },
+                alert = new { title = bookTitle, body = alertBody },
                 sound = "default",
                 badge = 1
             },

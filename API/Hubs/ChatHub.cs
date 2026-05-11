@@ -45,34 +45,31 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
 
     public async Task SendTextMessage(Guid bookId, string body)
     {
-        var message = await SaveMessageAsync(bookId, MessageType.Text, body: body);
-        await BroadcastAndNotify(bookId, message);
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body);
+        await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
     public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        var message = await SaveMessageAsync(bookId, MessageType.Voice,
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Voice,
             mediaUrl: mediaUrl, durationSeconds: durationSeconds);
-        await BroadcastAndNotify(bookId, message);
+        await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
     public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        var message = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
-        await BroadcastAndNotify(bookId, message);
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
+        await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    private async Task<MessageDto> SaveMessageAsync(Guid bookId, MessageType type,
+    private async Task<(MessageDto dto, string bookTitle)> SaveMessageAsync(Guid bookId, MessageType type,
         string? body = null, string? mediaUrl = null, int? durationSeconds = null)
     {
         var userId = GetUserId();
         var user = await db.Users.FindAsync(userId)
             ?? throw new HubException("User not found");
-
-        // Use nickname if set, fall back to display name
-        var senderName = user.EffectiveName;
 
         var book = await db.Books.FindAsync(bookId)
             ?? throw new HubException("Book not found");
@@ -91,10 +88,10 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         db.Messages.Add(message);
         await db.SaveChangesAsync();
 
-        return ToDto(message, senderName, user.AvatarUrl);
+        return (ToDto(message, user.EffectiveName, user.AvatarUrl), book.Title);
     }
 
-    private async Task BroadcastAndNotify(Guid bookId, MessageDto dto)
+    private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
     {
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
@@ -112,7 +109,7 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
             .ToListAsync();
 
         if (offlineTokens.Count > 0)
-            await notifications.SendNewMessageAsync(offlineTokens, dto);
+            await notifications.SendNewMessageAsync(offlineTokens, dto, bookTitle);
     }
 
     private Guid GetUserId() =>
