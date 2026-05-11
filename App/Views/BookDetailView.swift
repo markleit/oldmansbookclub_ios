@@ -106,6 +106,19 @@ struct BookDetailView: View {
         .sheet(isPresented: $viewModel.showSavedMessages) {
             SavedMessagesSheet(viewModel: viewModel)
         }
+        .overlay(alignment: .top) {
+            if viewModel.messageSaved {
+                Label("Message saved", systemImage: "bookmark.fill")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor, in: Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .animation(.spring(duration: 0.3), value: viewModel.messageSaved)
+            }
+        }
         .task { await viewModel.load() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task { await viewModel.load() }

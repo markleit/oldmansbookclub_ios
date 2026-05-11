@@ -17,6 +17,7 @@ final class BookViewModel: ObservableObject {
     @Published var showSavedMessages = false
     @Published var savedMessages: [SavedMessage] = []
     @Published var isLoadingSaved = false
+    @Published var messageSaved = false
 
     private var cacheKey: String { "messages_\(book.id)" }
 
@@ -78,6 +79,7 @@ final class BookViewModel: ObservableObject {
                 self.messages[idx].body = nil
                 self.messages[idx].mediaUrl = nil
                 self.messages[idx].durationSeconds = nil
+                CacheService.shared.save(self.messages, key: self.cacheKey)
             }
         }
 
@@ -177,6 +179,9 @@ final class BookViewModel: ObservableObject {
     func saveMessage(id: UUID) async {
         do {
             try await APIClient.shared.saveMessage(messageId: id)
+            messageSaved = true
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            messageSaved = false
         } catch {
             errorMessage = "Failed to save message."
         }
