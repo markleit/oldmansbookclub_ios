@@ -277,8 +277,17 @@ final class APIClient {
     struct SetRoleRequest: Encodable { let isAdmin: Bool }
 
     func setUserRole(id: UUID, isAdmin: Bool) async throws {
-        let body = SetRoleRequest(isAdmin: isAdmin)
-        let _: EmptyResponse = try await post(path: "/admin/users/\(id)/set-role", body: body, authenticated: true)
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)/set-role")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(SetRoleRequest(isAdmin: isAdmin))
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     func deleteUser(id: UUID) async throws {
