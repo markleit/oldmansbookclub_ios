@@ -23,12 +23,7 @@ final class ChatService: ObservableObject {
 
         currentBookId = bookId
 
-        #if targetEnvironment(simulator)
-        let baseUrl = "http://localhost:5235"
-        #else
-        let baseUrl = "https://oldmansbookclub-api.azurewebsites.net"
-        #endif
-        let url = "\(baseUrl)/hubs/chat?access_token=\(token)"
+        let url = "https://oldmansbookclub-api.azurewebsites.net/hubs/chat?access_token=\(token)"
 
         connection = HubConnectionBuilder()
             .withUrl(url: url)
