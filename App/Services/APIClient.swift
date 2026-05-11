@@ -233,8 +233,17 @@ final class APIClient {
     }
 
     func registerDevice(token: String) async throws {
-        let body = RegisterDeviceRequest(deviceToken: token)
-        let _: EmptyResponse = try await post(path: "/notifications/register", body: body, authenticated: true)
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/notifications/register")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(RegisterDeviceRequest(deviceToken: token))
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     func deleteBook(bookId: UUID) async throws {

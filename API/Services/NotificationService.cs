@@ -100,7 +100,6 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
                 var body = await response.Content.ReadAsStringAsync();
                 if ((int)response.StatusCode == 400 && body.Contains("BadDeviceToken"))
                 {
-                    // Token might be from a sandbox/dev build — retry on sandbox
                     var sandboxResponse = await SendToApnsAsync(sandboxClient, bearerToken, deviceToken, payload);
                     if (!sandboxResponse.IsSuccessStatusCode)
                     {
