@@ -15,6 +15,11 @@ struct ContentView: View {
                     Label("Profile", systemImage: "person.crop.circle")
                 }
 
+            MembersView()
+                .tabItem {
+                    Label("Members", systemImage: "person.2.fill")
+                }
+
             if isAdmin {
                 AdminView()
                     .tabItem {

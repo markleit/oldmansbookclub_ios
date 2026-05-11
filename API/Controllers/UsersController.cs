@@ -3,6 +3,7 @@ using BookClubApi.Models;
 using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookClubApi.Controllers;
 
@@ -11,6 +12,17 @@ namespace BookClubApi.Controllers;
 [Route("[controller]")]
 public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
 {
+    [HttpGet]
+    public async Task<ActionResult<List<UserDto>>> GetMembers()
+    {
+        var users = await db.Users
+            .Where(u => u.IsApproved)
+            .OrderBy(u => u.DisplayName)
+            .ToListAsync();
+        var dtos = await Task.WhenAll(users.Select(ToDto));
+        return Ok(dtos);
+    }
+
     [HttpGet("me")]
     public async Task<ActionResult<UserDto>> GetMe()
     {
