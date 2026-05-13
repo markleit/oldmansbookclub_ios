@@ -236,9 +236,7 @@ struct BlockedUsersView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let blockedIds = Set(try await APIClient.shared.fetchBlockedUserIds())
-            let members = try await APIClient.shared.getMembers()
-            blockedUsers = members.filter { blockedIds.contains($0.id) }
+            blockedUsers = try await APIClient.shared.fetchBlockedUsers()
         } catch {
             errorMessage = "Failed to load blocked users."
         }

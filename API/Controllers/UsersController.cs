@@ -52,7 +52,20 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
     }
 
     [HttpGet("blocked")]
-    public async Task<ActionResult<List<Guid>>> GetBlocked()
+    public async Task<ActionResult<List<UserDto>>> GetBlocked()
+    {
+        var userId = GetUserId();
+        var blocked = await db.BlockedUsers
+            .Where(b => b.BlockerId == userId)
+            .Include(b => b.Blocked)
+            .Select(b => b.Blocked)
+            .ToListAsync();
+        var dtos = await Task.WhenAll(blocked.Select(ToDto));
+        return Ok(dtos);
+    }
+
+    [HttpGet("blocked-ids")]
+    public async Task<ActionResult<List<Guid>>> GetBlockedIds()
     {
         var userId = GetUserId();
         var ids = await db.BlockedUsers

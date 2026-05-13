@@ -267,6 +267,10 @@ final class APIClient {
     }
 
     func fetchBlockedUserIds() async throws -> [UUID] {
+        try await get(path: "/users/blocked-ids")
+    }
+
+    func fetchBlockedUsers() async throws -> [UserResponse] {
         try await get(path: "/users/blocked")
     }
 
