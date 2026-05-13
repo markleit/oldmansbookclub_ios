@@ -3,6 +3,7 @@ import PhotosUI
 import UIKit
 
 struct ProfileView: View {
+    @Binding var path: NavigationPath
     @EnvironmentObject var auth: AuthViewModel
     @StateObject private var viewModel = ProfileViewModel()
     @State private var showImageOptions = false
@@ -11,7 +12,7 @@ struct ProfileView: View {
     @State private var photosItem: PhotosPickerItem?
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 Section {
                     HStack {
@@ -255,7 +256,7 @@ struct BlockedUsersView: View {
 
 struct ProfileView_Previews: PreviewProvider {
     static var previews: some View {
-        ProfileView()
+        ProfileView(path: .constant(NavigationPath()))
             .environmentObject(AuthViewModel())
     }
 }

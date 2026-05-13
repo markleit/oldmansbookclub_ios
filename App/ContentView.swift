@@ -4,6 +4,7 @@ struct ContentView: View {
     @AppStorage("user_is_admin") private var isAdmin = false
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var selectedTab = 0
+    @State private var profilePath = NavigationPath()
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -13,7 +14,7 @@ struct ContentView: View {
                 }
                 .tag(0)
 
-            ProfileView()
+            ProfileView(path: $profilePath)
                 .tabItem {
                     Label("Profile", systemImage: "person.crop.circle")
                 }
@@ -32,6 +33,9 @@ struct ContentView: View {
                     }
                     .tag(3)
             }
+        }
+        .onChange(of: selectedTab) { tab in
+            if tab == 1 { profilePath = NavigationPath() }
         }
         .onChange(of: deepLink.pendingBookId) { bookId in
             if bookId != nil { selectedTab = 0 }
