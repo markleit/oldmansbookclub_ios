@@ -30,7 +30,11 @@ fastlane/screenshots
 API/bin/
 API/obj/
 API/publish/
+API/publish.zip
 API/deploy.zip
 API/appsettings.json
 API/*.user
 API/appsettings.Development.json
+
+# Xcode archive exports
+OldMansBookClub */

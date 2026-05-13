@@ -52,6 +52,12 @@ struct ProfileView: View {
                 }
 
                 Section {
+                    NavigationLink("Blocked Users") {
+                        BlockedUsersView()
+                    }
+                }
+
+                Section {
                     Button(role: .destructive) {
                         auth.signOut()
                     } label: {
@@ -167,6 +173,84 @@ struct CameraPickerView: UIViewControllerRepresentable {
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
+        }
+    }
+}
+
+struct BlockedUsersView: View {
+    @State private var blockedUsers: [APIClient.UserResponse] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if blockedUsers.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "hand.raised.slash")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text("No blocked users")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(blockedUsers, id: \.id) { user in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(user.displayName).font(.headline)
+                                if let nick = user.nickname {
+                                    Text("\"\(nick)\"").font(.caption).foregroundColor(.secondary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button {
+                                Task { await unblock(user) }
+                            } label: {
+                                Label("Unblock", systemImage: "hand.raised.slash")
+                            }
+                            .tint(.blue)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Blocked Users")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Error", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let blockedIds = Set(try await APIClient.shared.fetchBlockedUserIds())
+            let members = try await APIClient.shared.getMembers()
+            blockedUsers = members.filter { blockedIds.contains($0.id) }
+        } catch {
+            errorMessage = "Failed to load blocked users."
+        }
+    }
+
+    private func unblock(_ user: APIClient.UserResponse) async {
+        blockedUsers.removeAll { $0.id == user.id }
+        do {
+            try await APIClient.shared.unblockUser(userId: user.id)
+        } catch {
+            blockedUsers.append(user)
+            errorMessage = "Failed to unblock user."
         }
     }
 }
