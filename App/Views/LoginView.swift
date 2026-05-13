@@ -5,6 +5,7 @@ struct LoginView: View {
     @EnvironmentObject var auth: AuthViewModel
     @State private var showDemoLogin = false
     @State private var passphraseInput = ""
+    @State private var showEULA = !UserDefaults.standard.bool(forKey: "hasAcceptedEULA")
 
     var body: some View {
         VStack(spacing: 24) {
@@ -60,6 +61,9 @@ struct LoginView: View {
             }
 
             Spacer().frame(height: 40)
+        }
+        .fullScreenCover(isPresented: $showEULA) {
+            EULAView { showEULA = false }
         }
         .alert("Reviewer Access", isPresented: $showDemoLogin) {
             SecureField("Passphrase", text: $passphraseInput)

@@ -70,6 +70,26 @@ public class SavedMessage
     public DateTime SavedAt { get; set; } = DateTime.UtcNow;
 }
 
+public class Report
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ReporterId { get; set; }
+    public User Reporter { get; set; } = null!;
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class BlockedUser
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid BlockerId { get; set; }
+    public User Blocker { get; set; } = null!;
+    public Guid BlockedId { get; set; }
+    public User Blocked { get; set; } = null!;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class Book
 {
     public Guid Id { get; set; } = Guid.NewGuid();

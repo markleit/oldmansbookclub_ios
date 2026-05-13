@@ -65,4 +65,27 @@ public class MessagesController(AppDbContext db) : ControllerBase
         await db.SaveChangesAsync();
         return NoContent();
     }
+
+    [HttpPost("{messageId}/report")]
+    public async Task<IActionResult> ReportMessage(Guid messageId)
+    {
+        var message = await db.Messages
+            .Include(m => m.Sender)
+            .FirstOrDefaultAsync(m => m.Id == messageId);
+        if (message is null) return NotFound();
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == message.ClubId);
+        if (!isMember) return Forbid();
+
+        var alreadyReported = await db.Reports
+            .AnyAsync(r => r.ReporterId == UserId && r.MessageId == messageId);
+        if (!alreadyReported)
+        {
+            db.Reports.Add(new Report { ReporterId = UserId, MessageId = messageId });
+            await db.SaveChangesAsync();
+        }
+
+        return Ok();
+    }
 }

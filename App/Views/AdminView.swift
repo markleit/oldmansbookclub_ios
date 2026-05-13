@@ -4,6 +4,7 @@ struct AdminView: View {
     @State private var selectedTab = 0
     @State private var pendingUsers: [APIClient.PendingUser] = []
     @State private var members: [APIClient.UserResponse] = []
+    @State private var reports: [APIClient.AdminReport] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
 
@@ -15,14 +16,17 @@ struct AdminView: View {
                 Picker("", selection: $selectedTab) {
                     Text("Pending").tag(0)
                     Text("Members").tag(1)
+                    Text("Reports").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding()
 
                 if selectedTab == 0 {
                     pendingView
-                } else {
+                } else if selectedTab == 1 {
                     membersView
+                } else {
+                    reportsView
                 }
             }
             .navigationTitle("Admin")
@@ -128,6 +132,59 @@ struct AdminView: View {
         }
     }
 
+    // MARK: - Reports
+
+    private var reportsView: some View {
+        Group {
+            if isLoading && reports.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if reports.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "flag.slash")
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary)
+                    Text("No reports")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(reports) { report in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(report.senderName).font(.headline)
+                            Spacer()
+                            Text(report.reportedAt, style: .relative)
+                                .font(.caption2).foregroundColor(.secondary)
+                        }
+                        if let body = report.messageBody {
+                            Text(body)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .lineLimit(3)
+                        } else {
+                            Text("[\(report.messageType.rawValue.lowercased()) message]")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .italic()
+                        }
+                        Text("Reported by \(report.reporterName)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            Task { await dismissReport(report) }
+                        } label: {
+                            Label("Dismiss", systemImage: "checkmark")
+                        }
+                        .tint(.green)
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Actions
 
     private func load() async {
@@ -135,8 +192,9 @@ struct AdminView: View {
         defer { isLoading = false }
         async let pending = APIClient.shared.pendingUsers()
         async let approved = APIClient.shared.getMembers()
+        async let reportList = APIClient.shared.getReports()
         do {
-            (pendingUsers, members) = try await (pending, approved)
+            (pendingUsers, members, reports) = try await (pending, approved, reportList)
         } catch {
             errorMessage = "Failed to load."
         }
@@ -157,6 +215,16 @@ struct AdminView: View {
             members.removeAll { $0.id == id }
         } catch {
             errorMessage = "Failed to delete user."
+        }
+    }
+
+    private func dismissReport(_ report: APIClient.AdminReport) async {
+        reports.removeAll { $0.id == report.id }
+        do {
+            try await APIClient.shared.dismissReport(id: report.id)
+        } catch {
+            reports.append(report)
+            errorMessage = "Failed to dismiss report."
         }
     }
 

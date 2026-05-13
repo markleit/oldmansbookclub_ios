@@ -254,6 +254,46 @@ final class APIClient {
         }
     }
 
+    func reportMessage(messageId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/report")!)
+        request.httpMethod = "POST"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func fetchBlockedUserIds() async throws -> [UUID] {
+        try await get(path: "/users/blocked")
+    }
+
+    func blockUser(userId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/users/\(userId)/block")!)
+        request.httpMethod = "POST"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func unblockUser(userId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/users/\(userId)/block")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyRequest: Encodable {}
 
     // MARK: - Notifications
@@ -297,8 +337,35 @@ final class APIClient {
         let createdAt: Date
     }
 
+    struct AdminReport: Identifiable, Decodable {
+        let id: UUID
+        let messageId: UUID
+        let reporterName: String
+        let senderName: String
+        let messageType: MessageType
+        let messageBody: String?
+        let sentAt: Date
+        let reportedAt: Date
+    }
+
     func pendingUsers() async throws -> [PendingUser] {
         try await get(path: "/admin/pending-users")
+    }
+
+    func getReports() async throws -> [AdminReport] {
+        try await get(path: "/admin/reports")
+    }
+
+    func dismissReport(id: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/reports/\(id)")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     func approveUser(id: UUID) async throws {

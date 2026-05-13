@@ -11,6 +11,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Message> Messages => Set<Message>();
     public DbSet<Book> Books => Set<Book>();
     public DbSet<SavedMessage> SavedMessages => Set<SavedMessage>();
+    public DbSet<Report> Reports => Set<Report>();
+    public DbSet<BlockedUser> BlockedUsers => Set<BlockedUser>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -45,6 +47,34 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(s => s.User)
             .WithMany()
             .HasForeignKey(s => s.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<Report>()
+            .HasOne(r => r.Reporter)
+            .WithMany()
+            .HasForeignKey(r => r.ReporterId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<Report>()
+            .HasOne(r => r.Message)
+            .WithMany()
+            .HasForeignKey(r => r.MessageId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<BlockedUser>()
+            .HasIndex(b => new { b.BlockerId, b.BlockedId })
+            .IsUnique();
+
+        modelBuilder.Entity<BlockedUser>()
+            .HasOne(b => b.Blocker)
+            .WithMany()
+            .HasForeignKey(b => b.BlockerId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<BlockedUser>()
+            .HasOne(b => b.Blocked)
+            .WithMany()
+            .HasForeignKey(b => b.BlockedId)
             .OnDelete(DeleteBehavior.NoAction);
     }
 }

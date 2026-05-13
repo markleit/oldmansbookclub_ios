@@ -11,6 +11,8 @@ final class BookViewModel: ObservableObject {
     @Published var isOffline = false
     @Published var messageText = ""
     @Published var errorMessage: String?
+    @Published var showMicDeniedAlert = false
+    @Published var blockedUserIds: Set<UUID> = []
     @Published var pendingImage: UIImage?
     @Published var isRecording = false
     @Published var isUploading = false
@@ -18,6 +20,10 @@ final class BookViewModel: ObservableObject {
     @Published var savedMessages: [SavedMessage] = []
     @Published var isLoadingSaved = false
     @Published var messageSaved = false
+
+    var visibleMessages: [Message] {
+        messages.filter { !blockedUserIds.contains($0.senderId) }
+    }
 
     private var cacheKey: String { "messages_\(book.id)" }
 
@@ -55,6 +61,10 @@ final class BookViewModel: ObservableObject {
         startNetworkMonitorIfNeeded()
 
         guard !isOffline else { return }
+
+        if let ids = try? await APIClient.shared.fetchBlockedUserIds() {
+            blockedUserIds = Set(ids)
+        }
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
@@ -156,7 +166,7 @@ final class BookViewModel: ObservableObject {
                 }
             }
             guard granted else {
-                errorMessage = "Microphone access denied. Enable it in Settings."
+                showMicDeniedAlert = true
                 return
             }
             do {
@@ -165,6 +175,24 @@ final class BookViewModel: ObservableObject {
             } catch {
                 errorMessage = "Could not start recording."
             }
+        }
+    }
+
+    func reportMessage(id: UUID) async {
+        do {
+            try await APIClient.shared.reportMessage(messageId: id)
+        } catch {
+            errorMessage = "Failed to submit report."
+        }
+    }
+
+    func blockUser(senderId: UUID) async {
+        blockedUserIds.insert(senderId)
+        do {
+            try await APIClient.shared.blockUser(userId: senderId)
+        } catch {
+            blockedUserIds.remove(senderId)
+            errorMessage = "Failed to block user."
         }
     }
 

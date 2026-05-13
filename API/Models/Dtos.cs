@@ -57,3 +57,4 @@ public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, 
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl);
 public record SetBookStatusRequest(string Status);
+public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);

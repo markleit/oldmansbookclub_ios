@@ -39,7 +39,7 @@ struct BookDetailView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
-                            ForEach(viewModel.messages.reversed()) { message in
+                            ForEach(viewModel.visibleMessages.reversed()) { message in
                                 MessageRow(message: message, viewModel: viewModel)
                                     .id(message.id)
                             }
@@ -48,12 +48,12 @@ struct BookDetailView: View {
                         .padding(.top, 8)
                     }
                     .onAppear {
-                        if let newest = viewModel.messages.first {
+                        if let newest = viewModel.visibleMessages.first {
                             proxy.scrollTo(newest.id, anchor: .bottom)
                         }
                     }
-                    .onChange(of: viewModel.messages.count) { _ in
-                        if let newest = viewModel.messages.first {
+                    .onChange(of: viewModel.visibleMessages.count) { _ in
+                        if let newest = viewModel.visibleMessages.first {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo(newest.id, anchor: .bottom)
                             }
@@ -103,6 +103,16 @@ struct BookDetailView: View {
             Button("OK", role: .cancel) { viewModel.errorMessage = nil }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .alert("Microphone Access Required", isPresented: $viewModel.showMicDeniedAlert) {
+            Button("Not Now", role: .cancel) {}
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } message: {
+            Text("Voice messages require microphone access. You can enable it in Settings.")
         }
         .sheet(isPresented: $viewModel.showSavedMessages) {
             SavedMessagesSheet(viewModel: viewModel)
@@ -201,6 +211,17 @@ struct MessageRow: View {
                         Task { await viewModel.deleteMessage(id: message.id) }
                     } label: {
                         Label("Delete", systemImage: "trash")
+                    }
+                } else {
+                    Button {
+                        Task { await viewModel.reportMessage(id: message.id) }
+                    } label: {
+                        Label("Report", systemImage: "flag")
+                    }
+                    Button(role: .destructive) {
+                        Task { await viewModel.blockUser(senderId: message.senderId) }
+                    } label: {
+                        Label("Block User", systemImage: "hand.raised")
                     }
                 }
             }

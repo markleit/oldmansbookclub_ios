@@ -173,6 +173,38 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return NoContent();
     }
 
+    [HttpGet("reports")]
+    public async Task<ActionResult<List<ReportDto>>> GetReports()
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var reports = await db.Reports
+            .Include(r => r.Reporter)
+            .Include(r => r.Message).ThenInclude(m => m.Sender)
+            .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new ReportDto(
+                r.Id,
+                r.MessageId,
+                r.Reporter.Nickname ?? r.Reporter.DisplayName,
+                r.Message.Sender.Nickname ?? r.Message.Sender.DisplayName,
+                r.Message.Type,
+                r.Message.Body,
+                r.Message.SentAt,
+                r.CreatedAt))
+            .ToListAsync();
+        return Ok(reports);
+    }
+
+    [HttpDelete("reports/{id}")]
+    public async Task<IActionResult> DismissReport(Guid id)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var report = await db.Reports.FindAsync(id);
+        if (report is null) return NoContent();
+        db.Reports.Remove(report);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     private async Task<bool> IsAdminAsync()
     {
         var sub = User.FindFirst("sub")?.Value;

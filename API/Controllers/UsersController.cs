@@ -51,6 +51,50 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
         return await ToDto(user);
     }
 
+    [HttpGet("blocked")]
+    public async Task<ActionResult<List<Guid>>> GetBlocked()
+    {
+        var userId = GetUserId();
+        var ids = await db.BlockedUsers
+            .Where(b => b.BlockerId == userId)
+            .Select(b => b.BlockedId)
+            .ToListAsync();
+        return Ok(ids);
+    }
+
+    [HttpPost("{userId}/block")]
+    public async Task<IActionResult> BlockUser(Guid userId)
+    {
+        var blockerId = GetUserId();
+        if (blockerId == userId) return BadRequest("Cannot block yourself.");
+
+        var blocked = await db.Users.FindAsync(userId);
+        if (blocked is null) return NotFound();
+
+        var alreadyBlocked = await db.BlockedUsers
+            .AnyAsync(b => b.BlockerId == blockerId && b.BlockedId == userId);
+        if (!alreadyBlocked)
+        {
+            db.BlockedUsers.Add(new BlockedUser { BlockerId = blockerId, BlockedId = userId });
+            await db.SaveChangesAsync();
+        }
+
+        return Ok();
+    }
+
+    [HttpDelete("{userId}/block")]
+    public async Task<IActionResult> UnblockUser(Guid userId)
+    {
+        var blockerId = GetUserId();
+        var record = await db.BlockedUsers
+            .FirstOrDefaultAsync(b => b.BlockerId == blockerId && b.BlockedId == userId);
+        if (record is null) return NoContent();
+
+        db.BlockedUsers.Remove(record);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     private Guid GetUserId() =>
         Guid.Parse(User.FindFirst("sub")?.Value
             ?? throw new UnauthorizedAccessException());
