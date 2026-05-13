@@ -15,14 +15,30 @@ struct OldMansBookClubApp: App {
 
     var body: some Scene {
         WindowGroup {
+            RootView()
+                .environmentObject(auth)
+        }
+    }
+}
+
+struct RootView: View {
+    @EnvironmentObject var auth: AuthViewModel
+    @AppStorage("hasAcceptedEULA") private var hasAcceptedEULA = false
+
+    var body: some View {
+        Group {
             if auth.isAuthenticated {
                 ContentView()
-                    .environmentObject(auth)
                     .task { await requestPushPermission() }
             } else {
                 LoginView()
-                    .environmentObject(auth)
             }
+        }
+        .fullScreenCover(isPresented: Binding(
+            get: { !hasAcceptedEULA },
+            set: { if !$0 { hasAcceptedEULA = true } }
+        )) {
+            EULAView { hasAcceptedEULA = true }
         }
     }
 

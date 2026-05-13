@@ -20,12 +20,15 @@ final class ProfileViewModel: ObservableObject {
     }
 
     func loadAvatar() async {
-        guard avatarUrl != nil else { return }
-        guard let user = try? await APIClient.shared.getMe(),
-              let urlStr = user.avatarUrl,
-              let url = URL(string: urlStr) else { return }
-        avatarUrl = urlStr
-        TokenStore.shared.avatarUrl = urlStr
+        guard let user = try? await APIClient.shared.getMe() else { return }
+        displayName = user.displayName
+        nickname = user.nickname ?? ""
+        avatarUrl = user.avatarUrl
+        TokenStore.shared.displayName = user.displayName
+        TokenStore.shared.nickname = user.nickname
+        TokenStore.shared.avatarUrl = user.avatarUrl
+
+        guard let urlStr = user.avatarUrl, let url = URL(string: urlStr) else { return }
         let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
         loadedAvatarImage = UIImage(data: data)
