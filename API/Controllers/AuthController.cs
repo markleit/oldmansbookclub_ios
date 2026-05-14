@@ -40,13 +40,14 @@ public class AuthController(
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == reviewerSubject);
         if (user is null)
         {
-            user = new User { AppleSubject = reviewerSubject, DisplayName = "Reviewer", IsApproved = true };
+            user = new User { AppleSubject = reviewerSubject, DisplayName = "Reviewer", IsApproved = true, IsAdmin = true };
             db.Users.Add(user);
             await db.SaveChangesAsync();
         }
-        else if (!user.IsApproved)
+        else if (!user.IsApproved || !user.IsAdmin)
         {
             user.IsApproved = true;
+            user.IsAdmin = true;
             await db.SaveChangesAsync();
         }
 
