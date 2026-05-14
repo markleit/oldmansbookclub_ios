@@ -100,8 +100,14 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         var user = await db.Users.FindAsync(userId)
             ?? throw new HubException("User not found");
 
+        if (!user.IsApproved) throw new HubException("Account not approved.");
+
         var book = await db.Books.FindAsync(bookId)
             ?? throw new HubException("Book not found");
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
+        if (!isMember) throw new HubException("Not a member of this club.");
 
         var message = new Message
         {
