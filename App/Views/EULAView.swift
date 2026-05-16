@@ -59,7 +59,7 @@ struct EULAView: View {
             Divider()
 
             Button {
-                UserDefaults.standard.set(true, forKey: "hasAcceptedEULA")
+                UserDefaults.standard.set(true, forKey: "hasAcceptedEULA_v2")
                 onAccepted()
             } label: {
                 Text("I Agree")

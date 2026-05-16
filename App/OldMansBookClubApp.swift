@@ -23,7 +23,7 @@ struct OldMansBookClubApp: App {
 
 struct RootView: View {
     @EnvironmentObject var auth: AuthViewModel
-    @AppStorage("hasAcceptedEULA") private var hasAcceptedEULA = false
+    @AppStorage("hasAcceptedEULA_v2") private var hasAcceptedEULA = false
 
     var body: some View {
         Group {
