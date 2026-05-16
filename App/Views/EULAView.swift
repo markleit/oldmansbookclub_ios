@@ -13,6 +13,19 @@ struct EULAView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     Group {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Zero Tolerance Policy")
+                                .font(.subheadline.bold())
+                                .foregroundColor(.red)
+                            Text("This app has zero tolerance for objectionable content or abusive users. By tapping \"I Agree\" you confirm you understand and accept this policy.")
+                                .font(.subheadline.bold())
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.red.opacity(0.08))
+                        .cornerRadius(8)
+
                         termsSection(
                             title: "1. Acceptance",
                             body: "By using Old Man's Book Club you agree to these terms. If you do not agree, do not use the app."
