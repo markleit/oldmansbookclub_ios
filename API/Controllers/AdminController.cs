@@ -205,6 +205,20 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return NoContent();
     }
 
+    [HttpDelete("clubs/{id}")]
+    public async Task<IActionResult> DeleteClub(Guid id)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var club = await db.Clubs
+            .Include(c => c.Memberships)
+            .FirstOrDefaultAsync(c => c.Id == id);
+        if (club is null) return NotFound();
+        db.Memberships.RemoveRange(club.Memberships);
+        db.Clubs.Remove(club);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
     [HttpGet("reports")]
     public async Task<ActionResult<List<ReportDto>>> GetReports()
     {
