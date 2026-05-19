@@ -10,9 +10,11 @@ final class TokenStore {
     private let userIdKey = "user_id"
     private let userNameKey = "user_name"
     private let clubIdKey = "club_id"
+    private let clubNameKey = "club_name"
     private let nicknameKey = "user_nickname"
     private let avatarUrlKey = "user_avatar_url"
     private let isAdminKey = "user_is_admin"
+    private let isClubAdminKey = "user_is_club_admin"
 
     private init() {
         // Migrate any existing UserDefaults token into Keychain on first run
@@ -100,9 +102,19 @@ final class TokenStore {
         set { UserDefaults.standard.set(newValue?.uuidString, forKey: clubIdKey) }
     }
 
+    var clubName: String? {
+        get { UserDefaults.standard.string(forKey: clubNameKey) }
+        set { UserDefaults.standard.set(newValue, forKey: clubNameKey) }
+    }
+
     var isAdmin: Bool {
         get { UserDefaults.standard.bool(forKey: isAdminKey) }
         set { UserDefaults.standard.set(newValue, forKey: isAdminKey) }
+    }
+
+    var isClubAdmin: Bool {
+        get { UserDefaults.standard.bool(forKey: isClubAdminKey) }
+        set { UserDefaults.standard.set(newValue, forKey: isClubAdminKey) }
     }
 
     var isAuthenticated: Bool { token != nil }
@@ -122,13 +134,14 @@ final class TokenStore {
         return Date(timeIntervalSince1970: exp) < Date()
     }
 
-    func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false) {
+    func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false, isClubAdmin: Bool = false) {
         self.token = token
         self.userId = userId
         self.displayName = displayName
         self.nickname = nickname
         self.avatarUrl = avatarUrl
         self.isAdmin = isAdmin
+        self.isClubAdmin = isClubAdmin
     }
 
     func clear() {
@@ -136,8 +149,10 @@ final class TokenStore {
         userId = nil
         displayName = nil
         clubId = nil
+        clubName = nil
         nickname = nil
         avatarUrl = nil
         isAdmin = false
+        isClubAdmin = false
     }
 }

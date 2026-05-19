@@ -25,7 +25,8 @@ public class AuthController(
         var avatarUrl = u.AvatarUrl is not null
             ? await blob.GenerateAvatarReadUrlAsync(u.Id)
             : null;
-        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin);
+        var isClubAdmin = await db.Memberships.AnyAsync(m => m.UserId == u.Id && m.IsClubAdmin);
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin);
     }
 
     private const string DemoPassphrase = "BookClub2026";
@@ -76,13 +77,19 @@ public class AuthController(
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == subject);
         if (user is null)
         {
-            user = new User { AppleSubject = subject, DisplayName = request.DisplayName };
+            user = new User { AppleSubject = subject, DisplayName = request.DisplayName, IsApproved = true, IsAdmin = true };
             db.Users.Add(user);
             await db.SaveChangesAsync();
         }
+        else if (!user.IsAdmin)
+        {
+            user.IsAdmin = true;
+            user.IsApproved = true;
+            await db.SaveChangesAsync();
+        }
 
-        var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
-        if (!isMember)
+        var membership = await db.Memberships.FirstOrDefaultAsync(m => m.UserId == user.Id);
+        if (membership is null)
         {
             var club = await db.Clubs.FirstOrDefaultAsync();
             if (club is null)
@@ -90,7 +97,12 @@ public class AuthController(
                 club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
                 db.Clubs.Add(club);
             }
-            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id, IsClubAdmin = true });
+            await db.SaveChangesAsync();
+        }
+        else if (!membership.IsClubAdmin)
+        {
+            membership.IsClubAdmin = true;
             await db.SaveChangesAsync();
         }
 
@@ -121,20 +133,47 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
-        if (!user.IsApproved)
-            return Unauthorized("This club is invite-only. Ask the club admin to approve your account.");
-
         var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
         if (!isMember)
         {
-            var club = await db.Clubs.FirstOrDefaultAsync();
-            if (club is null)
+            var existingRequest = await db.JoinRequests
+                .Include(jr => jr.Club)
+                .FirstOrDefaultAsync(jr => jr.UserId == user.Id &&
+                    (jr.Status == JoinRequestStatus.Pending || jr.Status == JoinRequestStatus.Declined));
+            if (existingRequest != null)
             {
-                club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
-                db.Clubs.Add(club);
+                var status = existingRequest.Status == JoinRequestStatus.Declined
+                    ? "request_declined"
+                    : "pending_approval";
+                return StatusCode(202, new { status, club_name = existingRequest.Club.Name });
             }
-            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
-            await db.SaveChangesAsync();
+
+            if (!string.IsNullOrWhiteSpace(request.ClubName))
+            {
+                var club = new Club { Id = Guid.NewGuid(), Name = request.ClubName.Trim() };
+                db.Clubs.Add(club);
+                db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id, IsClubAdmin = true });
+                user.IsApproved = true;
+                await db.SaveChangesAsync();
+            }
+            else if (request.JoinClubId.HasValue)
+            {
+                var club = await db.Clubs.FindAsync(request.JoinClubId.Value);
+                if (club is null) return NotFound("Club not found.");
+
+                var alreadyRequested = await db.JoinRequests
+                    .AnyAsync(jr => jr.UserId == user.Id && jr.ClubId == request.JoinClubId.Value);
+                if (!alreadyRequested)
+                {
+                    db.JoinRequests.Add(new JoinRequest { UserId = user.Id, ClubId = request.JoinClubId.Value });
+                    await db.SaveChangesAsync();
+                }
+                return StatusCode(202, new { status = "pending_approval", club_name = club.Name });
+            }
+            else
+            {
+                return StatusCode(202, new { status = "needs_club_setup" });
+            }
         }
 
         var token = GenerateJwt(user);

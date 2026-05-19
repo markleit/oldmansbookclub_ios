@@ -13,6 +13,14 @@ public class ClubsController(AppDbContext db) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
+    [AllowAnonymous]
+    [HttpGet("public")]
+    public async Task<IEnumerable<PublicClubDto>> GetPublicClubs() =>
+        await db.Clubs
+            .OrderBy(c => c.Name)
+            .Select(c => new PublicClubDto(c.Id, c.Name, c.Memberships.Count()))
+            .ToListAsync();
+
     [HttpGet]
     public async Task<IEnumerable<Club>> GetMyClubs() =>
         await db.Memberships
@@ -21,13 +29,13 @@ public class ClubsController(AppDbContext db) : ControllerBase
             .ToListAsync();
 
     [HttpPost]
-    public async Task<ActionResult<Club>> CreateClub([FromBody] CreateClubRequest request)
+    public async Task<ActionResult<ClubDto>> CreateClub([FromBody] CreateClubRequest request)
     {
         var club = new Club { Name = request.Name, Description = request.Description };
         db.Clubs.Add(club);
-        db.Memberships.Add(new Membership { UserId = UserId, ClubId = club.Id });
+        db.Memberships.Add(new Membership { UserId = UserId, ClubId = club.Id, IsClubAdmin = true });
         await db.SaveChangesAsync();
-        return CreatedAtAction(nameof(GetMyClubs), club);
+        return CreatedAtAction(nameof(GetMyClubs), new ClubDto(club.Id, club.Name, club.Description));
     }
 
     [HttpGet("{clubId}/messages")]
@@ -59,6 +67,33 @@ public class ClubsController(AppDbContext db) : ControllerBase
                 m.DeletedAt != null,
                 m.IsForwarded))
             .ToListAsync();
+    }
+
+    [HttpPost("{clubId}/join-request")]
+    public async Task<IActionResult> RequestToJoin(Guid clubId)
+    {
+        var userId = UserId;
+        var club = await db.Clubs.FindAsync(clubId);
+        if (club is null) return NotFound();
+
+        var alreadyMember = await db.Memberships.AnyAsync(m => m.UserId == userId && m.ClubId == clubId);
+        if (alreadyMember) return Conflict("Already a member of this club.");
+
+        var existing = await db.JoinRequests
+            .FirstOrDefaultAsync(jr => jr.UserId == userId && jr.ClubId == clubId);
+        if (existing is not null)
+        {
+            if (existing.Status == JoinRequestStatus.Pending)
+                return Conflict("A request is already pending.");
+            existing.Status = JoinRequestStatus.Pending;
+            existing.CreatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+            return Ok();
+        }
+
+        db.JoinRequests.Add(new JoinRequest { UserId = userId, ClubId = clubId });
+        await db.SaveChangesAsync();
+        return Ok();
     }
 
     [HttpPost("{clubId}/members")]

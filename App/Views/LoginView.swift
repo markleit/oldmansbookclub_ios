@@ -43,8 +43,19 @@ struct LoginView: View {
             }
 
             #if targetEnvironment(simulator)
-            Button("Dev Login (Simulator)") {
-                auth.devLogin()
+            VStack(spacing: 8) {
+                Button("Dev Login (Simulator)") {
+                    auth.devLogin()
+                }
+                Button("Simulate New User") {
+                    auth.needsClubSetup = true
+                }
+                Button("Simulate Pending Approval") {
+                    auth.pendingApprovalClubName = "Test Book Club"
+                }
+                Button("Simulate Declined") {
+                    auth.declinedClubName = "Test Book Club"
+                }
             }
             .font(.caption)
             .foregroundColor(.secondary)

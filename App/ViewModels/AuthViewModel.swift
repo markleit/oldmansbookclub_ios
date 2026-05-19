@@ -4,8 +4,15 @@ import Foundation
 @MainActor
 final class AuthViewModel: ObservableObject {
     @Published var isAuthenticated: Bool
+    @Published var needsClubSetup = false
+    @Published var pendingApprovalClubName: String?
+    @Published var declinedClubName: String?
     @Published var isLoading = false
     @Published var errorMessage: String?
+
+    private var pendingIdentityToken: String?
+    private var pendingDisplayName: String?
+    private var pendingEmail: String?
 
     init() {
         if TokenStore.shared.isTokenExpired {
@@ -41,6 +48,9 @@ final class AuthViewModel: ObservableObject {
             }
             let email = credential.email
 
+            pendingIdentityToken = identityToken
+            pendingDisplayName = displayName
+            pendingEmail = email
             isLoading = true
             errorMessage = nil
 
@@ -52,22 +62,98 @@ final class AuthViewModel: ObservableObject {
                         displayName: displayName,
                         email: email
                     )
-                    TokenStore.shared.save(
-                        token: response.accessToken,
-                        userId: response.user.id,
-                        displayName: response.user.displayName,
-                        nickname: response.user.nickname,
-                        avatarUrl: response.user.avatarUrl,
-                        isAdmin: response.user.isAdmin
-                    )
-                    isAuthenticated = true
-                } catch APIError.pendingApproval {
-                    errorMessage = "Your account is pending club approval. Try again once the admin has added you."
+                    finishSignIn(response)
+                } catch APIError.needsClubSetup {
+                    needsClubSetup = true
+                } catch APIError.pendingApproval(let clubName) {
+                    pendingApprovalClubName = clubName
+                } catch APIError.requestDeclined(let clubName) {
+                    declinedClubName = clubName
                 } catch {
                     errorMessage = "Sign in failed. Please try again."
                 }
             }
         }
+    }
+
+    func requestToJoin(clubId: UUID) {
+        #if targetEnvironment(simulator)
+        if pendingIdentityToken == nil {
+            needsClubSetup = false
+            pendingApprovalClubName = "Old Man's Book Club"
+            return
+        }
+        #endif
+        guard let token = pendingIdentityToken, let name = pendingDisplayName else { return }
+        isLoading = true
+        errorMessage = nil
+        Task {
+            defer { isLoading = false }
+            do {
+                let response = try await APIClient.shared.signInWithApple(
+                    identityToken: token, displayName: name, email: pendingEmail, joinClubId: clubId)
+                needsClubSetup = false
+                finishSignIn(response)
+            } catch APIError.pendingApproval(let clubName) {
+                needsClubSetup = false
+                pendingApprovalClubName = clubName
+            } catch APIError.requestDeclined(let clubName) {
+                needsClubSetup = false
+                declinedClubName = clubName
+            } catch {
+                errorMessage = "Could not submit request. Please try again."
+            }
+        }
+    }
+
+    func completeClubSetup(clubName: String) {
+        #if targetEnvironment(simulator)
+        if pendingIdentityToken == nil {
+            needsClubSetup = false
+            devLogin()
+            return
+        }
+        #endif
+        guard let token = pendingIdentityToken, let name = pendingDisplayName else { return }
+        isLoading = true
+        errorMessage = nil
+        Task {
+            defer { isLoading = false }
+            do {
+                let response = try await APIClient.shared.signInWithApple(
+                    identityToken: token,
+                    displayName: name,
+                    email: pendingEmail,
+                    clubName: clubName
+                )
+                needsClubSetup = false
+                pendingIdentityToken = nil
+                pendingDisplayName = nil
+                pendingEmail = nil
+                finishSignIn(response)
+            } catch {
+                errorMessage = "Could not create club. Please try again."
+            }
+        }
+    }
+
+    private func finishSignIn(_ response: APIClient.AuthResponse) {
+        TokenStore.shared.save(
+            token: response.accessToken,
+            userId: response.user.id,
+            displayName: response.user.displayName,
+            nickname: response.user.nickname,
+            avatarUrl: response.user.avatarUrl,
+            isAdmin: response.user.isAdmin,
+            isClubAdmin: response.user.isClubAdmin
+        )
+        isAuthenticated = true
+    }
+
+    func resetToClubSetup() {
+        declinedClubName = nil
+        needsClubSetup = true
+        errorMessage = nil
     }
 
     func signOut() {
@@ -82,15 +168,7 @@ final class AuthViewModel: ObservableObject {
             defer { isLoading = false }
             do {
                 let response = try await APIClient.shared.demoLogin(passphrase: passphrase)
-                TokenStore.shared.save(
-                    token: response.accessToken,
-                    userId: response.user.id,
-                    displayName: response.user.displayName,
-                    nickname: response.user.nickname,
-                    avatarUrl: response.user.avatarUrl,
-                    isAdmin: response.user.isAdmin
-                )
-                isAuthenticated = true
+                finishSignIn(response)
             } catch {
                 errorMessage = "Invalid passphrase."
             }
@@ -105,15 +183,7 @@ final class AuthViewModel: ObservableObject {
             defer { isLoading = false }
             do {
                 let response = try await APIClient.shared.devLogin(displayName: "Mark")
-                TokenStore.shared.save(
-                    token: response.accessToken,
-                    userId: response.user.id,
-                    displayName: response.user.displayName,
-                    nickname: response.user.nickname,
-                    avatarUrl: response.user.avatarUrl,
-                    isAdmin: response.user.isAdmin
-                )
-                isAuthenticated = true
+                finishSignIn(response)
             } catch {
                 errorMessage = "Dev login failed: \(error)"
             }

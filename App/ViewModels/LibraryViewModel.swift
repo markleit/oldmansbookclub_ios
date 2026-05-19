@@ -5,14 +5,16 @@ import Network
 final class LibraryViewModel: ObservableObject {
     @Published var books: [Book] = []
     @Published var clubId: UUID? = TokenStore.shared.clubId
+    @Published var clubName: String? = TokenStore.shared.clubName
+    @Published var myClubs: [Club] = []
     @Published var isLoading = false
     @Published var isOffline = false
     @Published var errorMessage: String?
     @Published var imageRefreshToken = UUID()
 
-    var currentReads: [Book] { books.filter { $0.status == .current } }
-    var bookList: [Book] { books.filter { $0.status == .future } }
-    var pastReads: [Book] { books.filter { $0.status == .past } }
+    var currentReads: [Book] { books.filter { $0.clubId == clubId && $0.status == .current } }
+    var bookList: [Book] { books.filter { $0.clubId == clubId && $0.status == .future } }
+    var pastReads: [Book] { books.filter { $0.clubId == clubId && $0.status == .past } }
 
     private static let cacheKey = "cached_books"
     private static let decoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
@@ -37,12 +39,16 @@ final class LibraryViewModel: ObservableObject {
         isLoading = books.isEmpty
         errorMessage = nil
 
-        if TokenStore.shared.clubId == nil {
-            let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
-            TokenStore.shared.clubId = clubs.first?.id
+        let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
+        myClubs = clubs
+        if TokenStore.shared.clubId == nil || !clubs.contains(where: { $0.id == TokenStore.shared.clubId }) {
+            let first = clubs.first
+            TokenStore.shared.clubId = first?.id
+            TokenStore.shared.clubName = first?.name
         }
 
         clubId = TokenStore.shared.clubId
+        clubName = TokenStore.shared.clubName ?? myClubs.first(where: { $0.id == clubId })?.name
 
         guard clubId != nil else {
             isLoading = false
@@ -95,5 +101,14 @@ final class LibraryViewModel: ObservableObject {
             books[idx].finishedAt = status == .past ? Date() : nil
             saveCache(books)
         }
+    }
+
+    func switchClub(_ club: Club) {
+        TokenStore.shared.clubId = club.id
+        TokenStore.shared.clubName = club.name
+        clubId = club.id
+        clubName = club.name
+        books = []
+        Task { await load() }
     }
 }

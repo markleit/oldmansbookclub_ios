@@ -13,13 +13,23 @@ namespace BookClubApi.Controllers;
 public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<List<UserDto>>> GetMembers()
+    public async Task<ActionResult<List<UserDto>>> GetMembers([FromQuery] Guid? clubId = null)
     {
+        var userId = GetUserId();
+        var myClubIds = await db.Memberships
+            .Where(m => m.UserId == userId)
+            .Select(m => m.ClubId)
+            .ToListAsync();
+
+        if (clubId.HasValue && !myClubIds.Contains(clubId.Value))
+            return Forbid();
+
+        var targetClubIds = clubId.HasValue ? [clubId.Value] : myClubIds;
         var users = await db.Users
-            .Where(u => u.IsApproved)
+            .Where(u => u.IsApproved && db.Memberships.Any(m => m.UserId == u.Id && targetClubIds.Contains(m.ClubId)))
             .OrderBy(u => u.DisplayName)
             .ToListAsync();
-        var dtos = await Task.WhenAll(users.Select(ToDto));
+        var dtos = await BuildDtos(users);
         return Ok(dtos);
     }
 
@@ -60,7 +70,7 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
             .Include(b => b.Blocked)
             .Select(b => b.Blocked)
             .ToListAsync();
-        var dtos = await Task.WhenAll(blocked.Select(ToDto));
+        var dtos = await BuildDtos(blocked);
         return Ok(dtos);
     }
 
@@ -117,11 +127,27 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
         uri.Scheme == "https" &&
         uri.Host.EndsWith(".blob.core.windows.net");
 
-    private async Task<UserDto> ToDto(User u)
+    private async Task<UserDto[]> BuildDtos(IList<User> users)
+    {
+        var userIds = users.Select(u => u.Id).ToList();
+        var clubAdminIds = await db.Memberships
+            .Where(m => userIds.Contains(m.UserId) && m.IsClubAdmin)
+            .Select(m => m.UserId)
+            .ToHashSetAsync();
+        var dtos = new UserDto[users.Count];
+        for (var i = 0; i < users.Count; i++)
+            dtos[i] = await ToDto(users[i], clubAdminIds.Contains(users[i].Id));
+        return dtos;
+    }
+
+    private async Task<UserDto> ToDto(User u) =>
+        await ToDto(u, await db.Memberships.AnyAsync(m => m.UserId == u.Id && m.IsClubAdmin));
+
+    private async Task<UserDto> ToDto(User u, bool isClubAdmin)
     {
         var avatarUrl = u.AvatarUrl is not null
             ? await blob.GenerateAvatarReadUrlAsync(u.Id)
             : null;
-        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin);
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin);
     }
 }

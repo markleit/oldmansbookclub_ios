@@ -2,12 +2,15 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BookClubApi.Models;
 
-public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null);
+public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null, string? ClubName = null, Guid? JoinClubId = null);
+public record ClubDto(Guid Id, string Name, string? Description);
+public record PublicClubDto(Guid Id, string Name, int MemberCount);
+public record JoinRequestDto(Guid Id, Guid UserId, string DisplayName, string? Email, Guid ClubId, string ClubName, DateTime CreatedAt);
 public record DevLoginRequest(string DisplayName);
 public record DemoLoginRequest(string Passphrase);
 public record AuthResponse(string AccessToken, UserDto User);
 
-public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin);
+public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin, bool IsClubAdmin);
 public record PendingUserDto(Guid Id, string DisplayName, string? Email, DateTime CreatedAt);
 public record UpdateProfileRequest(
     [MaxLength(200)] string? DisplayName,

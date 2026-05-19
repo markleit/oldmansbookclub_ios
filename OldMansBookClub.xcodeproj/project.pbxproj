@@ -13,8 +13,10 @@
 		205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */; };
 		238255509291CD03907584E8 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */; };
 		26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */; };
+		2C2EF1F408CB370E728F6C62 /* BrowseClubsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62112635C861D78687D704A9 /* BrowseClubsView.swift */; };
 		301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8994D3123C1F58B7C697E408 /* CacheService.swift */; };
 		3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */; };
+		3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
@@ -27,6 +29,7 @@
 		8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6531FD0CE01104B5FBC19167 /* MessageInputView.swift */; };
 		958AF33D661E4DE915A5862A /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8FBEB2C7086C94FA433207 /* ChatService.swift */; };
 		A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88754FFD53578C83DEC2294D /* LibraryView.swift */; };
+		ABDA7545353AE73E8CAF41E8 /* JoinOrCreateClubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553E3882DFB1988AC65BEBF8 /* JoinOrCreateClubView.swift */; };
 		B085151687156DA2AC994199 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E0F879AC20F63014F28CB5 /* BookDetailView.swift */; };
 		BC028A1177F026A4999F388C /* AdminView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69018BA34CF925339F43265 /* AdminView.swift */; };
 		CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BDC572FF6DDD04153861DF /* ContentView.swift */; };
@@ -34,6 +37,7 @@
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
 		DA5112046C1918009C6022F0 /* MembersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3561055F63BDA4AFB095AC2E /* MembersView.swift */; };
 		DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3797FC65323C0493452D32B2 /* CachedBookCover.swift */; };
+		F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78B795F384775724D68C0D6 /* ClubSetupView.swift */; };
 		F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */; };
 		FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010D3939D82C530D2050FDBA /* LoginView.swift */; };
 /* End PBXBuildFile section */
@@ -50,8 +54,10 @@
 		35BB903519CCBE31B68D8F6A /* OldMansBookClub.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = OldMansBookClub.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3797FC65323C0493452D32B2 /* CachedBookCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedBookCover.swift; sourceTree = "<group>"; };
 		40CB6C91B09B06C1D5531269 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		553E3882DFB1988AC65BEBF8 /* JoinOrCreateClubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinOrCreateClubView.swift; sourceTree = "<group>"; };
 		59E0F879AC20F63014F28CB5 /* BookDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailView.swift; sourceTree = "<group>"; };
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
+		62112635C861D78687D704A9 /* BrowseClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseClubsView.swift; sourceTree = "<group>"; };
 		6531FD0CE01104B5FBC19167 /* MessageInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputView.swift; sourceTree = "<group>"; };
 		7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EULAView.swift; sourceTree = "<group>"; };
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
@@ -70,6 +76,8 @@
 		DEE74273F3039AFB33F97C01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E03A3E7B2C78427DBBADED06 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
+		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
+		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -130,13 +138,17 @@
 				5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */,
 				D69018BA34CF925339F43265 /* AdminView.swift */,
 				59E0F879AC20F63014F28CB5 /* BookDetailView.swift */,
+				62112635C861D78687D704A9 /* BrowseClubsView.swift */,
 				3797FC65323C0493452D32B2 /* CachedBookCover.swift */,
+				F78B795F384775724D68C0D6 /* ClubSetupView.swift */,
 				7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */,
+				553E3882DFB1988AC65BEBF8 /* JoinOrCreateClubView.swift */,
 				88754FFD53578C83DEC2294D /* LibraryView.swift */,
 				010D3939D82C530D2050FDBA /* LoginView.swift */,
 				BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */,
 				3561055F63BDA4AFB095AC2E /* MembersView.swift */,
 				6531FD0CE01104B5FBC19167 /* MessageInputView.swift */,
+				EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */,
 				DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */,
 				846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */,
 			);
@@ -253,12 +265,15 @@
 				F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */,
 				B085151687156DA2AC994199 /* BookDetailView.swift in Sources */,
 				79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */,
+				2C2EF1F408CB370E728F6C62 /* BrowseClubsView.swift in Sources */,
 				301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */,
 				DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */,
 				958AF33D661E4DE915A5862A /* ChatService.swift in Sources */,
+				F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */,
 				CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */,
 				19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */,
 				D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */,
+				ABDA7545353AE73E8CAF41E8 /* JoinOrCreateClubView.swift in Sources */,
 				A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */,
 				8491BB705E4FC317CFF6FCF7 /* LibraryViewModel.swift in Sources */,
 				FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */,
@@ -268,6 +283,7 @@
 				8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */,
 				3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */,
 				58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */,
+				3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
 				3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
@@ -342,7 +358,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = BCH6CDU76R;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -365,7 +381,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = BCH6CDU76R;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;

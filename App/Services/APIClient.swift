@@ -1,12 +1,16 @@
 import Foundation
 
 enum APIError: LocalizedError {
-    case pendingApproval
+    case pendingApproval(clubName: String)
+    case requestDeclined(clubName: String)
+    case needsClubSetup
     case serverError(Int)
 
     var errorDescription: String? {
         switch self {
-        case .pendingApproval: return "Your account is pending club approval. Try again once the admin has added you."
+        case .pendingApproval(let name): return "Your request to join \(name) is pending admin approval."
+        case .requestDeclined(let name): return "Your request to join \(name) was declined."
+        case .needsClubSetup: return "Please set up your club to continue."
         case .serverError(let code): return "Server error (\(code))."
         }
     }
@@ -67,6 +71,29 @@ final class APIClient {
         let identityToken: String
         let displayName: String
         let email: String?
+        let clubName: String?
+        let joinClubId: UUID?
+    }
+
+    struct SetupRequiredResponse: Decodable {
+        let status: String
+        let clubName: String?
+    }
+
+    struct PublicClub: Decodable, Identifiable {
+        let id: UUID
+        let name: String
+        let memberCount: Int
+    }
+
+    struct JoinRequest: Decodable, Identifiable {
+        let id: UUID
+        let userId: UUID
+        let displayName: String
+        let email: String?
+        let clubId: UUID
+        let clubName: String
+        let createdAt: Date
     }
 
     struct AuthResponse: Decodable {
@@ -80,11 +107,52 @@ final class APIClient {
         let nickname: String?
         let avatarUrl: String?
         let isAdmin: Bool
+        let isClubAdmin: Bool
     }
 
-    func signInWithApple(identityToken: String, displayName: String, email: String?) async throws -> AuthResponse {
-        let body = AppleAuthRequest(identityToken: identityToken, displayName: displayName, email: email)
-        return try await post(path: "/auth/apple", body: body, authenticated: false)
+    func signInWithApple(identityToken: String, displayName: String, email: String?, clubName: String? = nil, joinClubId: UUID? = nil) async throws -> AuthResponse {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/auth/apple")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(AppleAuthRequest(identityToken: identityToken, displayName: displayName, email: email, clubName: clubName, joinClubId: joinClubId))
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 202 {
+            let setup = try? decoder.decode(SetupRequiredResponse.self, from: data)
+            switch setup?.status {
+            case "pending_approval":
+                throw APIError.pendingApproval(clubName: setup?.clubName ?? "the club")
+            case "request_declined":
+                throw APIError.requestDeclined(clubName: setup?.clubName ?? "the club")
+            default:
+                throw APIError.needsClubSetup
+            }
+        }
+        if http.statusCode == 401 { throw URLError(.userAuthenticationRequired) }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        return try decoder.decode(AuthResponse.self, from: data)
+    }
+
+    func getPublicClubs() async throws -> [PublicClub] {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/clubs/public")!)
+        request.httpMethod = "GET"
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+        return try decoder.decode([PublicClub].self, from: data)
+    }
+
+    func getJoinRequests() async throws -> [JoinRequest] {
+        try await get(path: "/admin/join-requests")
+    }
+
+    func approveJoinRequest(id: UUID) async throws {
+        try await postEmpty(path: "/admin/join-requests/\(id)/approve")
+    }
+
+    func declineJoinRequest(id: UUID) async throws {
+        try await postEmpty(path: "/admin/join-requests/\(id)/decline")
     }
 
     struct DemoLoginRequest: Encodable { let passphrase: String }
@@ -117,6 +185,10 @@ final class APIClient {
     func createClub(name: String, description: String?) async throws -> Club {
         let body = CreateClubRequest(name: name, description: description)
         return try await post(path: "/clubs", body: body, authenticated: true)
+    }
+
+    func requestToJoinClub(clubId: UUID) async throws {
+        try await postEmpty(path: "/clubs/\(clubId)/join-request")
     }
 
     // MARK: - Books
@@ -193,8 +265,9 @@ final class APIClient {
         try await get(path: "/users/me")
     }
 
-    func getMembers() async throws -> [UserResponse] {
-        try await get(path: "/users")
+    func getMembers(clubId: UUID? = nil) async throws -> [UserResponse] {
+        let path = clubId.map { "/users?clubId=\($0.uuidString)" } ?? "/users"
+        return try await get(path: path)
     }
 
     func updateProfile(displayName: String?, nickname: String?, avatarUrl: String?) async throws -> UserResponse {
@@ -443,13 +516,21 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        if http.statusCode == 401 {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            if body.contains("invite-only") { throw APIError.pendingApproval }
-            throw URLError(.userAuthenticationRequired)
-        }
+        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
+    }
+
+    private func postEmpty(path: String) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
+        request.httpMethod = "POST"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
     }
 
     private func patch<Body: Encodable, Response: Decodable>(

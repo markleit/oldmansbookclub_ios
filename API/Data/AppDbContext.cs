@@ -13,6 +13,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SavedMessage> SavedMessages => Set<SavedMessage>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<BlockedUser> BlockedUsers => Set<BlockedUser>();
+    public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -76,5 +77,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(b => b.BlockedId)
             .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<JoinRequest>()
+            .HasIndex(jr => new { jr.UserId, jr.ClubId })
+            .IsUnique();
+
+        modelBuilder.Entity<JoinRequest>()
+            .HasOne(jr => jr.User)
+            .WithMany()
+            .HasForeignKey(jr => jr.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<JoinRequest>()
+            .HasOne(jr => jr.Club)
+            .WithMany()
+            .HasForeignKey(jr => jr.ClubId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

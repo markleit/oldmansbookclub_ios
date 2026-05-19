@@ -90,7 +90,7 @@ struct LibraryView: View {
             }
             .refreshable { await viewModel.load() }
             .overlay { if viewModel.isLoading { ProgressView() } }
-            .navigationTitle("Library")
+            .navigationTitle(viewModel.clubName ?? "Library")
             .navigationDestination(for: Book.self) { book in
                 BookDetailView(
                     book: book,
@@ -109,6 +109,25 @@ struct LibraryView: View {
                 navigateToPendingBook()
             }
             .toolbar {
+                if viewModel.myClubs.count > 1 {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Menu {
+                            ForEach(viewModel.myClubs) { club in
+                                Button {
+                                    viewModel.switchClub(club)
+                                } label: {
+                                    if club.id == viewModel.clubId {
+                                        Label(club.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(club.name)
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "arrow.left.arrow.right.circle")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showingAddBook = true } label: {
                         Image(systemName: "plus")

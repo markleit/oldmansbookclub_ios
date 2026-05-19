@@ -30,6 +30,12 @@ struct RootView: View {
             if auth.isAuthenticated {
                 ContentView()
                     .task { await requestPushPermission() }
+            } else if let clubName = auth.pendingApprovalClubName {
+                PendingApprovalView(clubName: clubName, declined: false)
+            } else if let clubName = auth.declinedClubName {
+                PendingApprovalView(clubName: clubName, declined: true)
+            } else if auth.needsClubSetup {
+                ClubSetupView()
             } else {
                 LoginView()
             }

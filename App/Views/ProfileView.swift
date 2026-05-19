@@ -10,6 +10,7 @@ struct ProfileView: View {
     @State private var showLibraryPicker = false
     @State private var showCamera = false
     @State private var photosItem: PhotosPickerItem?
+    @State private var showJoinOrCreate = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -55,6 +56,9 @@ struct ProfileView: View {
                 Section {
                     NavigationLink("Blocked Users") {
                         BlockedUsersView()
+                    }
+                    Button("Join or Create Club") {
+                        showJoinOrCreate = true
                     }
                 }
 
@@ -106,6 +110,9 @@ struct ProfileView: View {
                 Button("OK") {}
             } message: {
                 Text("Your profile has been updated.")
+            }
+            .sheet(isPresented: $showJoinOrCreate) {
+                JoinOrCreateClubView()
             }
         }
     }

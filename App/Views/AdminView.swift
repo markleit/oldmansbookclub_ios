@@ -2,34 +2,39 @@ import SwiftUI
 
 struct AdminView: View {
     @State private var selectedTab = 0
-    @State private var pendingUsers: [APIClient.PendingUser] = []
+    @State private var joinRequests: [APIClient.JoinRequest] = []
     @State private var members: [APIClient.UserResponse] = []
     @State private var reports: [APIClient.AdminReport] = []
+    @State private var myClubs: [Club] = []
+    @State private var selectedClubId: UUID? = nil
     @State private var isLoading = false
     @State private var errorMessage: String?
 
     private var myId: UUID? { TokenStore.shared.userId }
+    private var isGlobalAdmin: Bool { TokenStore.shared.isAdmin }
 
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                Picker("", selection: $selectedTab) {
-                    Text("Pending").tag(0)
-                    Text("Members").tag(1)
-                    Text("Reports").tag(2)
+                if isGlobalAdmin {
+                    Picker("", selection: $selectedTab) {
+                        Text("Requests").tag(0)
+                        Text("Members").tag(1)
+                        Text("Reports").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding()
                 }
-                .pickerStyle(.segmented)
-                .padding()
 
                 if selectedTab == 0 {
-                    pendingView
+                    requestsView
                 } else if selectedTab == 1 {
                     membersView
                 } else {
                     reportsView
                 }
             }
-            .navigationTitle("Admin")
+            .navigationTitle(isGlobalAdmin ? "Admin" : "Requests")
             .alert("Error", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -43,38 +48,49 @@ struct AdminView: View {
         }
     }
 
-    // MARK: - Pending
+    // MARK: - Requests
 
-    private var pendingView: some View {
+    private var requestsView: some View {
         Group {
-            if isLoading && pendingUsers.isEmpty {
+            if isLoading && joinRequests.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if pendingUsers.isEmpty {
+            } else if joinRequests.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.seal")
                         .font(.system(size: 40))
                         .foregroundColor(.secondary)
-                    Text("No pending approvals")
+                    Text("No pending requests")
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(pendingUsers) { user in
+                List(joinRequests) { request in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(user.displayName).font(.headline)
-                            if let email = user.email {
+                            Text(request.displayName).font(.headline)
+                            Text(request.clubName)
+                                .font(.subheadline)
+                                .foregroundColor(.accentColor)
+                            if let email = request.email {
                                 Text(email).font(.caption).foregroundColor(.secondary)
                             }
-                            Text(user.createdAt, style: .relative)
+                            Text(request.createdAt, style: .relative)
                                 .font(.caption2).foregroundColor(.secondary)
                         }
                         Spacer()
-                        Button("Approve") {
-                            Task { await approve(user.id) }
+                        VStack(spacing: 6) {
+                            Button("Approve") {
+                                Task { await approveRequest(request.id) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            Button("Decline") {
+                                Task { await declineRequest(request.id) }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.red)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
                     }
                     .padding(.vertical, 4)
                 }
@@ -85,7 +101,23 @@ struct AdminView: View {
     // MARK: - Members
 
     private var membersView: some View {
-        Group {
+        VStack(spacing: 0) {
+            if myClubs.count > 1 {
+                Picker("Club", selection: $selectedClubId) {
+                    Text("All Clubs").tag(UUID?.none)
+                    ForEach(myClubs) { club in
+                        Text(club.name).tag(UUID?.some(club.id))
+                    }
+                }
+                .pickerStyle(.menu)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .onChange(of: selectedClubId) { _ in
+                    Task { await loadMembers() }
+                }
+                Divider()
+            }
+            Group {
             if isLoading && members.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if members.isEmpty {
@@ -111,7 +143,7 @@ struct AdminView: View {
                         }
                         .padding(.vertical, 4)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if member.id != myId {
+                            if isGlobalAdmin && member.id != myId {
                                 Button(role: .destructive) {
                                     Task { await deleteUser(member.id) }
                                 } label: {
@@ -129,7 +161,8 @@ struct AdminView: View {
                     }
                 }
             }
-        }
+            } // Group
+        } // VStack
     }
 
     // MARK: - Reports
@@ -190,22 +223,43 @@ struct AdminView: View {
     private func load() async {
         isLoading = true
         defer { isLoading = false }
-        async let pending = APIClient.shared.pendingUsers()
-        async let approved = APIClient.shared.getMembers()
-        async let reportList = APIClient.shared.getReports()
         do {
-            (pendingUsers, members, reports) = try await (pending, approved, reportList)
+            async let requests = APIClient.shared.getJoinRequests()
+            async let clubs = APIClient.shared.getMyClubs()
+            async let approved = APIClient.shared.getMembers(clubId: selectedClubId)
+            async let reportList = APIClient.shared.getReports()
+            (joinRequests, myClubs, members, reports) = try await (requests, clubs, approved, reportList)
+            if selectedClubId == nil, let first = myClubs.first {
+                selectedClubId = first.id
+            }
         } catch {
             errorMessage = "Failed to load."
         }
     }
 
-    private func approve(_ id: UUID) async {
+    private func loadMembers() async {
         do {
-            try await APIClient.shared.approveUser(id: id)
-            pendingUsers.removeAll { $0.id == id }
+            members = try await APIClient.shared.getMembers(clubId: selectedClubId)
         } catch {
-            errorMessage = "Failed to approve user."
+            errorMessage = "Failed to load members."
+        }
+    }
+
+    private func approveRequest(_ id: UUID) async {
+        do {
+            try await APIClient.shared.approveJoinRequest(id: id)
+            joinRequests.removeAll { $0.id == id }
+        } catch {
+            errorMessage = "Failed to approve request."
+        }
+    }
+
+    private func declineRequest(_ id: UUID) async {
+        do {
+            try await APIClient.shared.declineJoinRequest(id: id)
+            joinRequests.removeAll { $0.id == id }
+        } catch {
+            errorMessage = "Failed to decline request."
         }
     }
 
@@ -236,7 +290,7 @@ struct AdminView: View {
                 members[idx] = APIClient.UserResponse(
                     id: m.id, displayName: m.displayName,
                     nickname: m.nickname, avatarUrl: m.avatarUrl,
-                    isAdmin: isAdmin)
+                    isAdmin: isAdmin, isClubAdmin: m.isClubAdmin)
             }
             if id == myId {
                 TokenStore.shared.isAdmin = isAdmin

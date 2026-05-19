@@ -35,6 +35,38 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         "https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c8/Example.ogg/Example.ogg.mp3";
 
     [AllowAnonymous]
+    [HttpPost("seed-join-request")]
+    public async Task<IActionResult> SeedJoinRequest([FromBody] string displayName)
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var subject = "dev_" + displayName.ToLowerInvariant();
+        var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == subject);
+        if (user is null)
+        {
+            user = new User { AppleSubject = subject, DisplayName = displayName, IsApproved = false };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+        }
+
+        var club = await db.Clubs.FirstOrDefaultAsync();
+        if (club is null) return NotFound("No clubs exist.");
+
+        var existing = await db.JoinRequests
+            .FirstOrDefaultAsync(jr => jr.UserId == user.Id && jr.ClubId == club.Id);
+        if (existing is not null)
+        {
+            existing.Status = JoinRequestStatus.Pending;
+            await db.SaveChangesAsync();
+            return Ok(new { userId = user.Id, clubId = club.Id, status = "reset to pending" });
+        }
+
+        db.JoinRequests.Add(new JoinRequest { UserId = user.Id, ClubId = club.Id });
+        await db.SaveChangesAsync();
+        return Ok(new { userId = user.Id, clubId = club.Id, status = "created" });
+    }
+
     [HttpPost("seed-messages")]
     public async Task<IActionResult> SeedMessages([FromBody] SeedMessagesRequest req)
     {
@@ -203,6 +235,77 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         db.Reports.Remove(report);
         await db.SaveChangesAsync();
         return NoContent();
+    }
+
+    [HttpGet("join-requests")]
+    public async Task<ActionResult<List<JoinRequestDto>>> GetJoinRequests()
+    {
+        var userId = CallerId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var isGlobalAdmin = await IsAdminAsync();
+        List<Guid> scopedClubIds;
+        if (isGlobalAdmin)
+        {
+            scopedClubIds = await db.Clubs.Select(c => c.Id).ToListAsync();
+        }
+        else
+        {
+            scopedClubIds = await db.Memberships
+                .Where(m => m.UserId == userId && m.IsClubAdmin)
+                .Select(m => m.ClubId)
+                .ToListAsync();
+            if (scopedClubIds.Count == 0) return Forbid();
+        }
+        var requests = await db.JoinRequests
+            .Include(jr => jr.User)
+            .Include(jr => jr.Club)
+            .Where(jr => scopedClubIds.Contains(jr.ClubId) && jr.Status == JoinRequestStatus.Pending)
+            .OrderBy(jr => jr.CreatedAt)
+            .Select(jr => new JoinRequestDto(jr.Id, jr.UserId, jr.User.DisplayName, jr.User.Email, jr.ClubId, jr.Club.Name, jr.CreatedAt))
+            .ToListAsync();
+        return Ok(requests);
+    }
+
+    [HttpPost("join-requests/{id}/approve")]
+    public async Task<IActionResult> ApproveJoinRequest(Guid id)
+    {
+        var userId = CallerId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var jr = await db.JoinRequests.Include(j => j.User).FirstOrDefaultAsync(j => j.Id == id);
+        if (jr is null) return NotFound();
+        if (!await CanManageClub(userId, jr.ClubId)) return Forbid();
+        jr.Status = JoinRequestStatus.Approved;
+        jr.User.IsApproved = true;
+        var alreadyMember = await db.Memberships.AnyAsync(m => m.UserId == jr.UserId && m.ClubId == jr.ClubId);
+        if (!alreadyMember)
+            db.Memberships.Add(new Membership { UserId = jr.UserId, ClubId = jr.ClubId });
+        await db.SaveChangesAsync();
+        return Ok();
+    }
+
+    [HttpPost("join-requests/{id}/decline")]
+    public async Task<IActionResult> DeclineJoinRequest(Guid id)
+    {
+        var userId = CallerId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var jr = await db.JoinRequests.FirstOrDefaultAsync(j => j.Id == id);
+        if (jr is null) return NotFound();
+        if (!await CanManageClub(userId, jr.ClubId)) return Forbid();
+        jr.Status = JoinRequestStatus.Declined;
+        await db.SaveChangesAsync();
+        return Ok();
+    }
+
+    private Guid CallerId()
+    {
+        var sub = User.FindFirst("sub")?.Value;
+        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
+    }
+
+    private async Task<bool> CanManageClub(Guid userId, Guid clubId)
+    {
+        if (await IsAdminAsync()) return true;
+        return await db.Memberships.AnyAsync(m => m.UserId == userId && m.ClubId == clubId && m.IsClubAdmin);
     }
 
     private async Task<bool> IsAdminAsync()

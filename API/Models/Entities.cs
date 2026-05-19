@@ -37,6 +37,7 @@ public class Membership
     public User User { get; set; } = null!;
     public Guid ClubId { get; set; }
     public Club Club { get; set; } = null!;
+    public bool IsClubAdmin { get; set; } = false;
     public DateTime JoinedAt { get; set; } = DateTime.UtcNow;
 }
 
@@ -87,6 +88,19 @@ public class BlockedUser
     public User Blocker { get; set; } = null!;
     public Guid BlockedId { get; set; }
     public User Blocked { get; set; } = null!;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public enum JoinRequestStatus { Pending, Approved, Declined }
+
+public class JoinRequest
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid ClubId { get; set; }
+    public Club Club { get; set; } = null!;
+    public JoinRequestStatus Status { get; set; } = JoinRequestStatus.Pending;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

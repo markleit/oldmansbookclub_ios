@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @AppStorage("user_is_admin") private var isAdmin = false
+    @AppStorage("user_is_club_admin") private var isClubAdmin = false
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var selectedTab = 0
     @State private var profilePath = NavigationPath()
@@ -26,10 +27,10 @@ struct ContentView: View {
                 }
                 .tag(2)
 
-            if isAdmin {
+            if isAdmin || isClubAdmin {
                 AdminView()
                     .tabItem {
-                        Label("Admin", systemImage: "person.badge.key.fill")
+                        Label(isAdmin ? "Admin" : "Requests", systemImage: isAdmin ? "person.badge.key.fill" : "tray.full")
                     }
                     .tag(3)
             }
