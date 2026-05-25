@@ -22,10 +22,10 @@ public class ClubsController(AppDbContext db) : ControllerBase
             .ToListAsync();
 
     [HttpGet]
-    public async Task<IEnumerable<Club>> GetMyClubs() =>
+    public async Task<IEnumerable<ClubMembershipDto>> GetMyClubs() =>
         await db.Memberships
             .Where(m => m.UserId == UserId)
-            .Select(m => m.Club)
+            .Select(m => new ClubMembershipDto(m.Club.Id, m.Club.Name, m.Club.Description, m.IsClubAdmin))
             .ToListAsync();
 
     [HttpPost]

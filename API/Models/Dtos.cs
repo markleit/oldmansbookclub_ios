@@ -4,6 +4,8 @@ namespace BookClubApi.Models;
 
 public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null, string? ClubName = null, Guid? JoinClubId = null);
 public record ClubDto(Guid Id, string Name, string? Description);
+public record SetClubAdminRequest(bool IsClubAdmin);
+public record ClubMembershipDto(Guid Id, string Name, string? Description, bool IsClubAdmin);
 public record PublicClubDto(Guid Id, string Name, int MemberCount);
 public record JoinRequestDto(Guid Id, Guid UserId, string DisplayName, string? Email, Guid ClubId, string ClubName, DateTime CreatedAt);
 public record DevLoginRequest(string DisplayName);

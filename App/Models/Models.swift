@@ -4,6 +4,21 @@ struct Club: Identifiable, Codable {
     let id: UUID
     var name: String
     var description: String?
+    var isClubAdmin: Bool = false
+}
+
+extension Club {
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, isClubAdmin
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        isClubAdmin = try c.decodeIfPresent(Bool.self, forKey: .isClubAdmin) ?? false
+    }
 }
 
 enum BookStatus: String, Codable {

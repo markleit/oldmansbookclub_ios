@@ -21,19 +21,14 @@ struct ContentView: View {
                 }
                 .tag(1)
 
-            MembersView()
+            AdminView()
                 .tabItem {
-                    Label("Members", systemImage: "person.2.fill")
+                    Label(
+                        isAdmin ? "Admin" : isClubAdmin ? "Club Admin" : "Members",
+                        systemImage: isAdmin ? "person.badge.key.fill" : "person.2.fill"
+                    )
                 }
                 .tag(2)
-
-            if isAdmin || isClubAdmin {
-                AdminView()
-                    .tabItem {
-                        Label(isAdmin ? "Admin" : "Requests", systemImage: isAdmin ? "person.badge.key.fill" : "tray.full")
-                    }
-                    .tag(3)
-            }
         }
         .onChange(of: selectedTab) { tab in
             if tab == 1 { profilePath = NavigationPath() }

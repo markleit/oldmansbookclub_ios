@@ -147,7 +147,8 @@ final class TokenStore {
     func clear() {
         token = nil
         userId = nil
-        displayName = nil
+        // displayName intentionally kept — Apple only sends it on first auth,
+        // so we preserve it as a fallback for re-login on the same device
         clubId = nil
         clubName = nil
         nickname = nil

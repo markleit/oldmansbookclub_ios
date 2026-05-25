@@ -485,6 +485,34 @@ final class APIClient {
         }
     }
 
+    struct SetClubAdminRequest: Encodable { let isClubAdmin: Bool }
+
+    func setClubAdmin(userId: UUID, clubId: UUID, isClubAdmin: Bool) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)/members/\(userId)/set-club-admin")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(SetClubAdminRequest(isClubAdmin: isClubAdmin))
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
+    func removeMember(userId: UUID, clubId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)/members/\(userId)")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     private struct EmptyResponse: Decodable {}
 
     // MARK: - Helpers

@@ -48,12 +48,26 @@ builder.Services.AddHttpClient("apns", client =>
     client.BaseAddress = new Uri("https://api.push.apple.com");
     client.DefaultRequestVersion = System.Net.HttpVersion.Version20;
     client.DefaultVersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrHigher;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    // Send HTTP/2 PING frames every 90s to prevent APNs from closing idle connections
+    KeepAlivePingDelay = TimeSpan.FromSeconds(90),
+    KeepAlivePingTimeout = TimeSpan.FromSeconds(30),
+    KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+    // Proactively close connections idle longer than 4 min (APNs closes at ~5 min)
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(4),
 });
 builder.Services.AddHttpClient("apns-sandbox", client =>
 {
     client.BaseAddress = new Uri("https://api.sandbox.push.apple.com");
     client.DefaultRequestVersion = System.Net.HttpVersion.Version20;
     client.DefaultVersionPolicy = System.Net.Http.HttpVersionPolicy.RequestVersionOrHigher;
+}).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    KeepAlivePingDelay = TimeSpan.FromSeconds(90),
+    KeepAlivePingTimeout = TimeSpan.FromSeconds(30),
+    KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
+    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(4),
 });
 
 // JWT Auth

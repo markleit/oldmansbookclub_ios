@@ -159,6 +159,9 @@ final class AuthViewModel: ObservableObject {
     func signOut() {
         TokenStore.shared.clear()
         isAuthenticated = false
+        needsClubSetup = false
+        pendingApprovalClubName = nil
+        declinedClubName = nil
     }
 
     func demoLogin(passphrase: String) {
