@@ -52,16 +52,16 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
-        var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
-        if (!isMember)
-        {
-            var club = await db.Clubs.FirstOrDefaultAsync();
-            if (club is not null)
-            {
-                db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id });
-                await db.SaveChangesAsync();
-            }
-        }
+        var existingClubIds = await db.Memberships
+            .Where(m => m.UserId == user.Id)
+            .Select(m => m.ClubId)
+            .ToHashSetAsync();
+        var allClubIds = await db.Clubs.Select(c => c.Id).ToListAsync();
+        var missing = allClubIds.Where(id => !existingClubIds.Contains(id)).ToList();
+        foreach (var clubId in missing)
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = clubId, IsClubAdmin = true });
+        if (missing.Count > 0)
+            await db.SaveChangesAsync();
 
         var token = GenerateJwt(user);
         return Ok(new AuthResponse(token, await BuildUserDto(user)));
@@ -88,23 +88,26 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
-        var membership = await db.Memberships.FirstOrDefaultAsync(m => m.UserId == user.Id);
-        if (membership is null)
+        var allClubIds = await db.Clubs.Select(c => c.Id).ToListAsync();
+        if (allClubIds.Count == 0)
         {
-            var club = await db.Clubs.FirstOrDefaultAsync();
-            if (club is null)
-            {
-                club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
-                db.Clubs.Add(club);
-            }
-            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = club.Id, IsClubAdmin = true });
+            var club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
+            db.Clubs.Add(club);
             await db.SaveChangesAsync();
+            allClubIds = [club.Id];
         }
-        else if (!membership.IsClubAdmin)
-        {
-            membership.IsClubAdmin = true;
+
+        var existingClubIds = await db.Memberships
+            .Where(m => m.UserId == user.Id)
+            .Select(m => m.ClubId)
+            .ToHashSetAsync();
+
+        var missing = allClubIds.Where(id => !existingClubIds.Contains(id)).ToList();
+        foreach (var clubId in missing)
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = clubId, IsClubAdmin = true });
+
+        if (missing.Count > 0)
             await db.SaveChangesAsync();
-        }
 
         var token = GenerateJwt(user);
         return Ok(new AuthResponse(token, await BuildUserDto(user)));
@@ -136,18 +139,7 @@ public class AuthController(
         var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
         if (!isMember)
         {
-            var existingRequest = await db.JoinRequests
-                .Include(jr => jr.Club)
-                .FirstOrDefaultAsync(jr => jr.UserId == user.Id &&
-                    (jr.Status == JoinRequestStatus.Pending || jr.Status == JoinRequestStatus.Declined));
-            if (existingRequest != null)
-            {
-                var status = existingRequest.Status == JoinRequestStatus.Declined
-                    ? "request_declined"
-                    : "pending_approval";
-                return StatusCode(202, new { status, club_name = existingRequest.Club.Name });
-            }
-
+            // Create a new club — takes priority over any prior declined request
             if (!string.IsNullOrWhiteSpace(request.ClubName))
             {
                 var club = new Club { Id = Guid.NewGuid(), Name = request.ClubName.Trim() };
@@ -156,22 +148,46 @@ public class AuthController(
                 user.IsApproved = true;
                 await db.SaveChangesAsync();
             }
+            // Request to join a specific club
             else if (request.JoinClubId.HasValue)
             {
                 var club = await db.Clubs.FindAsync(request.JoinClubId.Value);
                 if (club is null) return NotFound("Club not found.");
 
-                var alreadyRequested = await db.JoinRequests
-                    .AnyAsync(jr => jr.UserId == user.Id && jr.ClubId == request.JoinClubId.Value);
-                if (!alreadyRequested)
+                var jr = await db.JoinRequests
+                    .FirstOrDefaultAsync(j => j.UserId == user.Id && j.ClubId == request.JoinClubId.Value);
+                if (jr is null)
                 {
                     db.JoinRequests.Add(new JoinRequest { UserId = user.Id, ClubId = request.JoinClubId.Value });
                     await db.SaveChangesAsync();
+                    return StatusCode(202, new { status = "pending_approval", club_name = club.Name });
                 }
-                return StatusCode(202, new { status = "pending_approval", club_name = club.Name });
+                return jr.Status switch
+                {
+                    JoinRequestStatus.Declined => StatusCode(202, new { status = "request_declined", club_name = club.Name }),
+                    JoinRequestStatus.Approved => Ok(new AuthResponse(GenerateJwt(user), await BuildUserDto(user))),
+                    _ => StatusCode(202, new { status = "pending_approval", club_name = club.Name })
+                };
             }
+            // Re-check status (e.g. user re-signs in from PendingApprovalView)
             else
             {
+                var existingRequest = await db.JoinRequests
+                    .Include(jr => jr.Club)
+                    .Where(jr => jr.UserId == user.Id)
+                    .OrderByDescending(jr => jr.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (existingRequest is not null)
+                {
+                    return existingRequest.Status switch
+                    {
+                        JoinRequestStatus.Declined => StatusCode(202, new { status = "request_declined", club_name = existingRequest.Club.Name }),
+                        JoinRequestStatus.Approved => Ok(new AuthResponse(GenerateJwt(user), await BuildUserDto(user))),
+                        _ => StatusCode(202, new { status = "pending_approval", club_name = existingRequest.Club.Name })
+                    };
+                }
+
                 return StatusCode(202, new { status = "needs_club_setup" });
             }
         }
