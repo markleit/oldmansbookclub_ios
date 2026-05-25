@@ -165,6 +165,7 @@ public class AuthController(
                     var adminTokens = await db.Memberships
                         .Where(m => m.ClubId == club.Id && m.IsClubAdmin && m.User.DeviceToken != null)
                         .Select(m => m.User.DeviceToken!)
+                        .Distinct()
                         .ToListAsync();
                     if (adminTokens.Count > 0)
                         _ = notifications.SendJoinRequestNotificationAsync(adminTokens, user.DisplayName, club.Name);
