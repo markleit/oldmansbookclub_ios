@@ -18,7 +18,8 @@ public class AuthController(
     AppDbContext db,
     AppleTokenValidator appleValidator,
     IConfiguration config,
-    BlobService blob) : ControllerBase
+    BlobService blob,
+    NotificationService notifications) : ControllerBase
 {
     private async Task<UserDto> BuildUserDto(User u)
     {
@@ -160,6 +161,14 @@ public class AuthController(
                 {
                     db.JoinRequests.Add(new JoinRequest { UserId = user.Id, ClubId = request.JoinClubId.Value });
                     await db.SaveChangesAsync();
+
+                    var adminTokens = await db.Memberships
+                        .Where(m => m.ClubId == club.Id && m.IsClubAdmin && m.User.DeviceToken != null)
+                        .Select(m => m.User.DeviceToken!)
+                        .ToListAsync();
+                    if (adminTokens.Count > 0)
+                        _ = notifications.SendJoinRequestNotificationAsync(adminTokens, user.DisplayName, club.Name);
+
                     return StatusCode(202, new { status = "pending_approval", club_name = club.Name });
                 }
                 return jr.Status switch

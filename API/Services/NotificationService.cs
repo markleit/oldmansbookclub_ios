@@ -24,7 +24,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
     private string? _cachedToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
 
-    private Task<HttpResponseMessage> SendToApnsAsync(HttpClient client, string bearerToken, string deviceToken, string payload)
+    private HttpRequestMessage BuildRequest(string deviceToken, string bearerToken, string payload)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, $"/3/device/{deviceToken}");
         request.Version = HttpVersion.Version20;
@@ -33,7 +33,21 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         request.Headers.Add("apns-push-type", "alert");
         request.Headers.Add("apns-priority", "10");
         request.Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
-        return client.SendAsync(request);
+        return request;
+    }
+
+    // Retries once on connection-level failure (stale HTTP/2 connection)
+    private async Task<HttpResponseMessage> SendWithRetryAsync(HttpClient client, string bearerToken, string deviceToken, string payload)
+    {
+        try
+        {
+            return await client.SendAsync(BuildRequest(deviceToken, bearerToken, payload));
+        }
+        catch (HttpRequestException ex) when (ex.InnerException is System.IO.IOException or System.Net.Sockets.SocketException)
+        {
+            logger.LogWarning(ex, "APNs connection error for {Token}, retrying once", deviceToken[..8]);
+            return await client.SendAsync(BuildRequest(deviceToken, bearerToken, payload));
+        }
     }
 
     private string GetBearerToken()
@@ -66,6 +80,40 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         }
     }
 
+    public async Task SendJoinRequestNotificationAsync(IEnumerable<string> adminTokens, string requesterName, string clubName)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            aps = new
+            {
+                alert = new { title = "New Join Request", body = $"{requesterName} wants to join {clubName}" },
+                sound = "default"
+            },
+            type = "join_request"
+        });
+        await SendToAllAsync(adminTokens, payload);
+    }
+
+    public async Task SendJoinResponseNotificationAsync(string deviceToken, string clubName, bool approved)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            aps = new
+            {
+                alert = new
+                {
+                    title = approved ? "Request Approved" : "Request Declined",
+                    body = approved
+                        ? $"You've been approved to join {clubName}!"
+                        : $"Your request to join {clubName} was not approved."
+                },
+                sound = "default"
+            },
+            type = approved ? "join_approved" : "join_declined"
+        });
+        await SendToAllAsync([deviceToken], payload);
+    }
+
     public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default)
     {
         var alertBody = message.Type switch
@@ -89,39 +137,52 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             bookId = bookId.ToString()
         });
 
+        await SendToAllAsync(deviceTokens, payload);
+    }
+
+    private async Task SendToAllAsync(IEnumerable<string> deviceTokens, string payload)
+    {
         var bearerToken = GetBearerToken();
         var prodClient = httpClientFactory.CreateClient("apns");
         var sandboxClient = httpClientFactory.CreateClient("apns-sandbox");
 
         var tasks = deviceTokens.Select(async deviceToken =>
         {
-            var response = await SendToApnsAsync(prodClient, bearerToken, deviceToken, payload);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                var body = await response.Content.ReadAsStringAsync();
-                if ((int)response.StatusCode == 400 && body.Contains("BadDeviceToken"))
+                var response = await SendWithRetryAsync(prodClient, bearerToken, deviceToken, payload);
+                if (!response.IsSuccessStatusCode)
                 {
-                    var sandboxResponse = await SendToApnsAsync(sandboxClient, bearerToken, deviceToken, payload);
-                    if (!sandboxResponse.IsSuccessStatusCode)
+                    var body = await response.Content.ReadAsStringAsync();
+                    if ((int)response.StatusCode == 400 && body.Contains("BadDeviceToken"))
                     {
-                        var sandboxBody = await sandboxResponse.Content.ReadAsStringAsync();
-                        logger.LogWarning("APNs sandbox push failed for token {Token}: {Status} {Body}",
-                            deviceToken[..8], (int)sandboxResponse.StatusCode, sandboxBody);
+                        // Sandbox token — try sandbox endpoint
+                        var sandboxResponse = await SendWithRetryAsync(sandboxClient, bearerToken, deviceToken, payload);
+                        if (!sandboxResponse.IsSuccessStatusCode)
+                        {
+                            var sandboxBody = await sandboxResponse.Content.ReadAsStringAsync();
+                            logger.LogWarning("APNs sandbox push failed {Token}: {Status} {Body}",
+                                deviceToken[..8], (int)sandboxResponse.StatusCode, sandboxBody);
+                        }
+                        else
+                        {
+                            logger.LogWarning("APNs sandbox push delivered to {Token}", deviceToken[..8]);
+                        }
                     }
                     else
                     {
-                        logger.LogInformation("APNs sandbox push sent to {Token}", deviceToken[..8]);
+                        logger.LogWarning("APNs push failed {Token}: {Status} {Body}",
+                            deviceToken[..8], (int)response.StatusCode, body);
                     }
                 }
                 else
                 {
-                    logger.LogWarning("APNs push failed for token {Token}: {Status} {Body}",
-                        deviceToken[..8], (int)response.StatusCode, body);
+                    logger.LogWarning("APNs push delivered to {Token}", deviceToken[..8]);
                 }
             }
-            else
+            catch (Exception ex)
             {
-                logger.LogInformation("APNs push sent to {Token}", deviceToken[..8]);
+                logger.LogWarning(ex, "APNs push threw for token {Token}", deviceToken[..8]);
             }
         });
 

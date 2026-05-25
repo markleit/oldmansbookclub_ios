@@ -199,8 +199,50 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
             return BadRequest("Cannot delete your own account.");
         var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == id);
         if (user is null) return NotFound();
+
+        // Delete reports and saved messages that reference this user's messages
+        var messageIds = await db.Messages
+            .Where(m => m.SenderId == id)
+            .Select(m => m.Id)
+            .ToListAsync();
+        if (messageIds.Count > 0)
+        {
+            await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
+            await db.SavedMessages.Where(s => messageIds.Contains(s.MessageId)).ExecuteDeleteAsync();
+        }
+
+        await db.Reports.Where(r => r.ReporterId == id).ExecuteDeleteAsync();
+        await db.SavedMessages.Where(s => s.UserId == id).ExecuteDeleteAsync();
+        await db.Messages.Where(m => m.SenderId == id).ExecuteDeleteAsync();
+        await db.JoinRequests.Where(jr => jr.UserId == id).ExecuteDeleteAsync();
+        await db.BlockedUsers.Where(b => b.BlockerId == id || b.BlockedId == id).ExecuteDeleteAsync();
         db.Memberships.RemoveRange(user.Memberships);
         db.Users.Remove(user);
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpPost("clubs/{clubId}/members/{userId}/set-club-admin")]
+    public async Task<IActionResult> SetClubAdmin(Guid clubId, Guid userId, [FromBody] SetClubAdminRequest req)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        var membership = await db.Memberships.FirstOrDefaultAsync(m => m.UserId == userId && m.ClubId == clubId);
+        if (membership is null) return NotFound();
+        membership.IsClubAdmin = req.IsClubAdmin;
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    [HttpDelete("clubs/{clubId}/members/{userId}")]
+    public async Task<IActionResult> RemoveMember(Guid clubId, Guid userId)
+    {
+        var callerId = CallerId();
+        if (callerId == Guid.Empty) return Unauthorized();
+        if (!await CanManageClub(callerId, clubId)) return Forbid();
+        if (callerId == userId) return BadRequest("Cannot remove yourself from a club.");
+        var membership = await db.Memberships.FirstOrDefaultAsync(m => m.UserId == userId && m.ClubId == clubId);
+        if (membership is null) return NoContent();
+        db.Memberships.Remove(membership);
         await db.SaveChangesAsync();
         return NoContent();
     }
@@ -285,7 +327,10 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
     {
         var userId = CallerId();
         if (userId == Guid.Empty) return Unauthorized();
-        var jr = await db.JoinRequests.Include(j => j.User).FirstOrDefaultAsync(j => j.Id == id);
+        var jr = await db.JoinRequests
+            .Include(j => j.User)
+            .Include(j => j.Club)
+            .FirstOrDefaultAsync(j => j.Id == id);
         if (jr is null) return NotFound();
         if (!await CanManageClub(userId, jr.ClubId)) return Forbid();
         jr.Status = JoinRequestStatus.Approved;
@@ -294,6 +339,10 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         if (!alreadyMember)
             db.Memberships.Add(new Membership { UserId = jr.UserId, ClubId = jr.ClubId });
         await db.SaveChangesAsync();
+
+        if (jr.User.DeviceToken is not null)
+            _ = notifications.SendJoinResponseNotificationAsync(jr.User.DeviceToken, jr.Club.Name, approved: true);
+
         return Ok();
     }
 
@@ -302,11 +351,18 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
     {
         var userId = CallerId();
         if (userId == Guid.Empty) return Unauthorized();
-        var jr = await db.JoinRequests.FirstOrDefaultAsync(j => j.Id == id);
+        var jr = await db.JoinRequests
+            .Include(j => j.User)
+            .Include(j => j.Club)
+            .FirstOrDefaultAsync(j => j.Id == id);
         if (jr is null) return NotFound();
         if (!await CanManageClub(userId, jr.ClubId)) return Forbid();
         jr.Status = JoinRequestStatus.Declined;
         await db.SaveChangesAsync();
+
+        if (jr.User.DeviceToken is not null)
+            _ = notifications.SendJoinResponseNotificationAsync(jr.User.DeviceToken, jr.Club.Name, approved: false);
+
         return Ok();
     }
 
