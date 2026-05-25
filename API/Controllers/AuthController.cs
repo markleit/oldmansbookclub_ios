@@ -163,7 +163,7 @@ public class AuthController(
                     await db.SaveChangesAsync();
 
                     var adminTokens = await db.Memberships
-                        .Where(m => m.ClubId == club.Id && m.IsClubAdmin && m.User.DeviceToken != null)
+                        .Where(m => m.ClubId == club.Id && (m.IsClubAdmin || m.User.IsAdmin) && m.User.DeviceToken != null)
                         .Select(m => m.User.DeviceToken!)
                         .ToListAsync();
                     if (adminTokens.Count > 0)
