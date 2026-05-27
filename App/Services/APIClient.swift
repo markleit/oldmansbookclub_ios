@@ -73,6 +73,7 @@ final class APIClient {
         let email: String?
         let clubName: String?
         let joinClubId: UUID?
+        let authorizationCode: String?
     }
 
     struct SetupRequiredResponse: Decodable {
@@ -110,11 +111,11 @@ final class APIClient {
         let isClubAdmin: Bool
     }
 
-    func signInWithApple(identityToken: String, displayName: String, email: String?, clubName: String? = nil, joinClubId: UUID? = nil) async throws -> AuthResponse {
+    func signInWithApple(identityToken: String, displayName: String, email: String?, clubName: String? = nil, joinClubId: UUID? = nil, authorizationCode: String? = nil) async throws -> AuthResponse {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/auth/apple")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(AppleAuthRequest(identityToken: identityToken, displayName: displayName, email: email, clubName: clubName, joinClubId: joinClubId))
+        request.httpBody = try encoder.encode(AppleAuthRequest(identityToken: identityToken, displayName: displayName, email: email, clubName: clubName, joinClubId: joinClubId, authorizationCode: authorizationCode))
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 202 {

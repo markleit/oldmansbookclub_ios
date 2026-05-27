@@ -1,10 +1,13 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net.Http.Headers;
+using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.IdentityModel.Tokens;
 
 namespace BookClubApi.Services;
 
-public class AppleTokenValidator(IHttpClientFactory httpClientFactory, ILogger<AppleTokenValidator> logger)
+public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<AppleTokenValidator> logger)
 {
     private const string AppleKeysUrl = "https://appleid.apple.com/auth/keys";
     private const string AppleIssuer = "https://appleid.apple.com";
@@ -48,6 +51,82 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, ILogger<A
             });
             return (SecurityKey)new RsaSecurityKey(rsa) { KeyId = k.Kid };
         }) ?? [];
+    }
+
+    public async Task<string?> ExchangeCodeForRefreshTokenAsync(string authorizationCode, string bundleId)
+    {
+        try
+        {
+            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = bundleId,
+                ["client_secret"] = GenerateClientSecret(bundleId),
+                ["code"] = authorizationCode,
+                ["grant_type"] = "authorization_code"
+            });
+            var client = httpClientFactory.CreateClient();
+            var response = await client.PostAsync("https://appleid.apple.com/auth/token", content);
+            if (!response.IsSuccessStatusCode) return null;
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            return doc.RootElement.TryGetProperty("refresh_token", out var rt) ? rt.GetString() : null;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Apple token exchange failed: {Message}", ex.Message);
+            return null;
+        }
+    }
+
+    public async Task RevokeRefreshTokenAsync(string refreshToken, string bundleId)
+    {
+        try
+        {
+            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["client_id"] = bundleId,
+                ["client_secret"] = GenerateClientSecret(bundleId),
+                ["token"] = refreshToken,
+                ["token_type_hint"] = "refresh_token"
+            });
+            var client = httpClientFactory.CreateClient();
+            await client.PostAsync("https://appleid.apple.com/auth/revoke", content);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Apple token revocation failed: {Message}", ex.Message);
+        }
+    }
+
+    private string GenerateClientSecret(string bundleId)
+    {
+        var keyId = config["Apple:SignInKeyId"] ?? config["Apns:KeyId"]
+            ?? throw new InvalidOperationException("Apple signing key ID not configured");
+        var teamId = config["Apns:TeamId"]
+            ?? throw new InvalidOperationException("Apns:TeamId not configured");
+        var privateKey = config["Apple:SignInPrivateKey"] ?? config["Apns:PrivateKey"]
+            ?? throw new InvalidOperationException("Apple signing private key not configured");
+
+        var keyBase64 = privateKey
+            .Replace("-----BEGIN PRIVATE KEY-----", "")
+            .Replace("-----END PRIVATE KEY-----", "")
+            .Replace("\n", "").Replace("\r", "").Trim();
+
+        var ecdsa = ECDsa.Create();
+        ecdsa.ImportPkcs8PrivateKey(Convert.FromBase64String(keyBase64), out _);
+
+        var key = new ECDsaSecurityKey(ecdsa) { KeyId = keyId };
+        var now = DateTimeOffset.UtcNow;
+        var token = new JwtSecurityToken(
+            issuer: teamId,
+            audience: "https://appleid.apple.com",
+            claims: [
+                new Claim("sub", bundleId),
+                new Claim("iat", now.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
+            ],
+            expires: now.AddMonths(6).UtcDateTime,
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.EcdsaSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     private record AppleKeysResponse(AppleKey[] Keys);

@@ -47,6 +47,7 @@ final class AuthViewModel: ObservableObject {
                 displayName = TokenStore.shared.displayName ?? "Book Club Member"
             }
             let email = credential.email
+            let authorizationCode: String? = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
 
             pendingIdentityToken = identityToken
             pendingDisplayName = displayName
@@ -60,7 +61,8 @@ final class AuthViewModel: ObservableObject {
                     let response = try await APIClient.shared.signInWithApple(
                         identityToken: identityToken,
                         displayName: displayName,
-                        email: email
+                        email: email,
+                        authorizationCode: authorizationCode
                     )
                     finishSignIn(response)
                 } catch APIError.needsClubSetup {

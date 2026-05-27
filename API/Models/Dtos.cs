@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace BookClubApi.Models;
 
-public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null, string? ClubName = null, Guid? JoinClubId = null);
+public record AppleAuthRequest(string IdentityToken, string DisplayName, string? Email = null, string? ClubName = null, Guid? JoinClubId = null, string? AuthorizationCode = null);
 public record ClubDto(Guid Id, string Name, string? Description);
 public record SetClubAdminRequest(bool IsClubAdmin);
 public record ClubMembershipDto(Guid Id, string Name, string? Description, bool IsClubAdmin);

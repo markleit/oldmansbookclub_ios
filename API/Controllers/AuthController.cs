@@ -138,6 +138,17 @@ public class AuthController(
             await db.SaveChangesAsync();
         }
 
+        // Exchange authorization code for refresh token (only provided on first sign-in)
+        if (request.AuthorizationCode is not null && user.AppleRefreshToken is null)
+        {
+            var refreshToken = await appleValidator.ExchangeCodeForRefreshTokenAsync(request.AuthorizationCode, bundleId);
+            if (refreshToken is not null)
+            {
+                user.AppleRefreshToken = refreshToken;
+                await db.SaveChangesAsync();
+            }
+        }
+
         var isMember = await db.Memberships.AnyAsync(m => m.UserId == user.Id);
         if (!isMember)
         {
@@ -216,6 +227,12 @@ public class AuthController(
 
         var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return NotFound();
+
+        if (user.AppleRefreshToken is not null)
+        {
+            var bundleId = config["Apple:BundleId"] ?? throw new InvalidOperationException("Apple:BundleId not configured");
+            _ = appleValidator.RevokeRefreshTokenAsync(user.AppleRefreshToken, bundleId);
+        }
 
         var messageIds = await db.Messages
             .Where(m => m.SenderId == userId)
