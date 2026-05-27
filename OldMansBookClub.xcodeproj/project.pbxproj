@@ -20,6 +20,7 @@
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
+		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
 		79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024037128BCBBAFA0312E443 /* BookViewModel.swift */; };
 		816EE2512B88D333513E347B /* SignalRClient in Frameworks */ = {isa = PBXBuildFile; productRef = 7FD60A7A3BF0536227F4D99B /* SignalRClient */; };
 		8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */; };
@@ -56,6 +57,7 @@
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
 		62112635C861D78687D704A9 /* BrowseClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseClubsView.swift; sourceTree = "<group>"; };
 		6531FD0CE01104B5FBC19167 /* MessageInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputView.swift; sourceTree = "<group>"; };
+		6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EULAView.swift; sourceTree = "<group>"; };
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
 		88754FFD53578C83DEC2294D /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				CD42813D21DFB8362B19ACCF /* Info.plist */,
 				BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */,
 				17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */,
+				6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */,
 				0116884E101D0BEC9BE7977E /* Models */,
 				0DC96F159ED578CF4C8628B8 /* Services */,
 				63E0C14231CDC9123264B6AA /* ViewModels */,
@@ -241,6 +244,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */,
+				734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -350,7 +354,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 15;
 				DEVELOPMENT_TEAM = BCH6CDU76R;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -373,7 +377,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 15;
 				DEVELOPMENT_TEAM = BCH6CDU76R;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
