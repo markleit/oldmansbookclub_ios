@@ -4,6 +4,7 @@ using System.Text;
 using BookClubApi.Data;
 using BookClubApi.Models;
 using BookClubApi.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -204,6 +205,38 @@ public class AuthController(
 
         var token = GenerateJwt(user);
         return Ok(new AuthResponse(token, await BuildUserDto(user)));
+    }
+
+    [Authorize]
+    [HttpDelete("me")]
+    public async Task<IActionResult> DeleteMyAccount()
+    {
+        var sub = User.FindFirst("sub")?.Value;
+        if (!Guid.TryParse(sub, out var userId)) return Unauthorized();
+
+        var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == userId);
+        if (user is null) return NotFound();
+
+        var messageIds = await db.Messages
+            .Where(m => m.SenderId == userId)
+            .Select(m => m.Id)
+            .ToListAsync();
+        if (messageIds.Count > 0)
+        {
+            await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
+            await db.SavedMessages.Where(s => messageIds.Contains(s.MessageId)).ExecuteDeleteAsync();
+        }
+
+        await db.Reports.Where(r => r.ReporterId == userId).ExecuteDeleteAsync();
+        await db.SavedMessages.Where(s => s.UserId == userId).ExecuteDeleteAsync();
+        await db.Messages.Where(m => m.SenderId == userId).ExecuteDeleteAsync();
+        await db.JoinRequests.Where(jr => jr.UserId == userId).ExecuteDeleteAsync();
+        await db.BlockedUsers.Where(b => b.BlockerId == userId || b.BlockedId == userId).ExecuteDeleteAsync();
+        db.Memberships.RemoveRange(user.Memberships);
+        db.Users.Remove(user);
+        await db.SaveChangesAsync();
+
+        return NoContent();
     }
 
     private string GenerateJwt(User user)

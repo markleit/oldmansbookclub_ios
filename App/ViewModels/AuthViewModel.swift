@@ -164,6 +164,20 @@ final class AuthViewModel: ObservableObject {
         declinedClubName = nil
     }
 
+    func deleteAccount() {
+        isLoading = true
+        errorMessage = nil
+        Task {
+            defer { isLoading = false }
+            do {
+                try await APIClient.shared.deleteMyAccount()
+                signOut()
+            } catch {
+                errorMessage = "Failed to delete account. Please try again."
+            }
+        }
+    }
+
     func demoLogin(passphrase: String) {
         isLoading = true
         errorMessage = nil

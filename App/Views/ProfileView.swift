@@ -11,6 +11,7 @@ struct ProfileView: View {
     @State private var showCamera = false
     @State private var photosItem: PhotosPickerItem?
     @State private var showJoinOrCreate = false
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -68,6 +69,11 @@ struct ProfileView: View {
                     } label: {
                         Text("Sign Out").frame(maxWidth: .infinity)
                     }
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Text("Delete Account").frame(maxWidth: .infinity)
+                    }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -113,6 +119,12 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showJoinOrCreate) {
                 JoinOrCreateClubView()
+            }
+            .alert("Delete Account", isPresented: $showDeleteConfirmation) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) { auth.deleteAccount() }
+            } message: {
+                Text("This will permanently delete your account and all your messages. This cannot be undone.")
             }
         }
     }
