@@ -293,6 +293,16 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return NoContent();
     }
 
+    [HttpDelete("messages/{id}")]
+    public async Task<IActionResult> DeleteMessage(Guid id)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+        await db.Reports.Where(r => r.MessageId == id).ExecuteDeleteAsync();
+        await db.SavedMessages.Where(s => s.MessageId == id).ExecuteDeleteAsync();
+        await db.Messages.Where(m => m.Id == id).ExecuteDeleteAsync();
+        return NoContent();
+    }
+
     [HttpGet("join-requests")]
     public async Task<ActionResult<List<JoinRequestDto>>> GetJoinRequests()
     {

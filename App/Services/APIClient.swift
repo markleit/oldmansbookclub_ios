@@ -445,6 +445,18 @@ final class APIClient {
         }
     }
 
+    func deleteMessage(id: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/messages/\(id)")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     func approveUser(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)/approve")!)
         request.httpMethod = "POST"

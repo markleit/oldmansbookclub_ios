@@ -237,8 +237,13 @@ struct AdminView: View {
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
+                            Task { await deleteReportedMessage(report) }
+                        } label: {
+                            Label("Delete Msg", systemImage: "trash")
+                        }
+                        Button {
                             Task { await dismissReport(report) }
                         } label: {
                             Label("Dismiss", systemImage: "checkmark")
@@ -330,6 +335,16 @@ struct AdminView: View {
             members.removeAll { $0.id == id }
         } catch {
             errorMessage = "Failed to delete user."
+        }
+    }
+
+    private func deleteReportedMessage(_ report: APIClient.AdminReport) async {
+        reports.removeAll { $0.id == report.id }
+        do {
+            try await APIClient.shared.deleteMessage(id: report.messageId)
+        } catch {
+            reports.append(report)
+            errorMessage = "Failed to delete message."
         }
     }
 
