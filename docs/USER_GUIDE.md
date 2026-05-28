@@ -142,12 +142,6 @@ Global admins have full access across all clubs and see additional options:
 
 ---
 
-## Demo Access (Apple Reviewers)
-
-Press and hold the app logo on the login screen for 2 seconds to reveal the demo login. Enter passphrase **BookClub2026** to sign in with a pre-configured admin account that has access to all clubs and features.
-
----
-
 ## Notifications
 
 The app sends push notifications for:
