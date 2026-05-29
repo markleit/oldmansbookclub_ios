@@ -60,6 +60,9 @@ final class LibraryViewModel: ObservableObject {
             books = fetched
             saveCache(fetched)
             imageRefreshToken = UUID()
+        } catch is CancellationError {
+            isLoading = false
+            return
         } catch {
             if books.isEmpty {
                 errorMessage = "Unable to load books. Check your connection."

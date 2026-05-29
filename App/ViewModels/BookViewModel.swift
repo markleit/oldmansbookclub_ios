@@ -50,6 +50,9 @@ final class BookViewModel: ObservableObject {
             let fetched = try await APIClient.shared.getMessages(bookId: book.id)
             messages = fetched
             CacheService.shared.save(fetched, key: cacheKey)
+        } catch is CancellationError {
+            isLoadingMessages = false
+            return
         } catch {
             if hasCachedState {
                 isOffline = true
@@ -260,10 +263,10 @@ final class BookViewModel: ObservableObject {
         try await APIClient.shared.deleteBook(bookId: book.id)
     }
 
-    func disconnect() async {
+    func disconnect() {
         networkMonitor?.cancel()
         networkMonitor = nil
-        await ChatService.shared.disconnect()
+        Task { await ChatService.shared.disconnect() }
     }
 
     private func startNetworkMonitorIfNeeded() {

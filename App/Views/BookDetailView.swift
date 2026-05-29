@@ -141,7 +141,7 @@ struct BookDetailView: View {
                 await viewModel.load()
             }
         }
-        .onDisappear { Task { await viewModel.disconnect() } }
+        .onDisappear { viewModel.disconnect() }
     }
 
     @ViewBuilder
