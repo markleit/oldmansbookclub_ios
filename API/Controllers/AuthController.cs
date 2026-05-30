@@ -31,12 +31,11 @@ public class AuthController(
         return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin);
     }
 
-    private const string DemoPassphrase = "BookClub2026";
-
     [HttpPost("demo-login")]
     public async Task<ActionResult<AuthResponse>> DemoLogin([FromBody] DemoLoginRequest request)
     {
-        if (request.Passphrase != DemoPassphrase)
+        var demoPassphrase = config["Demo:Passphrase"];
+        if (demoPassphrase is null || request.Passphrase != demoPassphrase)
             return Unauthorized();
 
         const string reviewerSubject = "apple_reviewer";

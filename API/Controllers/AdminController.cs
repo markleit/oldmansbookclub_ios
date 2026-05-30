@@ -72,7 +72,8 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
     {
         var seedKey = config["Seeding:Key"];
         var headerKey = Request.Headers["X-Seed-Key"].FirstOrDefault();
-        if (headerKey != seedKey && !await IsAdminAsync()) return Forbid();
+        var hasValidKey = seedKey is not null && headerKey == seedKey;
+        if (!hasValidKey && !await IsAdminAsync()) return Forbid();
 
         var book = await db.Books.FirstOrDefaultAsync(b =>
             EF.Functions.Like(b.Title, $"%{req.BookTitle}%"));
