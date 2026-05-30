@@ -77,7 +77,11 @@ Saved messages are accessible from **Profile → Saved Messages**.
 
 ### Voice messages
 
-Tap a voice message to play it. Tap again to pause. Tap the speaker icon to toggle between earpiece and speaker. Tap the transcript button (if available) to see a transcription.
+- **Play / pause** — tap a voice message to play, tap again to pause
+- **Progress bar** — shows playback position and remaining duration
+- **Speaker toggle** — tap the speaker icon to switch between earpiece and speaker
+- **AirPlay / Bluetooth** — tap the route picker to send audio to external devices
+- **Transcription** — tap the transcript button to see an on-device transcription of the message
 
 ---
 
@@ -127,18 +131,6 @@ Club admins can manage their club's membership from the **Admin tab**.
 **Members tab** — view current members:
 - Swipe a member to **Kick** them from the club
 - Swipe a member to **Make Club Admin** or **Revoke Club Admin**
-
-### Global admins
-
-Global admins have full access across all clubs and see additional options:
-
-**Reports tab** — review messages flagged by members:
-- Swipe to **Delete Msg** — permanently removes the message and dismisses the report
-- Swipe to **Dismiss** — closes the report without removing the message (use for false positives)
-
-**Members tab** — additional options per member:
-- **Make Admin / Demote** — grant or revoke global admin status
-- **Delete** — permanently delete the user's account and all their data
 
 ---
 
