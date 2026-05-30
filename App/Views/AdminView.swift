@@ -9,6 +9,7 @@ struct AdminView: View {
     @State private var selectedClubId: UUID? = nil
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var showDeleteClubConfirm = false
 
     private var myId: UUID? { TokenStore.shared.userId }
     private var isGlobalAdmin: Bool { TokenStore.shared.isAdmin }
@@ -59,6 +60,30 @@ struct AdminView: View {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: {
                 Text(errorMessage ?? "")
+            }
+            .toolbar {
+                if isGlobalAdmin && selectedTab == 1, let clubId = selectedClubId,
+                   let club = myClubs.first(where: { $0.id == clubId }) {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(role: .destructive) {
+                            showDeleteClubConfirm = true
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .confirmationDialog(
+                            "Delete \"\(club.name)\"?",
+                            isPresented: $showDeleteClubConfirm,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Delete Club", role: .destructive) {
+                                Task { await deleteClub(clubId) }
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("This permanently deletes the club, all its books, and all messages. This cannot be undone.")
+                        }
+                    }
+                }
             }
             .task { await load() }
             .refreshable { await load() }
@@ -370,6 +395,17 @@ struct AdminView: View {
             }
         } catch {
             errorMessage = "Failed to update club admin status."
+        }
+    }
+
+    private func deleteClub(_ clubId: UUID) async {
+        do {
+            try await APIClient.shared.deleteClub(clubId: clubId)
+            myClubs.removeAll { $0.id == clubId }
+            selectedClubId = myClubs.first?.id
+            members = []
+        } catch {
+            errorMessage = "Failed to delete club."
         }
     }
 
