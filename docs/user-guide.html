@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Guide — Old Man's Book Club</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 48px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.7; }
+    h1 { font-size: 1.8rem; margin-bottom: 4px; }
+    .meta { color: #666; margin-bottom: 2rem; font-size: 0.95rem; }
+    h2 { font-size: 1.2rem; margin-top: 2.5rem; border-bottom: 1px solid #e5e5e5; padding-bottom: 4px; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; color: #333; }
+    p, li { font-size: 0.97rem; }
+    ul, ol { padding-left: 1.4rem; }
+    li { margin-bottom: 4px; }
+    hr { border: none; border-top: 1px solid #e5e5e5; margin: 2rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin: 1rem 0; }
+    th { text-align: left; background: #f5f5f7; padding: 8px 12px; font-weight: 600; border: 1px solid #e0e0e0; }
+    td { padding: 8px 12px; border: 1px solid #e0e0e0; vertical-align: top; }
+    strong { font-weight: 600; }
+    .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 2.5rem; }
+    .nav a { color: #007aff; font-size: 0.9rem; text-decoration: none; background: #f0f7ff; padding: 4px 10px; border-radius: 20px; }
+    .nav a:hover { background: #ddeeff; }
+  </style>
+</head>
+<body>
+  <h1>User Guide</h1>
+  <p class="meta">Old Man's Book Club &mdash; Last updated May 2026</p>
+
+  <p>Old Man's Book Club is a private app for reading groups. Members discuss books in real-time through text, photos, and voice messages.</p>
+
+  <nav class="nav">
+    <a href="#getting-started">Getting Started</a>
+    <a href="#library">Library</a>
+    <a href="#chat">Chat</a>
+    <a href="#profile">Profile</a>
+    <a href="#admin">Admin</a>
+    <a href="#notifications">Notifications</a>
+  </nav>
+
+  <h2 id="getting-started">Getting Started</h2>
+
+  <h3>Creating an account</h3>
+  <ol>
+    <li>Open the app and tap <strong>Sign in with Apple</strong></li>
+    <li>Authenticate with your Apple ID</li>
+    <li>You will be asked to set up your club:
+      <ul>
+        <li><strong>Create a Club</strong> — start a new club and become its admin</li>
+        <li><strong>Browse Clubs</strong> — find an existing club and request to join</li>
+      </ul>
+    </li>
+  </ol>
+
+  <h3>Creating a club</h3>
+  <p>Enter a club name and tap <strong>Create</strong>. You are immediately signed in as the club admin with full access.</p>
+
+  <h3>Joining an existing club</h3>
+  <ol>
+    <li>Tap <strong>Browse Clubs</strong> and select a club</li>
+    <li>Tap <strong>Request to Join</strong></li>
+    <li>You will see a <strong>Pending Approval</strong> screen while the club admin reviews your request</li>
+    <li>Once approved, open the app and sign in with Apple &mdash; you will land in the app</li>
+  </ol>
+  <p>If your request is declined, you can request to join a different club or create your own.</p>
+
+  <hr>
+
+  <h2 id="library">Library</h2>
+
+  <p>The <strong>Library tab</strong> shows the books in your current club, organised by status.</p>
+
+  <h3>Book statuses</h3>
+  <table>
+    <tr><th>Status</th><th>Meaning</th></tr>
+    <tr><td>Current</td><td>The book your club is actively reading</td></tr>
+    <tr><td>Future</td><td>Upcoming books on the reading list</td></tr>
+    <tr><td>Past</td><td>Books your club has finished</td></tr>
+  </table>
+
+  <h3>Switching clubs</h3>
+  <p>If you are a member of more than one club, tap the <strong>⇄</strong> icon in the top-left of the Library tab to switch between clubs.</p>
+
+  <h3>Adding a book (admins)</h3>
+  <p>Tap <strong>+</strong> in the Library tab. Search by title to auto-fill details from Google Books, or enter them manually.</p>
+
+  <hr>
+
+  <h2 id="chat">Chat</h2>
+
+  <p>Tap any book to open its discussion thread. All members of the club can read and send messages.</p>
+
+  <h3>Sending messages</h3>
+  <ul>
+    <li><strong>Text</strong> — type and tap Send</li>
+    <li><strong>Photo</strong> — tap the camera icon to take a photo or choose from your library</li>
+    <li><strong>Voice</strong> — hold the microphone button to record, release to send</li>
+  </ul>
+
+  <h3>Message actions</h3>
+  <p>Long-press any message to:</p>
+  <table>
+    <tr><th>Action</th><th>Description</th></tr>
+    <tr><td>Save</td><td>Add to your Saved Messages</td></tr>
+    <tr><td>Forward</td><td>Share the message to another book's chat</td></tr>
+    <tr><td>Copy</td><td>Copy text to clipboard</td></tr>
+    <tr><td>Report</td><td>Flag the message for admin review</td></tr>
+    <tr><td>Delete</td><td>Remove your own message</td></tr>
+  </table>
+  <p>Saved messages are accessible from <strong>Profile &rarr; Saved Messages</strong>.</p>
+
+  <h3>Voice messages</h3>
+  <ul>
+    <li><strong>Play / pause</strong> — tap a voice message to play, tap again to pause</li>
+    <li><strong>Progress bar</strong> — shows playback position and remaining duration</li>
+    <li><strong>Speaker toggle</strong> — tap the speaker icon to switch between earpiece and speaker</li>
+    <li><strong>AirPlay / Bluetooth</strong> — tap the route picker to send audio to external devices</li>
+    <li><strong>Transcription</strong> — tap the transcript button to see an on-device transcription of the message</li>
+  </ul>
+
+  <hr>
+
+  <h2 id="profile">Profile</h2>
+
+  <p>Tap the <strong>Profile tab</strong> to manage your account.</p>
+
+  <h3>Display name and nickname</h3>
+  <ul>
+    <li><strong>Display name</strong> — shown in member lists and message headers</li>
+    <li><strong>Nickname</strong> — if set, shown in chat instead of your display name</li>
+  </ul>
+  <p>Tap <strong>Save Profile</strong> after making changes.</p>
+
+  <h3>Avatar</h3>
+  <p>Tap your avatar image to change it. You can choose a photo from your library or take a new one with the camera.</p>
+
+  <h3>Blocked users</h3>
+  <p>Users you have blocked cannot see your messages and you cannot see theirs. Manage your block list under <strong>Profile &rarr; Blocked Users</strong>. Swipe a user to unblock them.</p>
+
+  <h3>Joining additional clubs</h3>
+  <p>Tap <strong>Join or Create Club</strong> in the Profile tab to join another club or create a new one while keeping your existing memberships.</p>
+
+  <h3>Signing out</h3>
+  <p>Tap <strong>Sign Out</strong> at the bottom of the Profile tab.</p>
+
+  <h3>Deleting your account</h3>
+  <p>Tap <strong>Delete Account</strong> at the bottom of the Profile tab and confirm. This permanently deletes your account, all your messages, and all associated data. This action cannot be undone.</p>
+
+  <hr>
+
+  <h2 id="admin">Admin Features</h2>
+
+  <p>Club admins can manage their club's membership from the <strong>Admin tab</strong>.</p>
+
+  <h3>Requests tab</h3>
+  <p>Review pending join requests:</p>
+  <ul>
+    <li>Swipe right to <strong>Approve</strong> — the user gains access to the club</li>
+    <li>Swipe left to <strong>Decline</strong> — the user is notified and can request again</li>
+  </ul>
+
+  <h3>Members tab</h3>
+  <p>View current members:</p>
+  <ul>
+    <li>Swipe a member to <strong>Kick</strong> them from the club</li>
+    <li>Swipe a member to <strong>Make Club Admin</strong> or <strong>Revoke Club Admin</strong></li>
+  </ul>
+
+  <hr>
+
+  <h2 id="notifications">Notifications</h2>
+
+  <p>The app sends push notifications for:</p>
+  <ul>
+    <li>New messages in a book you are a member of</li>
+    <li>Join request submitted (club admins)</li>
+    <li>Your join request was approved or declined</li>
+  </ul>
+  <p>Notifications must be enabled in <strong>Settings &rarr; Notifications &rarr; Old Man's Book Club</strong>.</p>
+
+</body>
+</html>
