@@ -197,9 +197,9 @@ struct MessageRow: View {
                 Spacer()
             } else if !message.isDeleted {
                 avatarView
-                    .frame(width: 32, height: 32)
+                    .frame(width: 40, height: 40)
             } else {
-                Color.clear.frame(width: 32, height: 32)
+                Color.clear.frame(width: 40, height: 40)
             }
             VStack(alignment: isMe ? .trailing : .leading, spacing: 2) {
                 if message.isDeleted {
@@ -301,6 +301,16 @@ struct MessageRow: View {
             )
     }
 
+    private func avatarInitial(_ name: String) -> some View {
+        Circle()
+            .fill(Color(.systemGray4))
+            .overlay(
+                Text(String(name.prefix(1)).uppercased())
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white)
+            )
+    }
+
     @ViewBuilder
     private var readReceiptRow: some View {
         let readers = viewModel.reads.filter { $0.lastSeenMessageId == message.id }
@@ -308,18 +318,25 @@ struct MessageRow: View {
             if !readers.isEmpty {
                 HStack(spacing: 4) {
                     Spacer()
+                    Text("Read by")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                     ForEach(readers, id: \.userId) { reader in
-                        Text(reader.displayName.prefix(1).uppercased())
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.white)
-                            .frame(width: 22, height: 22)
-                            .background(Color.accentColor)
-                            .clipShape(Circle())
-                    }
-                    if readers.count == 1 {
-                        Text("Seen")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+                        Group {
+                            if let urlStr = reader.avatarUrl, let url = URL(string: urlStr) {
+                                AsyncImage(url: url) { phase in
+                                    if let image = phase.image {
+                                        image.resizable().scaledToFill()
+                                    } else {
+                                        avatarInitial(reader.displayName)
+                                    }
+                                }
+                            } else {
+                                avatarInitial(reader.displayName)
+                            }
+                        }
+                        .frame(width: 22, height: 22)
+                        .clipShape(Circle())
                     }
                 }
             }
@@ -395,8 +412,8 @@ struct VoiceMessageBubble: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(isMe ? Color.blue : Color(.systemGray5))
-        .foregroundColor(isMe ? .white : .primary)
+        .background(isPlaying ? Color(red: 0.0, green: 0.35, blue: 0.95) : (isMe ? Color.blue : Color(.systemGray5)))
+        .foregroundColor(isPlaying || isMe ? .white : .primary)
         .cornerRadius(16)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
         .onDisappear {

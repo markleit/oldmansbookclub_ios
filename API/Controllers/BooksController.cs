@@ -208,7 +208,7 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
 
         var reads = await db.ChatReads
             .Where(cr => cr.BookId == bookId && cr.UserId != UserId && cr.LastSeenMessageId != null)
-            .Select(cr => new ChatReadDto(cr.UserId, cr.User.Nickname ?? cr.User.DisplayName, cr.LastSeenMessageId!.Value))
+            .Select(cr => new ChatReadDto(cr.UserId, cr.User.Nickname ?? cr.User.DisplayName, cr.User.AvatarUrl, cr.LastSeenMessageId!.Value))
             .ToListAsync();
 
         return reads;

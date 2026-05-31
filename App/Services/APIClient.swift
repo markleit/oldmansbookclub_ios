@@ -316,6 +316,7 @@ final class APIClient {
     struct ChatReadDto: Decodable {
         let userId: UUID
         let displayName: String
+        let avatarUrl: String?
         let lastSeenMessageId: UUID
     }
 
