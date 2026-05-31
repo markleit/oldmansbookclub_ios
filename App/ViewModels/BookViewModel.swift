@@ -32,6 +32,7 @@ final class BookViewModel: ObservableObject {
     private var pendingByBody: [String: UUID] = [:]
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
+    private var recordingStartTime: Date?
 
     init(book: Book) {
         self.book = book
@@ -193,6 +194,7 @@ final class BookViewModel: ObservableObject {
         do {
             try audioRecorder.start()
             isRecording = true
+            recordingStartTime = Date()
         } catch {
             errorMessage = "Could not start recording."
         }
@@ -201,8 +203,11 @@ final class BookViewModel: ObservableObject {
     func stopRecording() async {
         guard isRecording else { return }
         isRecording = false
-        guard let (url, duration) = audioRecorder.stop(),
-              let data = try? Data(contentsOf: url),
+        let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        recordingStartTime = nil
+        guard let (url, duration) = audioRecorder.stop() else { return }
+        guard elapsed >= 0.5 else { return } // discard accidental taps
+        guard let data = try? Data(contentsOf: url),
               let clubId = TokenStore.shared.clubId else { return }
         isUploading = true
         defer { isUploading = false }
