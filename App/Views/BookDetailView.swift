@@ -189,6 +189,7 @@ struct MessageRow: View {
     let message: Message
     @ObservedObject var viewModel: BookViewModel
     @State private var showFullScreen = false
+    @State private var showSenderProfile = false
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
@@ -196,8 +197,18 @@ struct MessageRow: View {
             if isMe {
                 Spacer()
             } else if !message.isDeleted {
-                avatarView
-                    .frame(width: 40, height: 40)
+                Button { showSenderProfile = true } label: {
+                    avatarView
+                        .frame(width: 40, height: 40)
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showSenderProfile) {
+                    SenderProfileView(
+                        senderId: message.senderId,
+                        senderName: message.senderName,
+                        avatarUrl: message.senderAvatarUrl
+                    )
+                }
             } else {
                 Color.clear.frame(width: 40, height: 40)
             }
@@ -706,6 +717,59 @@ struct FullScreenImageView: View {
                     .font(.system(size: 30))
                     .foregroundStyle(.white, Color.black.opacity(0.5))
                     .padding()
+            }
+        }
+    }
+}
+
+struct SenderProfileView: View {
+    let senderId: UUID
+    let senderName: String
+    let avatarUrl: String?
+    @Environment(\.dismiss) private var dismiss
+    @State private var avatarImage: UIImage?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    Group {
+                        if let image = avatarImage {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                        } else {
+                            Circle()
+                                .fill(Color(.systemGray4))
+                                .overlay(
+                                    Text(String(senderName.prefix(1)).uppercased())
+                                        .font(.system(size: 40, weight: .semibold))
+                                        .foregroundColor(.white)
+                                )
+                        }
+                    }
+                    .frame(width: 100, height: 100)
+                    .clipShape(Circle())
+                    .padding(.top, 32)
+
+                    Text(senderName)
+                        .font(.title2)
+                        .bold()
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .navigationTitle(senderName)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .task {
+                guard let urlStr = avatarUrl, let url = URL(string: urlStr) else { return }
+                let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+                guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
+                avatarImage = UIImage(data: data)
             }
         }
     }
