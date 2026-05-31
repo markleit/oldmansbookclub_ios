@@ -9,6 +9,7 @@ struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
     @State private var showingDeleteConfirm = false
+    @AppStorage("tapToTalkEnabled") private var tapToTalk = false
     var onDeleted: (() -> Void)?
     var onStatusChanged: ((BookStatus) -> Void)?
 
@@ -68,9 +69,12 @@ struct BookDetailView: View {
                 isRecording: viewModel.isRecording,
                 isUploading: viewModel.isUploading,
                 isOffline: viewModel.isOffline,
+                tapToTalk: tapToTalk,
                 onSend: { Task { await viewModel.sendMessage() } },
                 onSendPhoto: { Task { await viewModel.sendPhoto() } },
                 onToggleRecording: { Task { await viewModel.toggleRecording() } },
+                onStartRecording: { Task { await viewModel.startRecording() } },
+                onStopRecording: { Task { await viewModel.stopRecording() } },
                 onShowSaved: { viewModel.showSavedMessages = true }
             )
         }
@@ -133,6 +137,13 @@ struct BookDetailView: View {
         .task {
             await viewModel.load()
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
+            AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
+                guard let vm = viewModel else { return }
+                let voices = vm.visibleMessages.filter { $0.type == .voice && !$0.isDeleted }
+                guard let idx = voices.firstIndex(where: { $0.id == completedId }),
+                      idx > 0 else { return }
+                AudioPlayerService.shared.toggle(message: voices[idx - 1])
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
@@ -387,6 +398,15 @@ struct VoiceMessageBubble: View {
                 Text(formatDuration(isPlaying ? audio.currentSeconds : totalSeconds))
                     .font(.caption2)
                     .monospacedDigit()
+            }
+
+            if isPlaying {
+                Button { audio.cycleRate() } label: {
+                    Text(audio.playbackRate == 1.0 ? "1×" : String(format: audio.playbackRate.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", audio.playbackRate))
+                        .font(.system(size: 12, weight: .semibold))
+                        .monospacedDigit()
+                        .frame(width: 24, height: 24)
+                }
             }
 
             if !audio.isExternalRouteActive {

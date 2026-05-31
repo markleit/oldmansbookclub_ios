@@ -12,6 +12,9 @@ struct ProfileView: View {
     @State private var photosItem: PhotosPickerItem?
     @State private var showJoinOrCreate = false
     @State private var showDeleteConfirmation = false
+    @State private var showLeaveConfirmation = false
+    @State private var leaveError: String?
+    @AppStorage("tapToTalkEnabled") private var tapToTalk = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -61,6 +64,28 @@ struct ProfileView: View {
                     Button("Join or Create Club") {
                         showJoinOrCreate = true
                     }
+                    if let clubId = TokenStore.shared.clubId {
+                        Button(role: .destructive) {
+                            showLeaveConfirmation = true
+                        } label: {
+                            Text("Leave \(TokenStore.shared.clubName ?? "Club")")
+                        }
+                        .confirmationDialog(
+                            "Leave \(TokenStore.shared.clubName ?? "Club")?",
+                            isPresented: $showLeaveConfirmation,
+                            titleVisibility: .visible
+                        ) {
+                            Button("Leave Club", role: .destructive) {
+                                Task { await leaveClub(clubId) }
+                            }
+                        } message: {
+                            Text("You will lose access to this club's books and chat. You can request to rejoin later.")
+                        }
+                    }
+                }
+
+                Section(footer: Text("When off, hold the mic button to record and release to send.")) {
+                    Toggle("Tap-to-Talk", isOn: $tapToTalk)
                 }
 
                 Section {
@@ -85,6 +110,9 @@ struct ProfileView: View {
             }
             .navigationTitle("Profile")
             .task { await viewModel.loadAvatar() }
+            .alert("Error", isPresented: Binding(get: { leaveError != nil }, set: { if !$0 { leaveError = nil } })) {
+                Button("OK", role: .cancel) { leaveError = nil }
+            } message: { Text(leaveError ?? "") }
             .confirmationDialog("Change Photo", isPresented: $showImageOptions, titleVisibility: .visible) {
                 Button("Choose from Library") { showLibraryPicker = true }
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -126,6 +154,17 @@ struct ProfileView: View {
             } message: {
                 Text("This will permanently delete your account and all your messages. This cannot be undone.")
             }
+        }
+    }
+
+    private func leaveClub(_ clubId: UUID) async {
+        do {
+            try await APIClient.shared.leaveClub(clubId: clubId)
+            TokenStore.shared.clubId = nil
+            TokenStore.shared.clubName = nil
+            auth.signOut()
+        } catch {
+            leaveError = "Failed to leave club."
         }
     }
 

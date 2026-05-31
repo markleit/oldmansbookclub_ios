@@ -498,6 +498,18 @@ final class APIClient {
         }
     }
 
+    func leaveClub(clubId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/clubs/\(clubId)/members/me")!)
+        request.httpMethod = "DELETE"
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     func deleteClub(clubId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)")!)
         request.httpMethod = "DELETE"

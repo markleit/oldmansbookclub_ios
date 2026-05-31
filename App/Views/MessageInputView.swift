@@ -7,9 +7,12 @@ struct MessageInputView: View {
     var isRecording: Bool
     var isUploading: Bool
     var isOffline: Bool = false
+    var tapToTalk: Bool = false
     var onSend: () -> Void
     var onSendPhoto: () -> Void
     var onToggleRecording: () -> Void
+    var onStartRecording: () -> Void = {}
+    var onStopRecording: () -> Void = {}
     var onShowSaved: () -> Void
 
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -115,53 +118,7 @@ struct MessageInputView: View {
                                 .frame(width: 44, height: 44)
                         }
                     } else {
-                        Button {
-                            onToggleRecording()
-                        } label: {
-                            Image(systemName: "mic.fill")
-                                .font(.system(size: 28, weight: .semibold))
-                                .foregroundColor(isRecording ? .red : .accentColor)
-                                .frame(width: 44, height: 44)
-                                .overlay {
-                                    if isRecording {
-                                        ZStack {
-                                            Circle()
-                                                .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
-                                                .scaleEffect(pulsing ? 2.2 : 1.0)
-                                                .opacity(pulsing ? 0 : 0.6)
-                                                .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: pulsing)
-                                            Circle()
-                                                .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
-                                                .scaleEffect(pulsing ? 2.2 : 1.0)
-                                                .opacity(pulsing ? 0 : 0.6)
-                                                .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false).delay(0.45), value: pulsing)
-                                        }
-                                    }
-                                }
-                                .overlay(alignment: .bottom) {
-                                    if isRecording {
-                                        Text(formatElapsed(elapsedSeconds))
-                                            .font(.system(size: 10, weight: .semibold))
-                                            .monospacedDigit()
-                                            .foregroundColor(.red)
-                                            .fixedSize()
-                                            .offset(y: 14)
-                                    }
-                                }
-                        }
-                        .task(id: isRecording) {
-                            elapsedSeconds = 0
-                            pulsing = false
-                            guard isRecording else { return }
-                            try? await Task.sleep(for: .milliseconds(50))
-                            guard !Task.isCancelled else { return }
-                            pulsing = true
-                            while !Task.isCancelled {
-                                try? await Task.sleep(for: .seconds(1))
-                                guard !Task.isCancelled else { break }
-                                elapsedSeconds += 1
-                            }
-                        }
+                        micButton
                     }
                 }
                 .padding(.horizontal)
@@ -176,6 +133,70 @@ struct MessageInputView: View {
                 showingCamera = false
             }
             .ignoresSafeArea()
+        }
+    }
+
+    private var micIcon: some View {
+        Image(systemName: "mic.fill")
+            .font(.system(size: 28, weight: .semibold))
+            .foregroundColor(isRecording ? .red : .accentColor)
+            .frame(width: 44, height: 44)
+            .overlay {
+                if isRecording {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+                            .scaleEffect(pulsing ? 2.2 : 1.0)
+                            .opacity(pulsing ? 0 : 0.6)
+                            .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: pulsing)
+                        Circle()
+                            .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+                            .scaleEffect(pulsing ? 2.2 : 1.0)
+                            .opacity(pulsing ? 0 : 0.6)
+                            .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false).delay(0.45), value: pulsing)
+                    }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if isRecording {
+                    Text(formatElapsed(elapsedSeconds))
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundColor(.red)
+                        .fixedSize()
+                        .offset(y: 14)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var micButton: some View {
+        if tapToTalk {
+            Button { onToggleRecording() } label: { micIcon }
+                .task(id: isRecording) { await runPulseTimer() }
+        } else {
+            micIcon
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in if !isRecording { onStartRecording() } }
+                        .onEnded { _ in if isRecording { onStopRecording() } }
+                )
+                .task(id: isRecording) { await runPulseTimer() }
+        }
+    }
+
+    private func runPulseTimer() async {
+        elapsedSeconds = 0
+        pulsing = false
+        guard isRecording else { return }
+        try? await Task.sleep(for: .milliseconds(50))
+        guard !Task.isCancelled else { return }
+        pulsing = true
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { break }
+            elapsedSeconds += 1
         }
     }
 

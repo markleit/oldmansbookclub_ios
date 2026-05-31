@@ -11,7 +11,11 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var currentSeconds: Int = 0
     @Published var speakerEnabled: Bool = true
     @Published var isExternalRouteActive: Bool = false
+    @Published var playbackRate: Float = 1.0
 
+    var onPlaybackCompleted: ((UUID) -> Void)?
+
+    private let availableRates: [Float] = [1.0, 2.0, 3.0, 4.0]
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
     private var routeCancellable: AnyCancellable?
@@ -30,6 +34,12 @@ final class AudioPlayerService: ObservableObject {
         } else {
             play(message: message)
         }
+    }
+
+    func cycleRate() {
+        let currentIndex = availableRates.firstIndex(of: playbackRate) ?? 0
+        playbackRate = availableRates[(currentIndex + 1) % availableRates.count]
+        player?.rate = playbackRate
     }
 
     func pause() {
@@ -67,7 +77,7 @@ final class AudioPlayerService: ObservableObject {
         progress = 0
         currentSeconds = 0
         activateAudioSession()
-        player?.play()
+        player?.rate = playbackRate
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
     }
@@ -96,7 +106,11 @@ final class AudioPlayerService: ObservableObject {
         progress = min(current / duration, 1.0)
         currentSeconds = Int(current)
         if current >= duration - 0.05 {
+            let completedId = playingMessageId
             stopCurrentPlayer()
+            if let id = completedId {
+                onPlaybackCompleted?(id)
+            }
         }
     }
 

@@ -24,12 +24,16 @@ struct OldMansBookClubApp: App {
 struct RootView: View {
     @EnvironmentObject var auth: AuthViewModel
     @AppStorage("hasAcceptedEULA_v2") private var hasAcceptedEULA = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
             if auth.isAuthenticated {
                 ContentView()
                     .task { await requestPushPermission() }
+                    .onChange(of: scenePhase) { phase in
+                        if phase == .active { Task { await refreshMyProfile() } }
+                    }
             } else if let clubName = auth.pendingApprovalClubName {
                 PendingApprovalView(clubName: clubName, declined: false)
             } else if let clubName = auth.declinedClubName {
@@ -46,6 +50,13 @@ struct RootView: View {
         )) {
             EULAView { hasAcceptedEULA = true }
         }
+    }
+
+    private func refreshMyProfile() async {
+        guard let me = try? await APIClient.shared.getMe() else { return }
+        TokenStore.shared.isAdmin = me.isAdmin
+        TokenStore.shared.isClubAdmin = me.isClubAdmin
+        if let name = me.displayName { TokenStore.shared.displayName = name }
     }
 
     private func requestPushPermission() async {

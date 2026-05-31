@@ -149,40 +149,43 @@ final class BookViewModel: ObservableObject {
     }
 
     func toggleRecording() async {
-        if isRecording {
-            isRecording = false
-            guard let (url, duration) = audioRecorder.stop(),
-                  let data = try? Data(contentsOf: url),
-                  let clubId = TokenStore.shared.clubId else { return }
-            isUploading = true
-            defer { isUploading = false }
-            do {
-                let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
-                guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-                try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
-                try await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
-            } catch {
-                errorMessage = "Failed to send voice message."
-            }
+        if isRecording { await stopRecording() } else { await startRecording() }
+    }
+
+    func startRecording() async {
+        guard !isRecording else { return }
+        let granted: Bool
+        if #available(iOS 17.0, *) {
+            granted = await AVAudioApplication.requestRecordPermission()
         } else {
-            let granted: Bool
-            if #available(iOS 17.0, *) {
-                granted = await AVAudioApplication.requestRecordPermission()
-            } else {
-                granted = await withCheckedContinuation { cont in
-                    AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
-                }
+            granted = await withCheckedContinuation { cont in
+                AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
             }
-            guard granted else {
-                showMicDeniedAlert = true
-                return
-            }
-            do {
-                try audioRecorder.start()
-                isRecording = true
-            } catch {
-                errorMessage = "Could not start recording."
-            }
+        }
+        guard granted else { showMicDeniedAlert = true; return }
+        do {
+            try audioRecorder.start()
+            isRecording = true
+        } catch {
+            errorMessage = "Could not start recording."
+        }
+    }
+
+    func stopRecording() async {
+        guard isRecording else { return }
+        isRecording = false
+        guard let (url, duration) = audioRecorder.stop(),
+              let data = try? Data(contentsOf: url),
+              let clubId = TokenStore.shared.clubId else { return }
+        isUploading = true
+        defer { isUploading = false }
+        do {
+            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+            try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
+            try await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
+        } catch {
+            errorMessage = "Failed to send voice message."
         }
     }
 

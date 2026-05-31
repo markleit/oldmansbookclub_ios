@@ -96,6 +96,18 @@ public class ClubsController(AppDbContext db) : ControllerBase
         return Ok();
     }
 
+    [HttpDelete("{clubId}/members/me")]
+    public async Task<IActionResult> LeaveClub(Guid clubId)
+    {
+        var membership = await db.Memberships
+            .FirstOrDefaultAsync(m => m.UserId == UserId && m.ClubId == clubId);
+        if (membership is null) return NotFound();
+
+        db.Memberships.Remove(membership);
+        await db.SaveChangesAsync();
+        return Ok();
+    }
+
     [HttpPost("{clubId}/members")]
     public async Task<IActionResult> AddMember(Guid clubId, [FromBody] Guid userId)
     {
