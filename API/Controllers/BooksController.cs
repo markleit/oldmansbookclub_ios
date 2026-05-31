@@ -168,4 +168,49 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
                 m.IsForwarded))
             .ToListAsync();
     }
+
+    [HttpPost("{bookId}/read")]
+    public async Task<IActionResult> MarkRead(Guid bookId, [FromBody] Guid messageId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
+        if (!isMember) return Forbid();
+
+        var existing = await db.ChatReads
+            .FirstOrDefaultAsync(cr => cr.UserId == UserId && cr.BookId == bookId);
+
+        if (existing is null)
+        {
+            db.ChatReads.Add(new ChatRead { UserId = UserId, BookId = bookId, LastSeenMessageId = messageId });
+        }
+        else
+        {
+            existing.LastSeenMessageId = messageId;
+            existing.UpdatedAt = DateTime.UtcNow;
+        }
+
+        await db.SaveChangesAsync();
+        return Ok();
+    }
+
+    [HttpGet("{bookId}/reads")]
+    public async Task<ActionResult<List<ChatReadDto>>> GetReads(Guid bookId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+
+        var isMember = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
+        if (!isMember) return Forbid();
+
+        var reads = await db.ChatReads
+            .Where(cr => cr.BookId == bookId && cr.UserId != UserId && cr.LastSeenMessageId != null)
+            .Select(cr => new ChatReadDto(cr.UserId, cr.User.Nickname ?? cr.User.DisplayName, cr.LastSeenMessageId!.Value))
+            .ToListAsync();
+
+        return reads;
+    }
 }

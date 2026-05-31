@@ -207,6 +207,9 @@ struct MessageRow: View {
                     Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                    if isMe {
+                        readReceiptRow
+                    }
                 }
             }
             if !isMe { Spacer() }
@@ -291,6 +294,30 @@ struct MessageRow: View {
     }
 
     @ViewBuilder
+    private var readReceiptRow: some View {
+        let readers = viewModel.reads.filter { $0.lastSeenMessageId == message.id }
+        return Group {
+            if !readers.isEmpty {
+                HStack(spacing: 2) {
+                    Spacer()
+                    ForEach(readers, id: \.userId) { reader in
+                        Text(reader.displayName.prefix(1).uppercased())
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 14, height: 14)
+                            .background(Color.accentColor)
+                            .clipShape(Circle())
+                    }
+                    if readers.count == 1 {
+                        Text("Seen")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
     private var messageBubble: some View {
         switch message.type {
         case .text:

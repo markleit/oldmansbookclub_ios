@@ -300,6 +300,30 @@ final class APIClient {
         return try await get(path: path)
     }
 
+    struct ChatReadDto: Decodable {
+        let userId: UUID
+        let displayName: String
+        let lastSeenMessageId: UUID
+    }
+
+    func getReads(bookId: UUID) async throws -> [ChatReadDto] {
+        try await get(path: "/books/\(bookId)/reads")
+    }
+
+    func markRead(bookId: UUID, messageId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try? JSONEncoder().encode(messageId)
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     func getSavedMessages() async throws -> [SavedMessage] {
         try await get(path: "/messages/saved")
     }

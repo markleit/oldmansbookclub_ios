@@ -105,6 +105,16 @@ public class JoinRequest
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
+public class ChatRead
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid BookId { get; set; }
+    public Book Book { get; set; } = null!;
+    public Guid? LastSeenMessageId { get; set; }
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class Book
 {
     public Guid Id { get; set; } = Guid.NewGuid();

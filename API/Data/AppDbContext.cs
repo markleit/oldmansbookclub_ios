@@ -14,6 +14,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<BlockedUser> BlockedUsers => Set<BlockedUser>();
     public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
+    public DbSet<ChatRead> ChatReads => Set<ChatRead>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -92,6 +93,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(jr => jr.Club)
             .WithMany()
             .HasForeignKey(jr => jr.ClubId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<ChatRead>()
+            .HasKey(cr => new { cr.UserId, cr.BookId });
+
+        modelBuilder.Entity<ChatRead>()
+            .HasOne(cr => cr.User)
+            .WithMany()
+            .HasForeignKey(cr => cr.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<ChatRead>()
+            .HasOne(cr => cr.Book)
+            .WithMany()
+            .HasForeignKey(cr => cr.BookId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

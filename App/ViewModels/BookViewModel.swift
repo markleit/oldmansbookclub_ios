@@ -20,6 +20,7 @@ final class BookViewModel: ObservableObject {
     @Published var savedMessages: [SavedMessage] = []
     @Published var isLoadingSaved = false
     @Published var messageSaved = false
+    @Published var reads: [APIClient.ChatReadDto] = []
 
     var visibleMessages: [Message] {
         messages.filter { !blockedUserIds.contains($0.senderId) }
@@ -74,6 +75,14 @@ final class BookViewModel: ObservableObject {
             blockedUserIds = Set(ids)
         }
 
+        if let fetched = try? await APIClient.shared.getReads(bookId: book.id) {
+            reads = fetched
+        }
+
+        if let latest = messages.first {
+            try? await APIClient.shared.markRead(bookId: book.id, messageId: latest.id)
+        }
+
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
 
@@ -88,6 +97,7 @@ final class BookViewModel: ObservableObject {
             }
 
             self.messages.insert(message, at: 0)
+            Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
         }
 
         ChatService.shared.onMessageDeleted = { [weak self] messageId in
