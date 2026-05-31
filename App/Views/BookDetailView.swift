@@ -204,7 +204,7 @@ struct MessageRow: View {
                 } else {
                     nameLabel
                     messageBubble
-                    Text(message.sentAt, style: .time)
+                    Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -523,6 +523,18 @@ struct RoutePickerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
         uiView.tintColor = tintColor
+    }
+}
+
+private func formatMessageDate(_ date: Date) -> String {
+    let calendar = Calendar.current
+    let now = Date()
+    if calendar.isDateInToday(date) {
+        return date.formatted(date: .omitted, time: .shortened)
+    } else if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
+        return date.formatted(.dateTime.weekday(.wide))
+    } else {
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 }
 
