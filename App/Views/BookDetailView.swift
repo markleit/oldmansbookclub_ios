@@ -174,6 +174,7 @@ struct BookDetailView: View {
 struct MessageRow: View {
     let message: Message
     @ObservedObject var viewModel: BookViewModel
+    @State private var showFullScreen = false
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
@@ -291,23 +292,29 @@ struct MessageRow: View {
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
-                AsyncImage(url: url) { phase in
-                    if let image = phase.image {
-                        image
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                    } else {
-                        Color(.systemGray5)
-                            .frame(width: 200, height: 200)
-                            .clipShape(RoundedRectangle(cornerRadius: 16))
-                            .overlay(
-                                phase.error != nil
-                                    ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
-                                    : AnyView(ProgressView())
-                            )
+                Button { showFullScreen = true } label: {
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 200, height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                        } else {
+                            Color(.systemGray5)
+                                .frame(width: 200, height: 200)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                                .overlay(
+                                    phase.error != nil
+                                        ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
+                                        : AnyView(ProgressView())
+                                )
+                        }
                     }
+                }
+                .buttonStyle(.plain)
+                .fullScreenCover(isPresented: $showFullScreen) {
+                    FullScreenImageView(url: url)
                 }
             }
 
@@ -365,8 +372,17 @@ struct VoiceMessageBubble: View {
                             .fill(isMe ? Color.white : Color.accentColor)
                             .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 3)
                     }
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                guard isPlaying else { return }
+                                let fraction = value.location.x / geo.size.width
+                                audio.seek(to: fraction)
+                            }
+                    )
                 }
-                .frame(height: 3)
+                .frame(height: 12)
 
                 Text(formatDuration(isPlaying ? audio.currentSeconds : totalSeconds))
                     .font(.caption2)
@@ -487,6 +503,58 @@ struct RoutePickerView: UIViewRepresentable {
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {
         uiView.tintColor = tintColor
+    }
+}
+
+struct FullScreenImageView: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1.0
+    @State private var dragOffset: CGSize = .zero
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(scale)
+                        .offset(dragOffset)
+                        .gesture(
+                            MagnificationGesture()
+                                .onChanged { scale = $0 }
+                                .onEnded { _ in withAnimation { scale = max(1.0, scale) } }
+                        )
+                        .gesture(
+                            DragGesture()
+                                .onChanged { if scale <= 1.0 { dragOffset = $0.translation } }
+                                .onEnded { value in
+                                    if scale <= 1.0 && abs(value.translation.height) > 80 {
+                                        dismiss()
+                                    } else {
+                                        withAnimation { dragOffset = .zero }
+                                    }
+                                }
+                        )
+                } else if phase.error != nil {
+                    Image(systemName: "photo")
+                        .font(.system(size: 50))
+                        .foregroundColor(.secondary)
+                } else {
+                    ProgressView().tint(.white)
+                }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white, Color.black.opacity(0.5))
+                    .padding()
+            }
+        }
     }
 }
 

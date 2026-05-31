@@ -15,6 +15,8 @@ struct MessageInputView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var showingCamera = false
     @State private var showingPhotoPicker = false
+    @State private var pulsing = false
+    @State private var elapsedSeconds = 0
 
     private var hasContent: Bool {
         !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil
@@ -77,8 +79,9 @@ struct MessageInputView: View {
                         }
                     } label: {
                         Image(systemName: "plus.circle.fill")
-                            .font(.title3)
+                            .font(.system(size: 28))
                             .foregroundColor(.secondary)
+                            .frame(width: 44, height: 44)
                     }
                     .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
                     .onChange(of: selectedPhotoItem) { item in
@@ -119,9 +122,45 @@ struct MessageInputView: View {
                                 .font(.system(size: 28, weight: .semibold))
                                 .foregroundColor(isRecording ? .red : .accentColor)
                                 .frame(width: 44, height: 44)
-                                .scaleEffect(isRecording ? 1.15 : 1.0)
-                                .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true),
-                                           value: isRecording)
+                                .overlay {
+                                    if isRecording {
+                                        ZStack {
+                                            Circle()
+                                                .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+                                                .scaleEffect(pulsing ? 2.2 : 1.0)
+                                                .opacity(pulsing ? 0 : 0.6)
+                                                .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false), value: pulsing)
+                                            Circle()
+                                                .stroke(Color.red.opacity(0.5), lineWidth: 1.5)
+                                                .scaleEffect(pulsing ? 2.2 : 1.0)
+                                                .opacity(pulsing ? 0 : 0.6)
+                                                .animation(.easeOut(duration: 1.2).repeatForever(autoreverses: false).delay(0.45), value: pulsing)
+                                        }
+                                    }
+                                }
+                                .overlay(alignment: .bottom) {
+                                    if isRecording {
+                                        Text(formatElapsed(elapsedSeconds))
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .monospacedDigit()
+                                            .foregroundColor(.red)
+                                            .fixedSize()
+                                            .offset(y: 14)
+                                    }
+                                }
+                        }
+                        .task(id: isRecording) {
+                            elapsedSeconds = 0
+                            pulsing = false
+                            guard isRecording else { return }
+                            try? await Task.sleep(for: .milliseconds(50))
+                            guard !Task.isCancelled else { return }
+                            pulsing = true
+                            while !Task.isCancelled {
+                                try? await Task.sleep(for: .seconds(1))
+                                guard !Task.isCancelled else { break }
+                                elapsedSeconds += 1
+                            }
                         }
                     }
                 }
@@ -138,6 +177,10 @@ struct MessageInputView: View {
             }
             .ignoresSafeArea()
         }
+    }
+
+    private func formatElapsed(_ seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 }
 
@@ -190,7 +233,7 @@ struct GrowingTextView: UIViewRepresentable {
 
     func recalcHeight(_ tv: UITextView) {
         let size = tv.sizeThatFits(CGSize(width: tv.frame.width > 0 ? tv.frame.width : UIScreen.main.bounds.width, height: .infinity))
-        let newHeight = max(size.height, 36)
+        let newHeight = max(size.height, 44)
         if abs(newHeight - height) > 0.5 {
             DispatchQueue.main.async { height = newHeight }
         }

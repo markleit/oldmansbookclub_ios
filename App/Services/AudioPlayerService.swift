@@ -44,6 +44,16 @@ final class AudioPlayerService: ObservableObject {
         stopCurrentPlayer()
     }
 
+    func seek(to fraction: Double) {
+        guard let player, let item = player.currentItem else { return }
+        let duration = item.duration.seconds
+        guard duration.isFinite, duration > 0 else { return }
+        let time = CMTime(seconds: duration * max(0, min(1, fraction)), preferredTimescale: 600)
+        player.seek(to: time)
+        progress = fraction
+        currentSeconds = Int(duration * fraction)
+    }
+
     func setSpeaker(_ enabled: Bool) {
         speakerEnabled = enabled
         if playingMessageId != nil { activateAudioSession() }
