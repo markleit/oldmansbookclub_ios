@@ -395,9 +395,14 @@ struct VoiceMessageBubble: View {
     private var audioView: some View {
         HStack(spacing: 10) {
             Button { audio.toggle(message: message) } label: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 24, height: 24)
+                if isPlaying && audio.isBuffering {
+                    ProgressView()
+                        .frame(width: 24, height: 24)
+                } else {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                }
             }
 
             VStack(alignment: .leading, spacing: 4) {

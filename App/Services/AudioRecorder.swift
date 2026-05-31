@@ -17,9 +17,9 @@ final class AudioRecorder {
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44100,
+            AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            AVEncoderBitRateKey: 32000,
         ]
 
         recorder = try AVAudioRecorder(url: url, settings: settings)

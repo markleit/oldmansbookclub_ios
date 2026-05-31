@@ -14,7 +14,6 @@ struct ProfileView: View {
     @State private var showDeleteConfirmation = false
     @State private var showLeaveConfirmation = false
     @State private var leaveError: String?
-    @AppStorage("tapToTalkEnabled") private var tapToTalk = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -58,6 +57,7 @@ struct ProfileView: View {
                 }
 
                 Section {
+                    NavigationLink("Settings") { SettingsView() }
                     NavigationLink("Blocked Users") {
                         BlockedUsersView()
                     }
@@ -82,10 +82,6 @@ struct ProfileView: View {
                             Text("You will lose access to this club's books and chat. You can request to rejoin later.")
                         }
                     }
-                }
-
-                Section(footer: Text("When off, hold the mic button to record and release to send.")) {
-                    Toggle("Tap-to-Talk", isOn: $tapToTalk)
                 }
 
                 Section {

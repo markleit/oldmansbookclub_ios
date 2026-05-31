@@ -9,6 +9,7 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var playingMessageId: UUID?
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
+    @Published private(set) var isBuffering: Bool = false
     @Published var speakerEnabled: Bool = true
     @Published var isExternalRouteActive: Bool = false
     @Published var playbackRate: Float = 1.0
@@ -18,6 +19,7 @@ final class AudioPlayerService: ObservableObject {
     private let availableRates: [Float] = [1.0, 2.0, 3.0, 4.0]
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
+    private var bufferCancellable: AnyCancellable?
     private var routeCancellable: AnyCancellable?
 
     private init() {
@@ -72,23 +74,32 @@ final class AudioPlayerService: ObservableObject {
     private func play(message: Message) {
         stopCurrentPlayer()
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
-        player = AVPlayer(url: url)
+        let newPlayer = AVPlayer(url: url)
+        player = newPlayer
         playingMessageId = message.id
         progress = 0
         currentSeconds = 0
+        isBuffering = true
         activateAudioSession()
-        player?.rate = playbackRate
+        newPlayer.rate = playbackRate
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
+        bufferCancellable = newPlayer.publisher(for: \.timeControlStatus)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+            }
     }
 
     private func stopCurrentPlayer() {
         timerCancellable?.cancel()
+        bufferCancellable?.cancel()
         player?.pause()
         player = nil
         playingMessageId = nil
         progress = 0
         currentSeconds = 0
+        isBuffering = false
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
