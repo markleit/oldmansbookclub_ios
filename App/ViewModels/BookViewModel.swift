@@ -14,6 +14,7 @@ final class BookViewModel: ObservableObject {
     @Published var showMicDeniedAlert = false
     @Published var blockedUserIds: Set<UUID> = []
     @Published var pendingImage: UIImage?
+    @Published var pendingVideo: URL?
     @Published var isRecording = false
     @Published var isUploading = false
     @Published var showSavedMessages = false
@@ -155,6 +156,22 @@ final class BookViewModel: ObservableObject {
             try await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
         } catch {
             errorMessage = "Failed to send photo."
+        }
+    }
+
+    func sendVideo() async {
+        guard let videoUrl = pendingVideo,
+              let clubId = TokenStore.shared.clubId else { return }
+        pendingVideo = nil
+        isUploading = true
+        defer { isUploading = false }
+        do {
+            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+            try await APIClient.shared.uploadMediaFile(at: videoUrl, to: uploadUrl, contentType: "video/mp4")
+            try await ChatService.shared.sendVideo(bookId: book.id, mediaUrl: response.mediaUrl)
+        } catch {
+            errorMessage = "Failed to send video."
         }
     }
 

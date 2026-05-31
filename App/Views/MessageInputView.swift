@@ -1,15 +1,19 @@
 import SwiftUI
 import PhotosUI
+import AVFoundation
+import UniformTypeIdentifiers
 
 struct MessageInputView: View {
     @Binding var text: String
     @Binding var pendingImage: UIImage?
+    @Binding var pendingVideo: URL?
     var isRecording: Bool
     var isUploading: Bool
     var isOffline: Bool = false
     var tapToTalk: Bool = false
     var onSend: () -> Void
     var onSendPhoto: () -> Void
+    var onSendVideo: () -> Void
     var onToggleRecording: () -> Void
     var onStartRecording: () -> Void = {}
     var onStopRecording: () -> Void = {}
@@ -22,7 +26,7 @@ struct MessageInputView: View {
     @State private var elapsedSeconds = 0
 
     private var hasContent: Bool {
-        !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil
+        !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil || pendingVideo != nil
     }
 
     var body: some View {
@@ -61,6 +65,33 @@ struct MessageInputView: View {
                     .padding(.top, 8)
                 }
 
+                // Pending video thumbnail
+                if let videoUrl = pendingVideo {
+                    HStack {
+                        VideoThumbnailView(url: videoUrl)
+                            .frame(width: 64, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundStyle(.white, .black.opacity(0.5))
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    pendingVideo = nil
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.white, .black)
+                                        .font(.title3)
+                                }
+                                .offset(x: 6, y: -6)
+                            }
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+
                 HStack(alignment: .bottom, spacing: 8) {
 
                     // + menu: photo library, camera, saved messages
@@ -86,12 +117,19 @@ struct MessageInputView: View {
                             .foregroundColor(.secondary)
                             .frame(width: 44, height: 44)
                     }
-                    .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
+                    .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]))
                     .onChange(of: selectedPhotoItem) { item in
                         Task {
-                            if let data = try? await item?.loadTransferable(type: Data.self),
-                               let image = UIImage(data: data) {
+                            guard let item else { return }
+                            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
+                                if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
+                                    pendingVideo = video.url
+                                    pendingImage = nil
+                                }
+                            } else if let data = try? await item.loadTransferable(type: Data.self),
+                                      let image = UIImage(data: data) {
                                 pendingImage = image
+                                pendingVideo = nil
                             }
                             selectedPhotoItem = nil
                         }
@@ -106,7 +144,9 @@ struct MessageInputView: View {
                             .frame(width: 32, height: 32)
                     } else if hasContent {
                         Button {
-                            if pendingImage != nil {
+                            if pendingVideo != nil {
+                                onSendVideo()
+                            } else if pendingImage != nil {
                                 onSendPhoto()
                             } else {
                                 onSend()
@@ -128,6 +168,11 @@ struct MessageInputView: View {
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
                 pendingImage = image
+                pendingVideo = nil
+                showingCamera = false
+            } onCaptureVideo: { url in
+                pendingVideo = url
+                pendingImage = nil
                 showingCamera = false
             } onCancel: {
                 showingCamera = false
@@ -277,6 +322,7 @@ struct GrowingTextView: UIViewRepresentable {
 
 struct CameraView: UIViewControllerRepresentable {
     var onCapture: (UIImage) -> Void
+    var onCaptureVideo: (URL) -> Void
     var onCancel: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -284,7 +330,8 @@ struct CameraView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.mediaTypes = ["public.image"]
+        picker.mediaTypes = ["public.image", "public.movie"]
+        picker.videoQuality = .typeHigh
         picker.delegate = context.coordinator
         return picker
     }
@@ -299,6 +346,8 @@ struct CameraView: UIViewControllerRepresentable {
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let image = info[.originalImage] as? UIImage {
                 parent.onCapture(image)
+            } else if let url = info[.mediaURL] as? URL {
+                parent.onCaptureVideo(url)
             } else {
                 parent.onCancel()
             }
@@ -306,6 +355,54 @@ struct CameraView: UIViewControllerRepresentable {
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.onCancel()
+        }
+    }
+}
+
+// MARK: - Video Transferable
+
+struct VideoTransferable: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { video in
+            SentTransferredFile(video.url)
+        } importing: { received in
+            let dest = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.copyItem(at: received.file, to: dest)
+            return VideoTransferable(url: dest)
+        }
+    }
+}
+
+// MARK: - Video Thumbnail
+
+struct VideoThumbnailView: View {
+    let url: URL
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Color(.systemGray4)
+            }
+        }
+        .task {
+            let asset = AVAsset(url: url)
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            if let cgImage = try? gen.copyCGImage(at: .zero, actualTime: nil) {
+                thumbnail = UIImage(cgImage: cgImage)
+            }
         }
     }
 }

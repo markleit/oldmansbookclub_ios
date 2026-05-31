@@ -108,6 +108,10 @@ private struct SavedMessageRow: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
+            case .video:
+                Label("Video", systemImage: "video")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
             }
         }
     }

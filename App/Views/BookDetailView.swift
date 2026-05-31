@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 import UIKit
 import AVFoundation
 import AVKit
@@ -66,12 +67,14 @@ struct BookDetailView: View {
             MessageInputView(
                 text: $viewModel.messageText,
                 pendingImage: $viewModel.pendingImage,
+                pendingVideo: $viewModel.pendingVideo,
                 isRecording: viewModel.isRecording,
                 isUploading: viewModel.isUploading,
                 isOffline: viewModel.isOffline,
                 tapToTalk: tapToTalk,
                 onSend: { Task { await viewModel.sendMessage() } },
                 onSendPhoto: { Task { await viewModel.sendPhoto() } },
+                onSendVideo: { Task { await viewModel.sendVideo() } },
                 onToggleRecording: { Task { await viewModel.toggleRecording() } },
                 onStartRecording: { Task { await viewModel.startRecording() } },
                 onStopRecording: { Task { await viewModel.stopRecording() } },
@@ -362,6 +365,11 @@ struct MessageRow: View {
 
         case .voice:
             VoiceMessageBubble(message: message, isMe: isMe)
+
+        case .video:
+            if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
+                VideoMessageBubble(url: url)
+            }
         }
     }
 }
@@ -574,6 +582,19 @@ private func formatMessageDate(_ date: Date) -> String {
         return date.formatted(.dateTime.weekday(.wide))
     } else {
         return date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+struct VideoMessageBubble: View {
+    let url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .frame(width: 240, height: 180)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .onAppear { player = AVPlayer(url: url) }
+            .onDisappear { player?.pause(); player = nil }
     }
 }
 

@@ -289,6 +289,19 @@ final class APIClient {
         }
     }
 
+    func uploadMediaFile(at fileUrl: URL, to uploadUrl: URL, contentType: String) async throws {
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileUrl.path)[.size] as? Int) ?? 0
+        var request = URLRequest(url: uploadUrl)
+        request.httpMethod = "PUT"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue("\(fileSize)", forHTTPHeaderField: "Content-Length")
+        request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
+        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileUrl)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     // MARK: - Messages
 
     func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {

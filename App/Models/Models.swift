@@ -98,4 +98,5 @@ enum MessageType: String, Codable {
     case text = "Text"
     case voice = "Voice"
     case photo = "Photo"
+    case video = "Video"
 }

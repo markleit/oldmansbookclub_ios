@@ -45,6 +45,13 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
+    public async Task SendVideoMessage(Guid bookId, string mediaUrl)
+    {
+        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Video, mediaUrl: mediaUrl);
+        await BroadcastAndNotify(bookId, message, bookTitle);
+    }
+
     public async Task DeleteMessage(Guid messageId)
     {
         var userId = GetUserId();

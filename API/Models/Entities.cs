@@ -60,7 +60,7 @@ public class Message
     public bool IsForwarded { get; set; } = false;
 }
 
-public enum MessageType { Text, Voice, Photo }
+public enum MessageType { Text, Voice, Photo, Video }
 
 public class SavedMessage
 {
