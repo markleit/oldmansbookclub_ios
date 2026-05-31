@@ -357,6 +357,7 @@ struct MessageRow: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .contentShape(RoundedRectangle(cornerRadius: 16))
             }
 
         case .voice:
@@ -413,11 +414,12 @@ struct VoiceMessageBubble: View {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(isMe ? Color.white.opacity(0.35) : Color(.systemGray3))
-                            .frame(height: 4)
+                            .frame(height: 6)
                         Capsule()
                             .fill(isMe ? Color.white : Color.accentColor)
-                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 4)
+                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 6)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
