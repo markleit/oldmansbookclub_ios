@@ -587,14 +587,58 @@ private func formatMessageDate(_ date: Date) -> String {
 
 struct VideoMessageBubble: View {
     let url: URL
+    @State private var showFullScreen = false
+
+    var body: some View {
+        Button { showFullScreen = true } label: {
+            VideoThumbnailView(url: url)
+                .frame(width: 240, height: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.white, .black.opacity(0.4))
+                }
+        }
+        .buttonStyle(.plain)
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .fullScreenCover(isPresented: $showFullScreen) {
+            FullScreenVideoView(url: url)
+        }
+    }
+}
+
+struct FullScreenVideoView: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
 
     var body: some View {
-        VideoPlayer(player: player)
-            .frame(width: 240, height: 180)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .onAppear { player = AVPlayer(url: url) }
-            .onDisappear { player?.pause(); player = nil }
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            if let player {
+                VideoPlayer(player: player)
+                    .ignoresSafeArea()
+            }
+            Button {
+                player?.pause()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white, .black.opacity(0.5))
+                    .padding()
+            }
+        }
+        .onAppear {
+            let p = AVPlayer(url: url)
+            player = p
+            p.play()
+        }
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
     }
 }
 
