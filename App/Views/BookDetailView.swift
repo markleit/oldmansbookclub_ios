@@ -400,11 +400,11 @@ struct VoiceMessageBubble: View {
             Button { audio.toggle(message: message) } label: {
                 if isPlaying && audio.isBuffering {
                     ProgressView()
-                        .frame(width: 44, height: 44)
+                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                 } else {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 22, weight: .semibold))
-                        .frame(width: 44, height: 44)
+                        .font(.system(size: isPlaying ? 28 : 20, weight: .semibold))
+                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                 }
             }
 
@@ -438,42 +438,43 @@ struct VoiceMessageBubble: View {
             if isPlaying {
                 Button { audio.cycleRate() } label: {
                     Text(audio.playbackRate == 1.0 ? "1×" : String(format: audio.playbackRate.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", audio.playbackRate))
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 16, weight: .semibold))
                         .monospacedDigit()
                         .frame(width: 44, height: 44)
                 }
-            }
 
-            if !audio.isExternalRouteActive {
-                Button { audio.setSpeaker(!audio.speakerEnabled) } label: {
-                    Image(systemName: audio.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                        .font(.system(size: 18))
-                        .opacity(0.8)
-                        .frame(width: 44, height: 44)
+                if !audio.isExternalRouteActive {
+                    Button { audio.setSpeaker(!audio.speakerEnabled) } label: {
+                        Image(systemName: audio.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                            .font(.system(size: 22))
+                            .opacity(0.8)
+                            .frame(width: 44, height: 44)
+                    }
                 }
-            }
 
-            RoutePickerView(tintColor: isMe ? .white : .label)
-                .frame(width: 36, height: 44)
+                RoutePickerView(tintColor: isMe ? .white : .label)
+                    .frame(width: 36, height: 44)
 
-            Button {
-                if isPlaying { audio.pause() }
-                showTranscription = true
-                if transcription == nil && !isTranscribing {
-                    Task { await transcribe() }
-                }
-            } label: {
-                if isTranscribing {
-                    ProgressView().scaleEffect(0.65).frame(width: 44, height: 44)
-                } else {
-                    Image(systemName: "text.bubble")
-                        .font(.system(size: 18))
-                        .opacity(0.7)
-                        .frame(width: 44, height: 44)
+                Button {
+                    audio.pause()
+                    showTranscription = true
+                    if transcription == nil && !isTranscribing {
+                        Task { await transcribe() }
+                    }
+                } label: {
+                    if isTranscribing {
+                        ProgressView().scaleEffect(0.65).frame(width: 44, height: 44)
+                    } else {
+                        Image(systemName: "text.bubble")
+                            .font(.system(size: 22))
+                            .opacity(0.7)
+                            .frame(width: 44, height: 44)
+                    }
                 }
             }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: isPlaying ? .infinity : 180)
+        .animation(.easeInOut(duration: 0.25), value: isPlaying)
     }
 
     private var transcriptionView: some View {
