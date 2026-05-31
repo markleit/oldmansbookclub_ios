@@ -212,6 +212,11 @@ struct MessageRow: View {
                     }
                 }
             }
+            .fullScreenCover(isPresented: $showFullScreen) {
+                if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
+                    FullScreenImageView(url: url)
+                }
+            }
             if !isMe { Spacer() }
         }
         .contextMenu {
@@ -352,9 +357,6 @@ struct MessageRow: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .fullScreenCover(isPresented: $showFullScreen) {
-                    FullScreenImageView(url: url)
-                }
             }
 
         case .voice:
