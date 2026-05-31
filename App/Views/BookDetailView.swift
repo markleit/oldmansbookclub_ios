@@ -394,27 +394,27 @@ struct VoiceMessageBubble: View {
     }
 
     private var audioView: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             Button { audio.toggle(message: message) } label: {
                 if isPlaying && audio.isBuffering {
                     ProgressView()
-                        .frame(width: 24, height: 24)
+                        .frame(width: 44, height: 44)
                 } else {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .frame(width: 24, height: 24)
+                        .font(.system(size: 22, weight: .semibold))
+                        .frame(width: 44, height: 44)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(isMe ? Color.white.opacity(0.35) : Color(.systemGray3))
-                            .frame(height: 3)
+                            .frame(height: 4)
                         Capsule()
                             .fill(isMe ? Color.white : Color.accentColor)
-                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 3)
+                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 4)
                     }
                     .contentShape(Rectangle())
                     .gesture(
@@ -426,7 +426,7 @@ struct VoiceMessageBubble: View {
                             }
                     )
                 }
-                .frame(height: 12)
+                .frame(height: 24)
 
                 Text(formatDuration(isPlaying ? audio.currentSeconds : totalSeconds))
                     .font(.caption2)
@@ -436,18 +436,18 @@ struct VoiceMessageBubble: View {
             if isPlaying {
                 Button { audio.cycleRate() } label: {
                     Text(audio.playbackRate == 1.0 ? "1×" : String(format: audio.playbackRate.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", audio.playbackRate))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .monospacedDigit()
-                        .frame(width: 24, height: 24)
+                        .frame(width: 44, height: 44)
                 }
             }
 
             if !audio.isExternalRouteActive {
                 Button { audio.setSpeaker(!audio.speakerEnabled) } label: {
                     Image(systemName: audio.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                        .font(.system(size: 14))
+                        .font(.system(size: 18))
                         .opacity(0.8)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 44, height: 44)
                 }
             }
 
