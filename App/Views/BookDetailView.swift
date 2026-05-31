@@ -320,16 +320,12 @@ struct MessageRow: View {
 struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
-    @State private var isPlaying = false
-    @State private var speakerEnabled = true
-    @State private var isExternalRouteActive = false
-    @State private var player: AVPlayer?
-    @State private var progress: Double = 0
-    @State private var currentSeconds: Int = 0
+    @ObservedObject private var audio = AudioPlayerService.shared
     @State private var showTranscription = false
     @State private var transcription: String?
     @State private var isTranscribing = false
 
+    private var isPlaying: Bool { audio.playingMessageId == message.id }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
 
     var body: some View {
@@ -346,23 +342,14 @@ struct VoiceMessageBubble: View {
         .foregroundColor(isMe ? .white : .primary)
         .cornerRadius(16)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-            tickProgress()
-        }
-        .onAppear { updateRouteState() }
-        .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)) { _ in
-            updateRouteState()
-        }
         .onDisappear {
-            player?.pause()
-            isPlaying = false
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            if isPlaying { audio.pause() }
         }
     }
 
     private var audioView: some View {
         HStack(spacing: 10) {
-            Button { togglePlayback() } label: {
+            Button { audio.toggle(message: message) } label: {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 24, height: 24)
@@ -376,19 +363,19 @@ struct VoiceMessageBubble: View {
                             .frame(height: 3)
                         Capsule()
                             .fill(isMe ? Color.white : Color.accentColor)
-                            .frame(width: geo.size.width * progress, height: 3)
+                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 3)
                     }
                 }
                 .frame(height: 3)
 
-                Text(formatDuration(isPlaying ? currentSeconds : totalSeconds))
+                Text(formatDuration(isPlaying ? audio.currentSeconds : totalSeconds))
                     .font(.caption2)
                     .monospacedDigit()
             }
 
-            if !isExternalRouteActive {
-                Button { toggleSpeaker() } label: {
-                    Image(systemName: speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+            if !audio.isExternalRouteActive {
+                Button { audio.setSpeaker(!audio.speakerEnabled) } label: {
+                    Image(systemName: audio.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
                         .font(.system(size: 14))
                         .opacity(0.8)
                         .frame(width: 24, height: 24)
@@ -399,8 +386,7 @@ struct VoiceMessageBubble: View {
                 .frame(width: 24, height: 24)
 
             Button {
-                player?.pause()
-                isPlaying = false
+                if isPlaying { audio.pause() }
                 showTranscription = true
                 if transcription == nil && !isTranscribing {
                     Task { await transcribe() }
@@ -449,63 +435,6 @@ struct VoiceMessageBubble: View {
             }
         }
         .frame(minWidth: 220, maxWidth: 300)
-    }
-
-    private func togglePlayback() {
-        if isPlaying {
-            player?.pause()
-            isPlaying = false
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        } else {
-            if player == nil {
-                guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
-                player = AVPlayer(url: url)
-            }
-            activateAudioSession()
-            player?.play()
-            isPlaying = true
-        }
-    }
-
-    private func toggleSpeaker() {
-        speakerEnabled.toggle()
-        if isPlaying { activateAudioSession() }
-    }
-
-    private func updateRouteState() {
-        let externalPorts: Set<AVAudioSession.Port> = [
-            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones
-        ]
-        let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
-            .contains { externalPorts.contains($0.portType) }
-        if hasExternal && speakerEnabled {
-            speakerEnabled = false
-            if isPlaying { activateAudioSession() }
-        }
-        isExternalRouteActive = hasExternal
-    }
-
-    private func activateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        if speakerEnabled { options.insert(.defaultToSpeaker) }
-        try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: options)
-        try? session.setActive(true)
-    }
-
-    private func tickProgress() {
-        guard let player, let item = player.currentItem else { return }
-        let duration = item.duration.seconds
-        let current = player.currentTime().seconds
-        guard duration.isFinite, duration > 0 else { return }
-        progress = min(current / duration, 1.0)
-        currentSeconds = Int(current)
-        if current >= duration - 0.05 {
-            isPlaying = false
-            progress = 0
-            currentSeconds = 0
-            player.seek(to: .zero)
-        }
     }
 
     private func formatDuration(_ seconds: Int) -> String {

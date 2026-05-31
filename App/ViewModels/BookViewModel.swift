@@ -48,7 +48,12 @@ final class BookViewModel: ObservableObject {
 
         do {
             let fetched = try await APIClient.shared.getMessages(bookId: book.id)
+            let pendingIds = Set(pendingByBody.values)
+            let surviving = messages.filter { pendingIds.contains($0.id) }
             messages = fetched
+            for msg in surviving where !messages.contains(where: { $0.id == msg.id }) {
+                messages.insert(msg, at: 0)
+            }
             CacheService.shared.save(fetched, key: cacheKey)
         } catch is CancellationError {
             isLoadingMessages = false
