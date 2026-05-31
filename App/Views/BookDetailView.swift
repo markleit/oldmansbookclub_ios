@@ -318,6 +318,7 @@ struct MessageRow: View {
         }
     }
 
+    @ViewBuilder
     private var messageBubble: some View {
         switch message.type {
         case .text:

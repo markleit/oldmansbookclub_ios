@@ -56,7 +56,7 @@ struct RootView: View {
         guard let me = try? await APIClient.shared.getMe() else { return }
         TokenStore.shared.isAdmin = me.isAdmin
         TokenStore.shared.isClubAdmin = me.isClubAdmin
-        if let name = me.displayName { TokenStore.shared.displayName = name }
+        TokenStore.shared.displayName = me.displayName
     }
 
     private func requestPushPermission() async {
