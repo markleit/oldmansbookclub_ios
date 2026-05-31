@@ -112,6 +112,8 @@ private struct SavedMessageRow: View {
                 Label("Video", systemImage: "video")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+            case .unknown:
+                EmptyView()
             }
         }
     }

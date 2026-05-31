@@ -99,4 +99,10 @@ enum MessageType: String, Codable {
     case voice = "Voice"
     case photo = "Photo"
     case video = "Video"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = MessageType(rawValue: raw) ?? .unknown
+    }
 }

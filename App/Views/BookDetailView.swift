@@ -398,6 +398,8 @@ struct MessageRow: View {
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
                 VideoMessageBubble(url: url)
             }
+        case .unknown:
+            EmptyView()
         }
     }
 }
