@@ -303,19 +303,19 @@ struct MessageRow: View {
         let readers = viewModel.reads.filter { $0.lastSeenMessageId == message.id }
         return Group {
             if !readers.isEmpty {
-                HStack(spacing: 2) {
+                HStack(spacing: 4) {
                     Spacer()
                     ForEach(readers, id: \.userId) { reader in
                         Text(reader.displayName.prefix(1).uppercased())
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.white)
-                            .frame(width: 14, height: 14)
+                            .frame(width: 22, height: 22)
                             .background(Color.accentColor)
                             .clipShape(Circle())
                     }
                     if readers.count == 1 {
                         Text("Seen")
-                            .font(.system(size: 9))
+                            .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -454,7 +454,7 @@ struct VoiceMessageBubble: View {
             }
 
             RoutePickerView(tintColor: isMe ? .white : .label)
-                .frame(width: 24, height: 24)
+                .frame(width: 36, height: 44)
 
             Button {
                 if isPlaying { audio.pause() }
@@ -464,15 +464,16 @@ struct VoiceMessageBubble: View {
                 }
             } label: {
                 if isTranscribing {
-                    ProgressView().scaleEffect(0.65).frame(width: 16, height: 16)
+                    ProgressView().scaleEffect(0.65).frame(width: 44, height: 44)
                 } else {
                     Image(systemName: "text.bubble")
-                        .font(.system(size: 14))
+                        .font(.system(size: 18))
                         .opacity(0.7)
+                        .frame(width: 44, height: 44)
                 }
             }
         }
-        .frame(width: 275)
+        .frame(maxWidth: .infinity)
     }
 
     private var transcriptionView: some View {
