@@ -222,11 +222,13 @@ struct MessageInputView: View {
         } else {
             micIcon
                 .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in if !isRecording { onStartRecording() } }
-                        .onEnded { _ in if isRecording { onStopRecording() } }
-                )
+                .onLongPressGesture(minimumDuration: 0, maximumDistance: 50, perform: {}) { isPressing in
+                    if isPressing {
+                        onStartRecording()
+                    } else {
+                        onStopRecording()
+                    }
+                }
                 .task(id: isRecording) { await runPulseTimer() }
         }
     }
