@@ -1,5 +1,6 @@
 using BookClubApi.Data;
 using BookClubApi.Models;
+using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,14 +10,14 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class MessagesController(AppDbContext db) : ControllerBase
+public class MessagesController(AppDbContext db, BlobService blob) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
     [HttpGet("saved")]
     public async Task<IEnumerable<SavedMessageDto>> GetSaved()
     {
-        return await db.SavedMessages
+        var saved = await db.SavedMessages
             .Where(s => s.UserId == UserId)
             .OrderByDescending(s => s.SavedAt)
             .Select(s => new SavedMessageDto(
@@ -33,6 +34,16 @@ public class MessagesController(AppDbContext db) : ControllerBase
                 s.SavedAt,
                 s.Message.DeletedAt != null))
             .ToListAsync();
+
+        if (saved.Any(s => s.MediaUrl != null))
+        {
+            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            saved = saved.Select(s => s.MediaUrl != null
+                ? s with { MediaUrl = blob.GenerateFreshReadUrl(s.MediaUrl, key, keyExpiry) }
+                : s).ToList();
+        }
+
+        return saved;
     }
 
     [HttpPost("{messageId}/save")]

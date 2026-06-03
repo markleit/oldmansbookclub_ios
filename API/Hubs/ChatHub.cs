@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
+public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -93,8 +93,10 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
             .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
         if (!isMember) throw new HubException("Not a member of this club.");
 
+        // Strip any stale SAS from the stored URL — SaveMessageAsync stores plain URL and generates fresh SAS for broadcast
+        var plainMediaUrl = original.MediaUrl?.Split('?')[0];
         var (message, bookTitle) = await SaveMessageAsync(bookId, original.Type,
-            body: original.Body, mediaUrl: original.MediaUrl,
+            body: original.Body, mediaUrl: plainMediaUrl,
             durationSeconds: original.DurationSeconds, isForwarded: true);
 
         await BroadcastAndNotify(bookId, message, bookTitle);
@@ -131,7 +133,14 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         db.Messages.Add(message);
         await db.SaveChangesAsync();
 
-        return (ToDto(message, user.EffectiveName, user.AvatarUrl), book.Title);
+        string? broadcastMediaUrl = mediaUrl;
+        if (mediaUrl != null)
+        {
+            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
+        }
+
+        return (ToDto(message, user.EffectiveName, user.AvatarUrl, broadcastMediaUrl), book.Title);
     }
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
@@ -159,8 +168,8 @@ public class ChatHub(AppDbContext db, NotificationService notifications) : Hub
         uri.Scheme == "https" &&
         uri.Host.EndsWith(".blob.core.windows.net");
 
-    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl) => new(
+    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null) => new(
         m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,
-        m.Type, m.Body, m.MediaUrl, m.DurationSeconds, m.SentAt,
+        m.Type, m.Body, broadcastMediaUrl ?? m.MediaUrl, m.DurationSeconds, m.SentAt,
         m.DeletedAt != null, m.IsForwarded);
 }

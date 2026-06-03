@@ -1,5 +1,6 @@
 using BookClubApi.Data;
 using BookClubApi.Models;
+using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class BooksController(AppDbContext db, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger) : ControllerBase
+public class BooksController(AppDbContext db, BlobService blob, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -152,7 +153,7 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
         if (before.HasValue)
             query = query.Where(m => m.SentAt < before.Value);
 
-        return await query
+        var messages = await query
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
@@ -167,6 +168,16 @@ public class BooksController(AppDbContext db, IConfiguration config, IHttpClient
                 m.DeletedAt != null,
                 m.IsForwarded))
             .ToListAsync();
+
+        if (messages.Any(m => m.MediaUrl != null))
+        {
+            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            messages = messages.Select(m => m.MediaUrl != null
+                ? m with { MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry) }
+                : m).ToList();
+        }
+
+        return messages;
     }
 
     [HttpPost("{bookId}/read")]

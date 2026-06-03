@@ -23,9 +23,9 @@ public class BlobService
         var blobName = $"{clubId}/{Guid.NewGuid()}.m4a";
         var uploadUrl = await GenerateUserDelegationSasAsync(MediaContainer, blobName,
             BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(10));
-        var readUrl = await GenerateUserDelegationSasAsync(MediaContainer, blobName,
-            BlobSasPermissions.Read, TimeSpan.FromDays(7));
-        return (uploadUrl, readUrl);
+        // Plain URL — SAS is added fresh when serving messages, so it never expires in the DB
+        var plainUrl = _client.GetBlobContainerClient(MediaContainer).GetBlobClient(blobName).Uri.ToString();
+        return (uploadUrl, plainUrl);
     }
 
     public async Task<(string UploadUrl, string AvatarUrl)> GenerateAvatarUploadUrlAsync(Guid userId)
@@ -39,7 +39,6 @@ public class BlobService
         var uploadUrl = await GenerateUserDelegationSasAsync(AvatarContainer, blobName,
             BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(10));
 
-        // Return the plain blob URL; callers generate SAS read URLs separately via GenerateAvatarReadUrlAsync
         return (uploadUrl, blobClient.Uri.ToString());
     }
 
@@ -48,6 +47,47 @@ public class BlobService
         var blobName = $"{userId}/avatar.jpg";
         return GenerateUserDelegationSasAsync(AvatarContainer, blobName,
             BlobSasPermissions.Read, TimeSpan.FromDays(7));
+    }
+
+    // Returns a delegation key valid for 7 days. Call once per request, pass to GenerateFreshReadUrl
+    // for each media URL — avoids one Azure round-trip per blob.
+    public async Task<(UserDelegationKey Key, DateTimeOffset ExpiresOn)> GetReadDelegationKeyAsync()
+    {
+        var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var expiresOn = DateTimeOffset.UtcNow.AddDays(7);
+        var key = await _client.GetUserDelegationKeyAsync(startsOn, expiresOn);
+        return (key, expiresOn);
+    }
+
+    // Synchronous — strips any existing SAS query params, generates a fresh read SAS.
+    // Handles both old DB rows (SAS URL) and new rows (plain URL).
+    public string? GenerateFreshReadUrl(string? storedUrl, UserDelegationKey key, DateTimeOffset keyExpiresOn)
+    {
+        if (storedUrl is null) return null;
+
+        var plainUrl = storedUrl.Split('?')[0];
+        if (!Uri.TryCreate(plainUrl, UriKind.Absolute, out var uri)) return storedUrl;
+
+        var segments = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+        if (segments.Length < 2) return storedUrl;
+
+        var containerName = segments[0];
+        var blobName = segments[1];
+        var blobUri = _client.GetBlobContainerClient(containerName).GetBlobClient(blobName).Uri;
+
+        // SAS expiry must not exceed the key's own expiry
+        var sasBuilder = new BlobSasBuilder
+        {
+            BlobContainerName = containerName,
+            BlobName = blobName,
+            Resource = "b",
+            StartsOn = DateTimeOffset.UtcNow.AddMinutes(-5),
+            ExpiresOn = keyExpiresOn.AddHours(-1)
+        };
+        sasBuilder.SetPermissions(BlobSasPermissions.Read);
+
+        var sasParams = sasBuilder.ToSasQueryParameters(key, _client.AccountName);
+        return new UriBuilder(blobUri) { Query = sasParams.ToString() }.Uri.ToString();
     }
 
     private async Task<string> GenerateUserDelegationSasAsync(
