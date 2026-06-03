@@ -16,7 +16,7 @@ final class AudioPlayerService: ObservableObject {
 
     var onPlaybackCompleted: ((UUID) -> Void)?
 
-    private let availableRates: [Float] = [1.0, 1.5, 2.0, 3.0]
+    private let availableRates: [Float] = [1.0, 1.5, 2.0, 3.0, 4.0]
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
     private var bufferCancellable: AnyCancellable?

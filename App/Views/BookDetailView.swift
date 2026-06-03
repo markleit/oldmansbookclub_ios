@@ -477,9 +477,7 @@ struct VoiceMessageBubble: View {
 
             if isPlaying {
                 Button { audio.cycleRate() } label: {
-                    Text(audio.playbackRate == 1.0 ? "1×" : String(format: audio.playbackRate.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f×" : "%.1f×", audio.playbackRate))
-                        .font(.system(size: 16, weight: .semibold))
-                        .monospacedDigit()
+                    BunnySpeedIcon(speed: audio.playbackRate)
                         .frame(width: 44, height: 44)
                 }
 
@@ -682,6 +680,39 @@ struct FullScreenVideoView: View {
         .onDisappear {
             player?.pause()
             player = nil
+        }
+    }
+}
+
+// MARK: - Bunny Speed Icon
+
+struct BunnySpeedIcon: View {
+    let speed: Float
+
+    private var lineCount: Int {
+        switch speed {
+        case 1.0: return 0
+        case 1.5: return 1
+        case 2.0: return 2
+        case 3.0: return 3
+        default:  return 4
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            VStack(alignment: .trailing, spacing: 2) {
+                ForEach(0..<4, id: \.self) { i in
+                    Capsule()
+                        .frame(width: CGFloat(8 - i * 1), height: 2)
+                        .opacity(i < lineCount ? (1.0 - Double(i) * 0.18) : 0)
+                }
+            }
+            .frame(width: 12)
+
+            Image(systemName: speed <= 1.0 ? "hare" : "hare.fill")
+                .font(.system(size: 14 + CGFloat(lineCount) * 2,
+                              weight: speed >= 4.0 ? .bold : .regular))
         }
     }
 }
