@@ -1,6 +1,8 @@
 import Foundation
 import SignalRClient
 
+enum ChatError: Error { case notConnected }
+
 final class ChatService: ObservableObject {
     static let shared = ChatService()
 
@@ -11,6 +13,8 @@ final class ChatService: ObservableObject {
     var onMessageDeleted: ((UUID) -> Void)?
 
     private init() {}
+
+    var isConnected: Bool { connection != nil }
 
     nonisolated func connect(bookId: UUID) async {
         guard let token = TokenStore.shared.token else { return }
@@ -32,6 +36,8 @@ final class ChatService: ObservableObject {
 
         connection = HubConnectionBuilder()
             .withUrl(url: url)
+            .withAutomaticReconnect(retryDelays: [2, 5, 10, 30])
+            .withKeepAliveInterval(keepAliveInterval: 15)
             .build()
 
         let onMessage = onMessageReceived
@@ -70,32 +76,44 @@ final class ChatService: ObservableObject {
             self?.currentBookId = nil
         }
 
-        try? await connection?.start()
+        do {
+            try await connection?.start()
+        } catch {
+            connection = nil
+            currentBookId = nil
+            return
+        }
         try? await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
     }
 
     nonisolated func sendText(bookId: UUID, body: String) async throws {
-        try await connection?.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
     }
 
     nonisolated func sendPhoto(bookId: UUID, mediaUrl: String) async throws {
-        try await connection?.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
     nonisolated func sendVideo(bookId: UUID, mediaUrl: String) async throws {
-        try await connection?.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
     nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async throws {
-        try await connection?.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
     }
 
     nonisolated func deleteMessage(messageId: UUID) async throws {
-        try await connection?.invoke(method: "DeleteMessage", arguments: messageId.uuidString)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "DeleteMessage", arguments: messageId.uuidString)
     }
 
     nonisolated func forwardMessage(bookId: UUID, messageId: UUID) async throws {
-        try await connection?.invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
+        guard let conn = connection else { throw ChatError.notConnected }
+        try await conn.invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
     }
 
     nonisolated func disconnect() async {

@@ -119,7 +119,11 @@ final class BookViewModel: ObservableObject {
 
     func sendMessage() async {
         let text = messageText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty, let userId = TokenStore.shared.userId else { return }
+        guard !text.isEmpty else { return }
+        guard let userId = TokenStore.shared.userId else {
+            errorMessage = "Session error — please sign out and back in."
+            return
+        }
         messageText = ""
 
         let clientId = UUID()
@@ -139,7 +143,18 @@ final class BookViewModel: ObservableObject {
 
         do {
             try await ChatService.shared.sendText(bookId: book.id, body: text)
+        } catch ChatError.notConnected {
+            await ChatService.shared.connect(bookId: book.id)
+            do {
+                try await ChatService.shared.sendText(bookId: book.id, body: text)
+            } catch {
+                messages.removeAll { $0.id == clientId }
+                pendingByBody.removeValue(forKey: text)
+                errorMessage = "Failed to send — connection lost. Please try again."
+            }
         } catch {
+            messages.removeAll { $0.id == clientId }
+            pendingByBody.removeValue(forKey: text)
             errorMessage = "Failed to send message."
         }
     }
