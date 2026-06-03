@@ -85,12 +85,14 @@ final class AudioPlayerService: ObservableObject {
         newPlayer.rate = playbackRate
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
+        var hasStartedPlaying = false
         bufferCancellable = newPlayer.publisher(for: \.timeControlStatus)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
-                if status == .paused, !self.isUserInitiatedPause, self.playingMessageId != nil {
+                if status == .playing { hasStartedPlaying = true }
+                if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                         guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause else { return }
                         self.activateAudioSession()
@@ -169,6 +171,8 @@ final class AudioPlayerService: ObservableObject {
     }
 
     private func handleRouteChange(_ notification: Notification) {
+        let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+        if let r = reason, AVAudioSession.RouteChangeReason(rawValue: r) == .categoryChange { return }
         updateRouteState()
     }
 
