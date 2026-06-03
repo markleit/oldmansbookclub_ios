@@ -21,6 +21,8 @@ final class AudioPlayerService: ObservableObject {
     private var timerCancellable: AnyCancellable?
     private var bufferCancellable: AnyCancellable?
     private var routeCancellable: AnyCancellable?
+    private var proximityCancellable: AnyCancellable?
+    private var isNearEar = false
 
     private init() {
         routeCancellable = NotificationCenter.default
@@ -49,6 +51,7 @@ final class AudioPlayerService: ObservableObject {
         playingMessageId = nil
         timerCancellable?.cancel()
         UIApplication.shared.isIdleTimerDisabled = false
+        disableProximityMonitoring()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
@@ -81,6 +84,7 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = 0
         isBuffering = true
         activateAudioSession()
+        enableProximityMonitoring()
         newPlayer.rate = playbackRate
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
@@ -101,6 +105,7 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = 0
         isBuffering = false
         UIApplication.shared.isIdleTimerDisabled = false
+        disableProximityMonitoring()
     }
 
     private func startTimer() {
@@ -128,9 +133,29 @@ final class AudioPlayerService: ObservableObject {
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
         var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        if speakerEnabled { options.insert(.defaultToSpeaker) }
+        let useEarpiece = isNearEar && !isExternalRouteActive
+        if speakerEnabled && !useEarpiece { options.insert(.defaultToSpeaker) }
         try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: options)
         try? session.setActive(true)
+    }
+
+    private func enableProximityMonitoring() {
+        UIDevice.current.isProximityMonitoringEnabled = true
+        proximityCancellable = NotificationCenter.default
+            .publisher(for: UIDevice.proximityStateDidChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.isNearEar = UIDevice.current.proximityState
+                self.activateAudioSession()
+            }
+    }
+
+    private func disableProximityMonitoring() {
+        UIDevice.current.isProximityMonitoringEnabled = false
+        proximityCancellable?.cancel()
+        proximityCancellable = nil
+        isNearEar = false
     }
 
     private func updateRouteState() {
