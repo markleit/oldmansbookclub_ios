@@ -50,7 +50,6 @@ final class BookViewModel: ObservableObject {
         isLoadingMessages = !hasCachedState
 
         let bookId = book.id
-        let t0 = Date()
 
         // Fire messages, blocked, and reads all in parallel — they're independent
         async let messagesFetch = APIClient.shared.getMessages(bookId: bookId)
@@ -59,7 +58,6 @@ final class BookViewModel: ObservableObject {
 
         do {
             let fetched = try await messagesFetch
-            print("[load] getMessages: \(Int(Date().timeIntervalSince(t0) * 1000))ms (\(fetched.count) msgs)")
             let pendingIds = Set(pendingByBody.values)
             let surviving = messages.filter { pendingIds.contains($0.id) }
             messages = fetched
@@ -85,14 +83,12 @@ final class BookViewModel: ObservableObject {
         let latestId = messages.first?.id
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
-        print("[load] blocked+reads ready: \(Int(Date().timeIntervalSince(t0) * 1000))ms")
         if let fetched = try? await readsFetch { reads = fetched }
 
         // markRead fires after messages resolved (needs latestId)
         if let id = latestId {
             try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
         }
-        print("[load] total: \(Int(Date().timeIntervalSince(t0) * 1000))ms")
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
@@ -191,19 +187,11 @@ final class BookViewModel: ObservableObject {
         isUploading = true
         defer { isUploading = false }
         do {
-            print("[sendVideo] videoUrl=\(videoUrl) fileExists=\(FileManager.default.fileExists(atPath: videoUrl.path))")
             let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
-            print("[sendVideo] got uploadUrl, mediaUrl=\(response.mediaUrl)")
-            guard let uploadUrl = URL(string: response.uploadUrl) else {
-                print("[sendVideo] failed to parse uploadUrl string")
-                return
-            }
+            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMediaFile(at: videoUrl, to: uploadUrl, contentType: "video/mp4")
-            print("[sendVideo] upload complete, invoking SignalR")
             try await ChatService.shared.sendVideo(bookId: book.id, mediaUrl: response.mediaUrl)
-            print("[sendVideo] done")
         } catch {
-            print("[sendVideo] FAILED: \(error)")
             errorMessage = "Failed to send video."
         }
     }
