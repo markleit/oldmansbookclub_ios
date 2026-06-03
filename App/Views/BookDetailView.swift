@@ -494,22 +494,22 @@ struct VoiceMessageBubble: View {
 
                 RoutePickerView(tintColor: isMe ? .white : .label)
                     .frame(width: 36, height: 44)
+            }
 
-                Button {
-                    audio.pause()
-                    showTranscription = true
-                    if transcription == nil && !isTranscribing {
-                        Task { await transcribe() }
-                    }
-                } label: {
-                    if isTranscribing {
-                        ProgressView().scaleEffect(0.65).frame(width: 44, height: 44)
-                    } else {
-                        Image(systemName: "text.bubble")
-                            .font(.system(size: 22))
-                            .opacity(0.7)
-                            .frame(width: 44, height: 44)
-                    }
+            Button {
+                if isPlaying { audio.pause() }
+                showTranscription = true
+                if transcription == nil && !isTranscribing {
+                    Task { await transcribe() }
+                }
+            } label: {
+                if isTranscribing {
+                    ProgressView().scaleEffect(0.65).frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                } else {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: isPlaying ? 22 : 16))
+                        .opacity(0.7)
+                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                 }
             }
         }
