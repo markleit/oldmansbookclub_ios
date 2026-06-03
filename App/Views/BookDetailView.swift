@@ -661,6 +661,8 @@ struct FullScreenVideoView: View {
             }
         }
         .onAppear {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+            try? AVAudioSession.sharedInstance().setActive(true)
             let p = AVPlayer(url: url)
             player = p
             p.play()
