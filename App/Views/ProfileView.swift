@@ -90,6 +90,9 @@ struct ProfileView: View {
                     } label: {
                         Text("Sign Out").frame(maxWidth: .infinity)
                     }
+                }
+
+                Section {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
                     } label: {
