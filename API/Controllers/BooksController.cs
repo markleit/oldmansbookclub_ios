@@ -141,12 +141,12 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     public async Task<ActionResult<IEnumerable<MessageDto>>> GetMessages(
         Guid bookId, [FromQuery] DateTime? before, [FromQuery] int limit = 50)
     {
-        var book = await db.Books.FindAsync(bookId);
-        if (book is null) return NotFound();
-
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
-        if (!isMember) return Forbid();
+        var access = await db.Books
+            .Where(b => b.Id == bookId)
+            .Select(b => new { b.ClubId, IsMember = b.Club.Memberships.Any(m => m.UserId == UserId) })
+            .FirstOrDefaultAsync();
+        if (access is null) return NotFound();
+        if (!access.IsMember) return Forbid();
 
         var query = db.Messages.Where(m => m.BookId == bookId);
 

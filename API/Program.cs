@@ -41,7 +41,7 @@ builder.Services.AddSignalR()
 
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();
-builder.Services.AddScoped<BlobService>();
+builder.Services.AddSingleton<BlobService>();
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddHttpClient("apns", client =>
 {

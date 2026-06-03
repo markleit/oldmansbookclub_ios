@@ -11,6 +11,10 @@ public class BlobService
     private const string MediaContainer = "club-media";
     private const string AvatarContainer = "avatars";
 
+    private UserDelegationKey? _cachedKey;
+    private DateTimeOffset _cachedKeyExpiry;
+    private readonly SemaphoreSlim _keySemaphore = new(1, 1);
+
     public BlobService()
     {
         _client = new BlobServiceClient(
@@ -49,14 +53,30 @@ public class BlobService
             BlobSasPermissions.Read, TimeSpan.FromDays(7));
     }
 
-    // Returns a delegation key valid for 7 days. Call once per request, pass to GenerateFreshReadUrl
-    // for each media URL — avoids one Azure round-trip per blob.
+    // Returns a cached delegation key valid for 7 days. Refreshes only when within 1 hour of expiry.
+    // Thread-safe via SemaphoreSlim — safe because BlobService is registered as Singleton.
     public async Task<(UserDelegationKey Key, DateTimeOffset ExpiresOn)> GetReadDelegationKeyAsync()
     {
-        var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
-        var expiresOn = DateTimeOffset.UtcNow.AddDays(7);
-        var key = await _client.GetUserDelegationKeyAsync(startsOn, expiresOn);
-        return (key, expiresOn);
+        if (_cachedKey != null && _cachedKeyExpiry > DateTimeOffset.UtcNow.AddHours(1))
+            return (_cachedKey, _cachedKeyExpiry);
+
+        await _keySemaphore.WaitAsync();
+        try
+        {
+            if (_cachedKey != null && _cachedKeyExpiry > DateTimeOffset.UtcNow.AddHours(1))
+                return (_cachedKey, _cachedKeyExpiry);
+
+            var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var expiresOn = DateTimeOffset.UtcNow.AddDays(7);
+            var key = await _client.GetUserDelegationKeyAsync(startsOn, expiresOn);
+            _cachedKey = key;
+            _cachedKeyExpiry = expiresOn;
+            return (key, expiresOn);
+        }
+        finally
+        {
+            _keySemaphore.Release();
+        }
     }
 
     // Synchronous — strips any existing SAS query params, generates a fresh read SAS.

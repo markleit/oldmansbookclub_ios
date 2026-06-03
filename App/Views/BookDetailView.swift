@@ -54,7 +54,7 @@ struct BookDetailView: View {
                             proxy.scrollTo(newest.id, anchor: .bottom)
                         }
                     }
-                    .onChange(of: viewModel.visibleMessages.count) { _ in
+                    .onChange(of: viewModel.visibleMessages.first?.id) { _ in
                         if let newest = viewModel.visibleMessages.first {
                             withAnimation(.easeOut(duration: 0.2)) {
                                 proxy.scrollTo(newest.id, anchor: .bottom)

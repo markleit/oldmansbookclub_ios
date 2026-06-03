@@ -45,11 +45,14 @@ struct CachedRemoteImage<Content: View>: View {
         }
         phase = .empty
         let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let uiImage = UIImage(data: data) else {
+        guard let (data, _) = try? await URLSession.shared.data(for: request) else {
             phase = .failure
             return
         }
+        let uiImage = await Task.detached(priority: .userInitiated) {
+            UIImage(data: data)
+        }.value
+        guard let uiImage else { phase = .failure; return }
         ImageCache.shared[url] = uiImage
         phase = .success(Image(uiImage: uiImage))
     }
