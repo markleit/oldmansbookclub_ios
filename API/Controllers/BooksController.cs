@@ -141,10 +141,14 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     public async Task<ActionResult<IEnumerable<MessageDto>>> GetMessages(
         Guid bookId, [FromQuery] DateTime? before, [FromQuery] int limit = 50)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
         var access = await db.Books
             .Where(b => b.Id == bookId)
             .Select(b => new { b.ClubId, IsMember = b.Club.Memberships.Any(m => m.UserId == UserId) })
             .FirstOrDefaultAsync();
+        logger.LogInformation("[GetMessages] access query: {Ms}ms", sw.ElapsedMilliseconds);
+
         if (access is null) return NotFound();
         if (!access.IsMember) return Forbid();
 
@@ -153,6 +157,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         if (before.HasValue)
             query = query.Where(m => m.SentAt < before.Value);
 
+        var t1 = sw.ElapsedMilliseconds;
         var messages = await query
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
@@ -168,15 +173,19 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                 m.DeletedAt != null,
                 m.IsForwarded))
             .ToListAsync();
+        logger.LogInformation("[GetMessages] messages query: {Ms}ms ({Count} rows)", sw.ElapsedMilliseconds - t1, messages.Count);
 
         if (messages.Any(m => m.MediaUrl != null))
         {
+            var t2 = sw.ElapsedMilliseconds;
             var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            logger.LogInformation("[GetMessages] delegation key: {Ms}ms", sw.ElapsedMilliseconds - t2);
             messages = messages.Select(m => m.MediaUrl != null
                 ? m with { MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry) }
                 : m).ToList();
         }
 
+        logger.LogInformation("[GetMessages] total: {Ms}ms", sw.ElapsedMilliseconds);
         return messages;
     }
 

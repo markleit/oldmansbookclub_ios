@@ -49,8 +49,17 @@ final class BookViewModel: ObservableObject {
         isOffline = false
         isLoadingMessages = !hasCachedState
 
+        let bookId = book.id
+        let t0 = Date()
+
+        // Fire messages, blocked, and reads all in parallel — they're independent
+        async let messagesFetch = APIClient.shared.getMessages(bookId: bookId)
+        async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
+        async let readsFetch = APIClient.shared.getReads(bookId: bookId)
+
         do {
-            let fetched = try await APIClient.shared.getMessages(bookId: book.id)
+            let fetched = try await messagesFetch
+            print("[load] getMessages: \(Int(Date().timeIntervalSince(t0) * 1000))ms (\(fetched.count) msgs)")
             let pendingIds = Set(pendingByBody.values)
             let surviving = messages.filter { pendingIds.contains($0.id) }
             messages = fetched
@@ -73,18 +82,17 @@ final class BookViewModel: ObservableObject {
 
         guard !isOffline else { return }
 
-        let bookId = book.id
         let latestId = messages.first?.id
-        async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
-        async let readsFetch = APIClient.shared.getReads(bookId: bookId)
-        async let markReadTask: Void = {
-            guard let id = latestId else { return }
-            try await APIClient.shared.markRead(bookId: bookId, messageId: id)
-        }()
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
+        print("[load] blocked+reads ready: \(Int(Date().timeIntervalSince(t0) * 1000))ms")
         if let fetched = try? await readsFetch { reads = fetched }
-        try? await markReadTask
+
+        // markRead fires after messages resolved (needs latestId)
+        if let id = latestId {
+            try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
+        }
+        print("[load] total: \(Int(Date().timeIntervalSince(t0) * 1000))ms")
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
