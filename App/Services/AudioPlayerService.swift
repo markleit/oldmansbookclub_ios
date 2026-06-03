@@ -10,9 +10,8 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
-    @Published var speakerEnabled: Bool = true
-    @Published var isExternalRouteActive: Bool = false
     @Published var playbackRate: Float = 1.0
+    private var isExternalRouteActive: Bool = false
 
     var onPlaybackCompleted: ((UUID) -> Void)?
 
@@ -23,12 +22,13 @@ final class AudioPlayerService: ObservableObject {
     private var routeCancellable: AnyCancellable?
     private var proximityCancellable: AnyCancellable?
     private var isNearEar = false
+    private var isUserInitiatedPause = false
 
     private init() {
         routeCancellable = NotificationCenter.default
             .publisher(for: AVAudioSession.routeChangeNotification)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.updateRouteState() }
+            .sink { [weak self] note in self?.handleRouteChange(note) }
         updateRouteState()
     }
 
@@ -47,6 +47,7 @@ final class AudioPlayerService: ObservableObject {
     }
 
     func pause() {
+        isUserInitiatedPause = true
         player?.pause()
         playingMessageId = nil
         timerCancellable?.cancel()
@@ -69,17 +70,13 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(duration * fraction)
     }
 
-    func setSpeaker(_ enabled: Bool) {
-        speakerEnabled = enabled
-        if playingMessageId != nil { activateAudioSession() }
-    }
-
     private func play(message: Message) {
         stopCurrentPlayer()
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
         let newPlayer = AVPlayer(url: url)
         player = newPlayer
         playingMessageId = message.id
+        isUserInitiatedPause = false
         progress = 0
         currentSeconds = 0
         isBuffering = true
@@ -91,11 +88,20 @@ final class AudioPlayerService: ObservableObject {
         bufferCancellable = newPlayer.publisher(for: \.timeControlStatus)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
-                self?.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                guard let self else { return }
+                self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                if status == .paused, !self.isUserInitiatedPause, self.playingMessageId != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                        guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause else { return }
+                        self.activateAudioSession()
+                        self.player?.rate = self.playbackRate
+                    }
+                }
             }
     }
 
     private func stopCurrentPlayer() {
+        isUserInitiatedPause = true
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
         player?.pause()
@@ -132,10 +138,14 @@ final class AudioPlayerService: ObservableObject {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        let useEarpiece = isNearEar && !isExternalRouteActive
-        if speakerEnabled && !useEarpiece { options.insert(.defaultToSpeaker) }
-        try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: options)
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        if isNearEar && !isExternalRouteActive {
+            // Earpiece path: requires playAndRecord to override default speaker routing
+            try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
+        } else {
+            // Speaker/BT path: playback gives full system volume (playAndRecord reduces gain)
+            try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
+        }
         try? session.setActive(true)
     }
 
@@ -158,16 +168,17 @@ final class AudioPlayerService: ObservableObject {
         isNearEar = false
     }
 
+    private func handleRouteChange(_ notification: Notification) {
+        updateRouteState()
+    }
+
     private func updateRouteState() {
         let externalPorts: Set<AVAudioSession.Port> = [
             .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones
         ]
         let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
             .contains { externalPorts.contains($0.portType) }
-        if hasExternal && speakerEnabled {
-            speakerEnabled = false
-            if playingMessageId != nil { activateAudioSession() }
-        }
         isExternalRouteActive = hasExternal
+        if playingMessageId != nil { activateAudioSession() }
     }
 }

@@ -26,6 +26,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(m => new { m.ClubId, m.SentAt });
 
         modelBuilder.Entity<Message>()
+            .HasIndex(m => new { m.BookId, m.SentAt });
+
+        modelBuilder.Entity<Message>()
             .HasOne(m => m.Book)
             .WithMany(b => b.Messages)
             .HasForeignKey(m => m.BookId)

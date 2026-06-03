@@ -40,7 +40,7 @@ struct BookDetailView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
                             ForEach(viewModel.visibleMessages.reversed()) { message in
                                 MessageRow(message: message, viewModel: viewModel)
                                     .id(message.id)

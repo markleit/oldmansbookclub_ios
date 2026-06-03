@@ -73,17 +73,18 @@ final class BookViewModel: ObservableObject {
 
         guard !isOffline else { return }
 
-        if let ids = try? await APIClient.shared.fetchBlockedUserIds() {
-            blockedUserIds = Set(ids)
-        }
+        let bookId = book.id
+        let latestId = messages.first?.id
+        async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
+        async let readsFetch = APIClient.shared.getReads(bookId: bookId)
+        async let markReadTask: Void = {
+            guard let id = latestId else { return }
+            try await APIClient.shared.markRead(bookId: bookId, messageId: id)
+        }()
 
-        if let fetched = try? await APIClient.shared.getReads(bookId: book.id) {
-            reads = fetched
-        }
-
-        if let latest = messages.first {
-            try? await APIClient.shared.markRead(bookId: book.id, messageId: latest.id)
-        }
+        if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
+        if let fetched = try? await readsFetch { reads = fetched }
+        try? await markReadTask
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
