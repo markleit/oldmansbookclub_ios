@@ -34,8 +34,8 @@ struct AdminView: View {
             VStack(spacing: 0) {
                 if showAdminTabs {
                     Picker("", selection: $selectedTab) {
-                        Text("Requests").tag(0)
-                        Text("Members").tag(1)
+                        Text("Members").tag(0)
+                        Text("Requests").tag(1)
                         if isGlobalAdmin {
                             Text("Reports").tag(2)
                         }
@@ -44,9 +44,9 @@ struct AdminView: View {
                     .padding()
                 }
 
-                if showAdminTabs && selectedTab == 0 {
+                if showAdminTabs && selectedTab == 1 {
                     requestsView
-                } else if !showAdminTabs || selectedTab == 1 {
+                } else if !showAdminTabs || selectedTab == 0 {
                     membersView
                 } else {
                     reportsView
@@ -62,7 +62,7 @@ struct AdminView: View {
                 Text(errorMessage ?? "")
             }
             .toolbar {
-                if isGlobalAdmin && selectedTab == 1, let clubId = selectedClubId,
+                if isGlobalAdmin && selectedTab == 0, let clubId = selectedClubId,
                    let club = myClubs.first(where: { $0.id == clubId }) {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button(role: .destructive) {
