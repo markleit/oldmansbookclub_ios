@@ -4,7 +4,8 @@ struct ManageClubsView: View {
     @AppStorage("club_id") private var storedClubId: String = ""
     @AppStorage("club_name") private var storedClubName: String = ""
 
-    @State private var clubs: [APIClient.PublicClub] = []
+    @State private var publicClubs: [APIClient.PublicClub] = []
+    @State private var myClubIds: Set<UUID> = []
     @State private var newClubName = ""
     @State private var isLoading = false
     @State private var isCreating = false
@@ -13,10 +14,19 @@ struct ManageClubsView: View {
     @State private var clubToLeave: APIClient.PublicClub?
     @State private var alertMessage: String?
 
+    private var activeClubId: UUID? { TokenStore.shared.clubId }
     private var currentClubName: String { storedClubName.isEmpty ? "Club" : storedClubName }
 
-    private func isCurrent(_ club: APIClient.PublicClub) -> Bool {
-        club.id.uuidString.caseInsensitiveCompare(storedClubId) == .orderedSame
+    private func status(of club: APIClient.PublicClub) -> ClubStatus {
+        if club.id == activeClubId { return .active }
+        if myClubIds.contains(club.id) { return .member }
+        return .notMember
+    }
+
+    private var sortedClubs: [APIClient.PublicClub] {
+        publicClubs.sorted { a, b in
+            status(of: a).sortOrder < status(of: b).sortOrder
+        }
     }
 
     var body: some View {
@@ -64,21 +74,16 @@ struct ManageClubsView: View {
         Section {
             if isLoading {
                 ProgressView().frame(maxWidth: .infinity)
-            } else if clubs.isEmpty {
+            } else if sortedClubs.isEmpty {
                 Text("No clubs available.")
                     .foregroundColor(.secondary)
             } else {
-                ForEach(clubs) { club in
+                ForEach(sortedClubs) { club in
+                    let s = status(of: club)
                     HStack(spacing: 12) {
-                        if isCurrent(club) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.system(size: 20))
-                        } else {
-                            Image(systemName: "checkmark.circle")
-                                .foregroundColor(Color(.systemGray3))
-                                .font(.system(size: 20))
-                        }
+                        Image(systemName: s == .active ? "checkmark.circle.fill" : "checkmark.circle")
+                            .foregroundColor(s == .active ? .green : Color(.systemGray3))
+                            .font(.system(size: 20))
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(club.name).font(.headline)
@@ -89,13 +94,13 @@ struct ManageClubsView: View {
 
                         Spacer()
 
-                        if isCurrent(club) {
+                        if s == .active {
                             Button("Leave") { clubToLeave = club }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
                                 .tint(.red)
                                 .disabled(isLeaving)
-                        } else {
+                        } else if s == .notMember {
                             Button("Request") { clubToJoin = club }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
@@ -131,7 +136,11 @@ struct ManageClubsView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            clubs = try await APIClient.shared.getPublicClubs()
+            async let publicFetch = APIClient.shared.getPublicClubs()
+            async let myFetch = APIClient.shared.getMyClubs()
+            let (all, mine) = try await (publicFetch, myFetch)
+            publicClubs = all
+            myClubIds = Set(mine.map(\.id))
         } catch {
             alertMessage = "Failed to load clubs."
         }
@@ -174,6 +183,17 @@ struct ManageClubsView: View {
             await loadClubs()
         } catch {
             alertMessage = "Failed to leave club."
+        }
+    }
+}
+
+private enum ClubStatus {
+    case active, member, notMember
+    var sortOrder: Int {
+        switch self {
+        case .active: return 0
+        case .member: return 1
+        case .notMember: return 2
         }
     }
 }
