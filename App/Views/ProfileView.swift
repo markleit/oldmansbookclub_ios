@@ -58,8 +58,8 @@ struct ProfileView: View {
 
                 Section {
                     NavigationLink("Settings") { SettingsView() }
-                    NavigationLink("Blocked Users") { BlockedUsersView() }
                     NavigationLink("Manage Book Clubs") { ManageClubsView() }
+                    NavigationLink("Blocked Users") { BlockedUsersView() }
                 }
 
                 Section {
