@@ -398,13 +398,25 @@ struct VideoThumbnailView: View {
                 Color(.systemGray4)
             }
         }
-        .task {
-            let asset = AVAsset(url: url)
-            let gen = AVAssetImageGenerator(asset: asset)
-            gen.appliesPreferredTrackTransform = true
-            if let cgImage = try? gen.copyCGImage(at: .zero, actualTime: nil) {
-                thumbnail = UIImage(cgImage: cgImage)
+        .task(id: url) {
+            // Check in-memory cache first — avoids re-downloading on every LazyVStack recycle
+            if let cached = ImageCache.shared[url] {
+                thumbnail = cached
+                return
             }
+            // copyCGImage is synchronous and blocks during remote video download;
+            // run on a detached task so it never touches the main thread
+            let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                let asset = AVAsset(url: url)
+                let gen = AVAssetImageGenerator(asset: asset)
+                gen.appliesPreferredTrackTransform = true
+                gen.maximumSize = CGSize(width: 480, height: 360)
+                guard let cgImage = try? gen.copyCGImage(at: .zero, actualTime: nil) else { return nil }
+                return UIImage(cgImage: cgImage)
+            }.value
+            guard let image else { return }
+            ImageCache.shared[url] = image
+            thumbnail = image
         }
     }
 }
