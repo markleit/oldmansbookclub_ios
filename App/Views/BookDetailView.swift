@@ -289,7 +289,7 @@ struct MessageRow: View {
     @ViewBuilder
     private var avatarView: some View {
         if let urlStr = message.senderAvatarUrl, let url = URL(string: urlStr) {
-            AsyncImage(url: url) { phase in
+            CachedRemoteImage(url: url) { phase in
                 if let img = phase.image {
                     img.resizable().scaledToFill()
                 } else {
@@ -335,7 +335,7 @@ struct MessageRow: View {
                     ForEach(readers, id: \.userId) { reader in
                         Group {
                             if let urlStr = reader.avatarUrl, let url = URL(string: urlStr) {
-                                AsyncImage(url: url) { phase in
+                                CachedRemoteImage(url: url) { phase in
                                     if let image = phase.image {
                                         image.resizable().scaledToFill()
                                     } else {
@@ -368,7 +368,7 @@ struct MessageRow: View {
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
                 Button { showFullScreen = true } label: {
-                    AsyncImage(url: url) { phase in
+                    CachedRemoteImage(url: url) { phase in
                         if let image = phase.image {
                             image
                                 .resizable()
@@ -380,7 +380,7 @@ struct MessageRow: View {
                                 .frame(width: 200, height: 200)
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
                                 .overlay(
-                                    phase.error != nil
+                                    phase.isError
                                         ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
                                         : AnyView(ProgressView())
                                 )
@@ -781,9 +781,12 @@ struct SenderProfileView: View {
             }
             .task {
                 guard let urlStr = avatarUrl, let url = URL(string: urlStr) else { return }
+                if let cached = ImageCache.shared[url] { avatarImage = cached; return }
                 let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
-                guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
-                avatarImage = UIImage(data: data)
+                guard let (data, _) = try? await URLSession.shared.data(for: request),
+                      let img = UIImage(data: data) else { return }
+                ImageCache.shared[url] = img
+                avatarImage = img
             }
         }
     }

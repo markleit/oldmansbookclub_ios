@@ -29,9 +29,12 @@ final class ProfileViewModel: ObservableObject {
         TokenStore.shared.avatarUrl = user.avatarUrl
 
         guard let urlStr = user.avatarUrl, let url = URL(string: urlStr) else { return }
-        let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData)
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
-        loadedAvatarImage = UIImage(data: data)
+        if let cached = ImageCache.shared[url] { loadedAvatarImage = cached; return }
+        let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let img = UIImage(data: data) else { return }
+        ImageCache.shared[url] = img
+        loadedAvatarImage = img
     }
 
     func save() async {
