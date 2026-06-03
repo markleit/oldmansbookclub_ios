@@ -11,6 +11,9 @@ struct ProfileView: View {
     @State private var showCamera = false
     @State private var photosItem: PhotosPickerItem?
     @State private var showDeleteConfirmation = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var showAlert = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -103,24 +106,30 @@ struct ProfileView: View {
                     }
                 }
             }
-            .alert("Error", isPresented: Binding(
-                get: { viewModel.errorMessage != nil },
-                set: { if !$0 { viewModel.errorMessage = nil } }
-            )) {
-                Button("OK") { viewModel.errorMessage = nil }
-            } message: {
-                Text(viewModel.errorMessage ?? "")
-            }
-            .alert("Saved", isPresented: $viewModel.saveSuccess) {
+            .alert(alertTitle, isPresented: $showAlert) {
                 Button("OK") {}
             } message: {
-                Text("Your profile has been updated.")
+                Text(alertMessage)
             }
             .alert("Delete Account", isPresented: $showDeleteConfirmation) {
                 Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) { auth.deleteAccount() }
             } message: {
                 Text("This will permanently delete your account and all your messages. This cannot be undone.")
+            }
+            .onChange(of: viewModel.errorMessage) { msg in
+                guard let msg else { return }
+                alertTitle = "Error"
+                alertMessage = msg
+                showAlert = true
+                viewModel.errorMessage = nil
+            }
+            .onChange(of: viewModel.saveSuccess) { success in
+                guard success else { return }
+                alertTitle = "Saved"
+                alertMessage = "Your profile has been updated."
+                showAlert = true
+                viewModel.saveSuccess = false
             }
         }
     }
