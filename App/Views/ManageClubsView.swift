@@ -9,27 +9,27 @@ struct ManageClubsView: View {
     @State private var isLoading = false
     @State private var isCreating = false
     @State private var isLeaving = false
-    @State private var confirmJoinClub: APIClient.PublicClub?
-    @State private var showLeaveConfirmation = false
+    @State private var clubToJoin: APIClient.PublicClub?
+    @State private var clubToLeave: APIClient.PublicClub?
     @State private var alertMessage: String?
 
-    private var isInClub: Bool { !storedClubId.isEmpty }
     private var currentClubName: String { storedClubName.isEmpty ? "Club" : storedClubName }
+
+    private func isCurrent(_ club: APIClient.PublicClub) -> Bool {
+        club.id.uuidString.caseInsensitiveCompare(storedClubId) == .orderedSame
+    }
 
     var body: some View {
         Form {
+            clubListSection
             createSection
-            joinSection
-            if isInClub {
-                leaveSection
-            }
         }
         .navigationTitle("Manage Book Clubs")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadClubs() }
         .confirmationDialog(
-            "Leave \(currentClubName)?",
-            isPresented: $showLeaveConfirmation,
+            "Leave \(clubToLeave?.name ?? currentClubName)?",
+            isPresented: Binding(get: { clubToLeave != nil }, set: { if !$0 { clubToLeave = nil } }),
             titleVisibility: .visible
         ) {
             Button("Leave Club", role: .destructive) {
@@ -39,23 +39,72 @@ struct ManageClubsView: View {
             Text("You will lose access to this club's books and chat. You can request to rejoin later.")
         }
         .confirmationDialog(
-            "Join Club",
-            isPresented: Binding(get: { confirmJoinClub != nil }, set: { if !$0 { confirmJoinClub = nil } }),
+            "Request to Join",
+            isPresented: Binding(get: { clubToJoin != nil }, set: { if !$0 { clubToJoin = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Request to Join") {
-                if let club = confirmJoinClub {
-                    Task { await requestToJoin(club) }
-                }
+            Button("Send Request") {
+                if let club = clubToJoin { Task { await requestToJoin(club) } }
             }
-            Button("Cancel", role: .cancel) { confirmJoinClub = nil }
+            Button("Cancel", role: .cancel) { clubToJoin = nil }
         } message: {
-            Text("Request to join \"\(confirmJoinClub?.name ?? "")\"? An admin will review your request.")
+            Text("Send a request to join \"\(clubToJoin?.name ?? "")\"? An admin will review it.")
         }
-        .alert("Notice", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
+        .alert("Notice", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: { if !$0 { alertMessage = nil } }
+        )) {
             Button("OK") { alertMessage = nil }
         } message: {
             Text(alertMessage ?? "")
+        }
+    }
+
+    private var clubListSection: some View {
+        Section {
+            if isLoading {
+                ProgressView().frame(maxWidth: .infinity)
+            } else if clubs.isEmpty {
+                Text("No clubs available.")
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(clubs) { club in
+                    HStack(spacing: 12) {
+                        if isCurrent(club) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.system(size: 20))
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundColor(Color(.systemGray3))
+                                .font(.system(size: 20))
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(club.name).font(.headline)
+                            Text("\(club.memberCount) member\(club.memberCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        if isCurrent(club) {
+                            Button("Leave") { clubToLeave = club }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .tint(.red)
+                                .disabled(isLeaving)
+                        } else {
+                            Button("Request") { clubToJoin = club }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Book Clubs")
         }
     }
 
@@ -75,55 +124,6 @@ struct ManageClubsView: View {
             .disabled(newClubName.trimmingCharacters(in: .whitespaces).isEmpty || isCreating)
         } header: {
             Text("Start a New Club")
-        }
-    }
-
-    private var joinSection: some View {
-        Section {
-            if isLoading {
-                ProgressView().frame(maxWidth: .infinity)
-            } else if clubs.isEmpty {
-                Text("No clubs available.")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(clubs) { club in
-                    let isCurrent = club.id.uuidString == storedClubId
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(club.name).font(.headline)
-                            Text("\(club.memberCount) member\(club.memberCount == 1 ? "" : "s")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if isCurrent {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                        } else {
-                            Button("Request") { confirmJoinClub = club }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                        }
-                    }
-                }
-            }
-        } header: {
-            Text("Book Clubs")
-        }
-    }
-
-    private var leaveSection: some View {
-        Section {
-            Button(role: .destructive) {
-                showLeaveConfirmation = true
-            } label: {
-                if isLeaving {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else {
-                    Text("Leave \(currentClubName)").frame(maxWidth: .infinity)
-                }
-            }
-            .disabled(isLeaving)
         }
     }
 
@@ -153,7 +153,7 @@ struct ManageClubsView: View {
     }
 
     private func requestToJoin(_ club: APIClient.PublicClub) async {
-        confirmJoinClub = nil
+        clubToJoin = nil
         do {
             try await APIClient.shared.requestToJoinClub(clubId: club.id)
             alertMessage = "Your request to join \"\(club.name)\" has been submitted. An admin will review it."
@@ -165,6 +165,7 @@ struct ManageClubsView: View {
     private func leaveClub() async {
         guard let clubId = TokenStore.shared.clubId else { return }
         isLeaving = true
+        clubToLeave = nil
         defer { isLeaving = false }
         do {
             try await APIClient.shared.leaveClub(clubId: clubId)
