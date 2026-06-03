@@ -1,29 +1,23 @@
 import SwiftUI
 
 struct ManageClubsView: View {
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("user_club_id") private var clubIdString: String = ""
-    @AppStorage("user_club_name") private var clubName: String = ""
+    @AppStorage("club_id") private var storedClubId: String = ""
+    @AppStorage("club_name") private var storedClubName: String = ""
 
     @State private var clubs: [APIClient.PublicClub] = []
-    @State private var currentClub: APIClient.PublicClub?
     @State private var newClubName = ""
     @State private var isLoading = false
     @State private var isCreating = false
     @State private var isLeaving = false
     @State private var confirmJoinClub: APIClient.PublicClub?
     @State private var showLeaveConfirmation = false
-    @State private var errorMessage: String?
-    @State private var successMessage: String?
+    @State private var alertMessage: String?
 
-    private var isInClub: Bool { TokenStore.shared.clubId != nil }
-    private var currentClubName: String { TokenStore.shared.clubName ?? "Club" }
+    private var isInClub: Bool { !storedClubId.isEmpty }
+    private var currentClubName: String { storedClubName.isEmpty ? "Club" : storedClubName }
 
     var body: some View {
         Form {
-            if isInClub {
-                currentClubSection
-            }
             createSection
             joinSection
             if isInClub {
@@ -44,26 +38,11 @@ struct ManageClubsView: View {
         } message: {
             Text("You will lose access to this club's books and chat. You can request to rejoin later.")
         }
-        .alert("Success", isPresented: Binding(
-            get: { successMessage != nil },
-            set: { if !$0 { successMessage = nil } }
-        )) {
-            Button("OK") { successMessage = nil }
-        } message: {
-            Text(successMessage ?? "")
-        }
-        .alert("Error", isPresented: Binding(
-            get: { errorMessage != nil },
-            set: { if !$0 { errorMessage = nil } }
-        )) {
-            Button("OK") { errorMessage = nil }
-        } message: {
-            Text(errorMessage ?? "")
-        }
-        .alert("Join Club", isPresented: Binding(
-            get: { confirmJoinClub != nil },
-            set: { if !$0 { confirmJoinClub = nil } }
-        )) {
+        .confirmationDialog(
+            "Join Club",
+            isPresented: Binding(get: { confirmJoinClub != nil }, set: { if !$0 { confirmJoinClub = nil } }),
+            titleVisibility: .visible
+        ) {
             Button("Request to Join") {
                 if let club = confirmJoinClub {
                     Task { await requestToJoin(club) }
@@ -73,28 +52,10 @@ struct ManageClubsView: View {
         } message: {
             Text("Request to join \"\(confirmJoinClub?.name ?? "")\"? An admin will review your request.")
         }
-    }
-
-    private var currentClubSection: some View {
-        Section {
-            if let club = currentClub {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(club.name).font(.headline)
-                        Text("\(club.memberCount) member\(club.memberCount == 1 ? "" : "s")")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                }
-            } else {
-                Text(currentClubName)
-                    .font(.headline)
-            }
-        } header: {
-            Text("Current Club")
+        .alert("Notice", isPresented: Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })) {
+            Button("OK") { alertMessage = nil }
+        } message: {
+            Text(alertMessage ?? "")
         }
     }
 
@@ -121,32 +82,33 @@ struct ManageClubsView: View {
         Section {
             if isLoading {
                 ProgressView().frame(maxWidth: .infinity)
+            } else if clubs.isEmpty {
+                Text("No clubs available.")
+                    .foregroundColor(.secondary)
             } else {
-                let available = clubs.filter { $0.id != TokenStore.shared.clubId }
-                if available.isEmpty {
-                    Text("No other clubs available.")
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(available) { club in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(club.name).font(.headline)
-                                Text("\(club.memberCount) member\(club.memberCount == 1 ? "" : "s")")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Button("Request") {
-                                confirmJoinClub = club
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                ForEach(clubs) { club in
+                    let isCurrent = club.id.uuidString == storedClubId
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(club.name).font(.headline)
+                            Text("\(club.memberCount) member\(club.memberCount == 1 ? "" : "s")")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        if isCurrent {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        } else {
+                            Button("Request") { confirmJoinClub = club }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                         }
                     }
                 }
             }
         } header: {
-            Text("Join an Existing Club")
+            Text("Book Clubs")
         }
     }
 
@@ -169,11 +131,9 @@ struct ManageClubsView: View {
         isLoading = true
         defer { isLoading = false }
         do {
-            let all = try await APIClient.shared.getPublicClubs()
-            clubs = all
-            currentClub = all.first { $0.id == TokenStore.shared.clubId }
+            clubs = try await APIClient.shared.getPublicClubs()
         } catch {
-            errorMessage = "Failed to load clubs."
+            alertMessage = "Failed to load clubs."
         }
     }
 
@@ -184,20 +144,21 @@ struct ManageClubsView: View {
         defer { isCreating = false }
         do {
             _ = try await APIClient.shared.createClub(name: name, description: nil)
-            successMessage = "\"\(name)\" has been created."
             newClubName = ""
+            alertMessage = "\"\(name)\" has been created."
             await loadClubs()
         } catch {
-            errorMessage = "Could not create club. Please try again."
+            alertMessage = "Could not create club. Please try again."
         }
     }
 
     private func requestToJoin(_ club: APIClient.PublicClub) async {
+        confirmJoinClub = nil
         do {
             try await APIClient.shared.requestToJoinClub(clubId: club.id)
-            successMessage = "Your request to join \"\(club.name)\" has been submitted. You'll gain access once an admin approves it."
+            alertMessage = "Your request to join \"\(club.name)\" has been submitted. An admin will review it."
         } catch {
-            errorMessage = "Could not submit request. You may already be a member or have a pending request."
+            alertMessage = "Could not submit request. You may already be a member or have a pending request."
         }
     }
 
@@ -211,7 +172,7 @@ struct ManageClubsView: View {
             TokenStore.shared.clubName = nil
             await loadClubs()
         } catch {
-            errorMessage = "Failed to leave club."
+            alertMessage = "Failed to leave club."
         }
     }
 }
