@@ -10,7 +10,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class MessagesController(AppDbContext db, BlobService blob) : ControllerBase
+public class MessagesController(AppDbContext db, BlobService blob, ILogger<MessagesController> logger) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -37,10 +37,18 @@ public class MessagesController(AppDbContext db, BlobService blob) : ControllerB
 
         if (saved.Any(s => s.MediaUrl != null))
         {
-            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-            saved = saved.Select(s => s.MediaUrl != null
-                ? s with { MediaUrl = blob.GenerateFreshReadUrl(s.MediaUrl, key, keyExpiry) }
-                : s).ToList();
+            try
+            {
+                var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+                saved = saved.Select(s => s.MediaUrl != null
+                    ? s with { MediaUrl = blob.GenerateFreshReadUrl(s.MediaUrl, key, keyExpiry) }
+                    : s).ToList();
+            }
+            catch (Exception ex)
+            {
+                // Local dev fallback — serve plain URLs if delegation key unavailable
+                logger.LogWarning(ex, "[GetSaved] could not get delegation key; serving plain URLs");
+            }
         }
 
         return saved;

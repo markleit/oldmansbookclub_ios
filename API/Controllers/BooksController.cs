@@ -178,11 +178,20 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         if (messages.Any(m => m.MediaUrl != null))
         {
             var t2 = sw.ElapsedMilliseconds;
-            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-            logger.LogInformation("[GetMessages] delegation key: {Ms}ms", sw.ElapsedMilliseconds - t2);
-            messages = messages.Select(m => m.MediaUrl != null
-                ? m with { MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry) }
-                : m).ToList();
+            try
+            {
+                var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+                logger.LogInformation("[GetMessages] delegation key: {Ms}ms", sw.ElapsedMilliseconds - t2);
+                messages = messages.Select(m => m.MediaUrl != null
+                    ? m with { MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry) }
+                    : m).ToList();
+            }
+            catch (Exception ex)
+            {
+                // Delegation key unavailable (e.g. local dev without Storage Blob Delegator role).
+                // Return messages with plain URLs — images won't render but chat history loads.
+                logger.LogWarning(ex, "[GetMessages] could not get delegation key; serving plain URLs");
+            }
         }
 
         logger.LogInformation("[GetMessages] total: {Ms}ms", sw.ElapsedMilliseconds);

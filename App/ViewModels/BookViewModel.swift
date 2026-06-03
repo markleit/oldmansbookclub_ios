@@ -191,11 +191,19 @@ final class BookViewModel: ObservableObject {
         isUploading = true
         defer { isUploading = false }
         do {
+            print("[sendVideo] videoUrl=\(videoUrl) fileExists=\(FileManager.default.fileExists(atPath: videoUrl.path))")
             let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
-            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+            print("[sendVideo] got uploadUrl, mediaUrl=\(response.mediaUrl)")
+            guard let uploadUrl = URL(string: response.uploadUrl) else {
+                print("[sendVideo] failed to parse uploadUrl string")
+                return
+            }
             try await APIClient.shared.uploadMediaFile(at: videoUrl, to: uploadUrl, contentType: "video/mp4")
+            print("[sendVideo] upload complete, invoking SignalR")
             try await ChatService.shared.sendVideo(bookId: book.id, mediaUrl: response.mediaUrl)
+            print("[sendVideo] done")
         } catch {
+            print("[sendVideo] FAILED: \(error)")
             errorMessage = "Failed to send video."
         }
     }
