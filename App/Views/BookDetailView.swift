@@ -480,17 +480,8 @@ struct VoiceMessageBubble: View {
                         .frame(width: 44, height: 44)
                 }
 
-                if !audio.isExternalRouteActive {
-                    Button { audio.setSpeaker(!audio.speakerEnabled) } label: {
-                        Image(systemName: audio.speakerEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                            .font(.system(size: 22))
-                            .opacity(0.8)
-                            .frame(width: 44, height: 44)
-                    }
-                }
-
                 RoutePickerView(tintColor: isMe ? .white : .label)
-                    .frame(width: 36, height: 44)
+                    .frame(width: 44, height: 44)
             }
 
             Button {
