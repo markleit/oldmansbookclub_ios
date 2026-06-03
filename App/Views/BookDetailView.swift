@@ -416,11 +416,12 @@ struct VoiceMessageBubble: View {
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 6) {
+            controlsRow
             if showTranscription {
-                transcriptionView
-            } else {
-                audioView
+                Divider()
+                    .overlay(isPlaying || isMe ? Color.white.opacity(0.3) : Color(.systemGray3))
+                transcriptionContent
             }
         }
         .padding(.horizontal, 12)
@@ -428,13 +429,15 @@ struct VoiceMessageBubble: View {
         .background(isPlaying ? Color(red: 0.0, green: 0.35, blue: 0.95) : (isMe ? Color.blue : Color(.systemGray5)))
         .foregroundColor(isPlaying || isMe ? .white : .primary)
         .cornerRadius(16)
+        .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
+        .animation(.easeInOut(duration: 0.25), value: isPlaying)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
         .onDisappear {
             if isPlaying { audio.pause() }
         }
     }
 
-    private var audioView: some View {
+    private var controlsRow: some View {
         HStack(spacing: 4) {
             Button { audio.toggle(message: message) } label: {
                 if isPlaying && audio.isBuffering {
@@ -459,14 +462,10 @@ struct VoiceMessageBubble: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { value in
-                                guard isPlaying else { return }
-                                let fraction = value.location.x / geo.size.width
-                                audio.seek(to: fraction)
-                            }
-                    )
+                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                        guard isPlaying else { return }
+                        audio.seek(to: value.location.x / geo.size.width)
+                    })
                 }
                 .frame(height: 24)
 
@@ -495,69 +494,46 @@ struct VoiceMessageBubble: View {
             }
 
             Button {
-                if isPlaying { audio.pause() }
-                showTranscription = true
-                if transcription == nil && !isTranscribing {
+                showTranscription.toggle()
+                if showTranscription && transcription == nil && !isTranscribing {
                     Task { await transcribe() }
                 }
             } label: {
                 if isTranscribing {
-                    ProgressView().scaleEffect(0.65).frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    ProgressView().scaleEffect(0.65)
+                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                 } else {
-                    Image(systemName: "text.bubble")
+                    Image(systemName: showTranscription ? "text.bubble.fill" : "text.bubble")
                         .font(.system(size: isPlaying ? 22 : 16))
-                        .opacity(0.7)
                         .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                 }
             }
         }
         .frame(maxWidth: isPlaying ? .infinity : 180)
-        .animation(.easeInOut(duration: 0.25), value: isPlaying)
     }
 
-    private var transcriptionView: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Group {
-                if isTranscribing {
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.7)
-                        Text("Transcribing…")
-                            .font(.caption)
-                            .italic()
-                    }
-                } else if let text = transcription {
-                    Text(text)
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("Transcription unavailable.")
+    private var transcriptionContent: some View {
+        Group {
+            if isTranscribing {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Transcribing…")
                         .font(.caption)
                         .italic()
-                        .opacity(0.7)
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(spacing: 8) {
-                Button {
-                    audio.toggle(message: message)
-                } label: {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 32, height: 32)
-                }
-
-                Button {
-                    if isPlaying { audio.pause() }
-                    showTranscription = false
-                } label: {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 16))
-                        .frame(width: 32, height: 32)
-                }
+            } else if let text = transcription {
+                Text(text)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Transcription unavailable.")
+                    .font(.caption)
+                    .italic()
+                    .opacity(0.7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(minWidth: 220, maxWidth: 300)
     }
 
     private func formatDuration(_ seconds: Int) -> String {
