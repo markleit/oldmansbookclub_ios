@@ -540,11 +540,23 @@ struct VoiceMessageBubble: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                showTranscription = false
-            } label: {
-                Image(systemName: "waveform")
-                    .font(.system(size: 16))
+            VStack(spacing: 8) {
+                Button {
+                    audio.toggle(message: message)
+                } label: {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                }
+
+                Button {
+                    if isPlaying { audio.pause() }
+                    showTranscription = false
+                } label: {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 16))
+                        .frame(width: 32, height: 32)
+                }
             }
         }
         .frame(minWidth: 220, maxWidth: 300)
