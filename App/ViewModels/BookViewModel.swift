@@ -165,13 +165,12 @@ final class BookViewModel: ObservableObject {
 
     func sendPhoto() async {
         guard let image = pendingImage,
-              let data = image.resizedForUpload().jpegData(compressionQuality: 0.7),
-              let clubId = TokenStore.shared.clubId else { return }
+              let data = image.resizedForUpload().jpegData(compressionQuality: 0.7) else { return }
         pendingImage = nil
         isUploading = true
         defer { isUploading = false }
         do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
             guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
             try await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
@@ -181,13 +180,12 @@ final class BookViewModel: ObservableObject {
     }
 
     func sendVideo() async {
-        guard let videoUrl = pendingVideo,
-              let clubId = TokenStore.shared.clubId else { return }
+        guard let videoUrl = pendingVideo else { return }
         pendingVideo = nil
         isUploading = true
         defer { isUploading = false }
         do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
             guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMediaFile(at: videoUrl, to: uploadUrl, contentType: "video/mp4")
             try await ChatService.shared.sendVideo(bookId: book.id, mediaUrl: response.mediaUrl)
@@ -227,12 +225,11 @@ final class BookViewModel: ObservableObject {
         recordingStartTime = nil
         guard let (url, duration) = audioRecorder.stop() else { return }
         guard elapsed >= 0.5 else { return } // discard accidental taps
-        guard let data = try? Data(contentsOf: url),
-              let clubId = TokenStore.shared.clubId else { return }
+        guard let data = try? Data(contentsOf: url) else { return }
         isUploading = true
         defer { isUploading = false }
         do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: clubId)
+            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
             guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
             try await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
