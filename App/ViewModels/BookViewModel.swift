@@ -30,7 +30,6 @@ final class BookViewModel: ObservableObject {
     private var cacheKey: String { "messages_\(book.id)" }
 
     private var pendingByBody: [String: UUID] = [:]
-    private var pendingVoiceByMediaUrl: [String: UUID] = [:]
     private var currentlySendingVoice: Set<UUID> = []
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
@@ -144,15 +143,12 @@ final class BookViewModel: ObservableObject {
                 return
             }
 
-            // Voice deduplication: match optimistic message by the uploaded mediaUrl
+            // Voice deduplication: server echoes back clientId (= item.id), find and replace the optimistic bubble
             if message.type == .voice,
-               let mediaUrl = message.mediaUrl,
                message.senderId == TokenStore.shared.userId,
-               let clientId = self.pendingVoiceByMediaUrl[mediaUrl] {
-                self.pendingVoiceByMediaUrl.removeValue(forKey: mediaUrl)
-                if let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
-                    self.messages[idx] = message
-                }
+               let clientId = message.clientId,
+               let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
+                self.messages[idx] = message
                 return
             }
 
@@ -334,14 +330,12 @@ final class BookViewModel: ObservableObject {
             if let uploaded = item.uploadedMediaUrl {
                 // Upload already succeeded on a previous attempt — only SignalR needed
                 mediaUrl = uploaded
-                pendingVoiceByMediaUrl[mediaUrl] = item.id
             } else {
                 let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { return }
                 try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: "audio/mp4")
                 mediaUrl = response.mediaUrl
                 VoiceSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
-                pendingVoiceByMediaUrl[mediaUrl] = item.id
             }
             try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
             VoiceSendQueue.shared.remove(id: item.id)

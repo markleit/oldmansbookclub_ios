@@ -72,7 +72,8 @@ final class ChatService: ObservableObject {
                 durationSeconds: dto.durationSeconds,
                 sentAt: dto.sentAtDate,
                 isDeleted: dto.isDeleted,
-                isForwarded: dto.isForwarded
+                isForwarded: dto.isForwarded,
+                clientId: dto.clientId
             )
             await MainActor.run { onMessage?(message) }
         }
@@ -152,6 +153,7 @@ private struct MessageDto: Decodable {
     let sentAt: String
     let isDeleted: Bool
     let isForwarded: Bool
+    let clientId: UUID?
 
     var sentAtDate: Date {
         let f = ISO8601DateFormatter()

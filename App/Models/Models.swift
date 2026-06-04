@@ -61,6 +61,7 @@ struct Message: Identifiable, Codable {
     var isDeleted: Bool = false
     var isForwarded: Bool = false
     var sendState: MessageSendState? = nil  // local only — never sent to or received from server
+    var clientId: UUID? = nil               // local only — set on SignalR echo for dedup, nil elsewhere
 
     enum CodingKeys: String, CodingKey {
         case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded

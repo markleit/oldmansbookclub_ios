@@ -193,5 +193,5 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null) => new(
         m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,
         m.Type, m.Body, broadcastMediaUrl ?? m.MediaUrl, m.DurationSeconds, m.SentAt,
-        m.DeletedAt != null, m.IsForwarded);
+        m.DeletedAt != null, m.IsForwarded, m.ClientId);
 }

@@ -41,7 +41,8 @@ public record MessageDto(
     int? DurationSeconds,
     DateTime SentAt,
     bool IsDeleted,
-    bool IsForwarded
+    bool IsForwarded,
+    Guid? ClientId = null
 );
 
 public record SavedMessageDto(
