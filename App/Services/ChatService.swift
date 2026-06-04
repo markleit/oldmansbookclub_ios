@@ -8,6 +8,8 @@ final class ChatService: ObservableObject {
 
     nonisolated(unsafe) private var connection: HubConnection?
     nonisolated(unsafe) private(set) var currentBookId: UUID?
+    // Tracks an in-flight connect so concurrent callers (and send retries) can await it
+    nonisolated(unsafe) private var pendingConnect: Task<Void, Never>?
 
     var onMessageReceived: ((Message) -> Void)?
     var onMessageDeleted: ((UUID) -> Void)?
@@ -17,13 +19,30 @@ final class ChatService: ObservableObject {
     var isConnected: Bool { connection != nil }
 
     nonisolated func connect(bookId: UUID) async {
-        guard let token = TokenStore.shared.token else { return }
+        // Already connected and fully started for this book — nothing to do
+        if currentBookId == bookId, connection != nil, pendingConnect == nil { return }
+
+        // A connect for this book is already in flight — just await it
+        if currentBookId == bookId, let pending = pendingConnect {
+            await pending.value
+            return
+        }
 
         if currentBookId != bookId {
+            pendingConnect = nil
             await disconnect()
         }
 
         guard connection == nil else { return }
+
+        let task = Task { await self._startConnection(bookId: bookId) }
+        pendingConnect = task
+        await task.value
+        pendingConnect = nil
+    }
+
+    private nonisolated func _startConnection(bookId: UUID) async {
+        guard let token = TokenStore.shared.token else { return }
 
         currentBookId = bookId
 
@@ -55,16 +74,12 @@ final class ChatService: ObservableObject {
                 isDeleted: dto.isDeleted,
                 isForwarded: dto.isForwarded
             )
-            await MainActor.run {
-                onMessage?(message)
-            }
+            await MainActor.run { onMessage?(message) }
         }
 
         let onDeleted = onMessageDeleted
         await connection?.on("MessageDeleted") { (payload: DeletedPayload) async in
-            await MainActor.run {
-                onDeleted?(payload.messageId)
-            }
+            await MainActor.run { onDeleted?(payload.messageId) }
         }
 
         await connection?.onReconnected {
@@ -86,34 +101,36 @@ final class ChatService: ObservableObject {
         try? await connection?.invoke(method: "JoinBook", arguments: bookId.uuidString)
     }
 
-    nonisolated func sendText(bookId: UUID, body: String) async throws {
+    // Waits for any in-flight connect to finish, then validates the connection is ready.
+    // All send methods call this so they never race against an unstarted connection.
+    private nonisolated func readyConnection() async throws -> HubConnection {
+        await pendingConnect?.value
         guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
+        return conn
+    }
+
+    nonisolated func sendText(bookId: UUID, body: String) async throws {
+        try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
     }
 
     nonisolated func sendPhoto(bookId: UUID, mediaUrl: String) async throws {
-        guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
+        try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
     nonisolated func sendVideo(bookId: UUID, mediaUrl: String) async throws {
-        guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
+        try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
     nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async throws {
-        guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
+        try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
     }
 
     nonisolated func deleteMessage(messageId: UUID) async throws {
-        guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "DeleteMessage", arguments: messageId.uuidString)
+        try await readyConnection().invoke(method: "DeleteMessage", arguments: messageId.uuidString)
     }
 
     nonisolated func forwardMessage(bookId: UUID, messageId: UUID) async throws {
-        guard let conn = connection else { throw ChatError.notConnected }
-        try await conn.invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
+        try await readyConnection().invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
     }
 
     nonisolated func disconnect() async {
