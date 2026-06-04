@@ -1,8 +1,7 @@
 import SwiftUI
-import AVKit
 import UIKit
-import AVFoundation
 import AVKit
+import AVFoundation
 import Speech
 import UserNotifications
 
@@ -234,7 +233,18 @@ struct MessageRow: View {
             if !isMe { Spacer() }
         }
         .contextMenu {
-            if !message.isDeleted {
+            if message.sendState == .failed {
+                Button {
+                    Task { await viewModel.retryVoiceMessage(id: message.id) }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                Button(role: .destructive) {
+                    viewModel.cancelVoiceMessage(id: message.id)
+                } label: {
+                    Label("Cancel", systemImage: "xmark")
+                }
+            } else if !message.isDeleted && message.sendState == nil {
                 Button {
                     Task { await viewModel.saveMessage(id: message.id) }
                 } label: {
@@ -392,7 +402,12 @@ struct MessageRow: View {
             }
 
         case .voice:
-            VoiceMessageBubble(message: message, isMe: isMe)
+            VoiceMessageBubble(
+                message: message,
+                isMe: isMe,
+                onRetry: { Task { await viewModel.retryVoiceMessage(id: message.id) } },
+                onCancel: { viewModel.cancelVoiceMessage(id: message.id) }
+            )
 
         case .video:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
@@ -407,17 +422,34 @@ struct MessageRow: View {
 struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
+    var onRetry: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
     @State private var showTranscription = false
     @State private var transcription: String?
     @State private var isTranscribing = false
 
     private var isPlaying: Bool { audio.playingMessageId == message.id }
+    private var isSending: Bool { message.sendState == .sending }
+    private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             controlsRow
+            if isFailed {
+                HStack(spacing: 12) {
+                    Button { onRetry?() } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.caption.weight(.medium))
+                    }
+                    Button { onCancel?() } label: {
+                        Text("Cancel")
+                            .font(.caption)
+                            .foregroundColor(isMe ? .white.opacity(0.7) : .secondary)
+                    }
+                }
+            }
             if showTranscription {
                 Divider()
                     .overlay(isPlaying || isMe ? Color.white.opacity(0.3) : Color(.systemGray3))
@@ -439,14 +471,24 @@ struct VoiceMessageBubble: View {
 
     private var controlsRow: some View {
         HStack(spacing: 4) {
-            Button { audio.toggle(message: message) } label: {
-                if isPlaying && audio.isBuffering {
-                    ProgressView()
-                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
-                } else {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: isPlaying ? 28 : 20, weight: .semibold))
-                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+            if isSending {
+                ProgressView()
+                    .frame(width: 36, height: 36)
+            } else if isFailed {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundColor(isMe ? .white.opacity(0.85) : .orange)
+                    .frame(width: 36, height: 36)
+            } else {
+                Button { audio.toggle(message: message) } label: {
+                    if isPlaying && audio.isBuffering {
+                        ProgressView()
+                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    } else {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: isPlaying ? 28 : 20, weight: .semibold))
+                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    }
                 }
             }
 
@@ -484,19 +526,21 @@ struct VoiceMessageBubble: View {
                     .frame(width: 44, height: 44)
             }
 
-            Button {
-                showTranscription.toggle()
-                if showTranscription && transcription == nil && !isTranscribing {
-                    Task { await transcribe() }
-                }
-            } label: {
-                if isTranscribing {
-                    ProgressView().scaleEffect(0.65)
-                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
-                } else {
-                    Image(systemName: showTranscription ? "text.bubble.fill" : "text.bubble")
-                        .font(.system(size: isPlaying ? 22 : 16))
-                        .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+            if !isSending && !isFailed {
+                Button {
+                    showTranscription.toggle()
+                    if showTranscription && transcription == nil && !isTranscribing {
+                        Task { await transcribe() }
+                    }
+                } label: {
+                    if isTranscribing {
+                        ProgressView().scaleEffect(0.65)
+                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    } else {
+                        Image(systemName: showTranscription ? "text.bubble.fill" : "text.bubble")
+                            .font(.system(size: isPlaying ? 22 : 16))
+                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    }
                 }
             }
         }

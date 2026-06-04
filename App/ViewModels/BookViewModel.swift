@@ -30,6 +30,7 @@ final class BookViewModel: ObservableObject {
     private var cacheKey: String { "messages_\(book.id)" }
 
     private var pendingByBody: [String: UUID] = [:]
+    private var pendingVoiceByMediaUrl: [String: UUID] = [:]
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -65,6 +66,24 @@ final class BookViewModel: ObservableObject {
                 messages.insert(msg, at: 0)
             }
             CacheService.shared.save(fetched, key: cacheKey)
+
+            // Restore any voice messages that were pending when the app was last closed
+            let pendingVoice = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
+            for item in pendingVoice where !messages.contains(where: { $0.id == item.id }) {
+                guard let userId = TokenStore.shared.userId else { continue }
+                let restored = Message(
+                    id: item.id,
+                    clubId: item.clubId,
+                    senderId: userId,
+                    senderName: TokenStore.shared.displayName ?? "",
+                    type: .voice,
+                    mediaUrl: item.localFileUrl.absoluteString,
+                    durationSeconds: item.duration,
+                    sentAt: Date(),
+                    sendState: .failed
+                )
+                messages.insert(restored, at: 0)
+            }
         } catch is CancellationError {
             isLoadingMessages = false
             return
@@ -93,10 +112,23 @@ final class BookViewModel: ObservableObject {
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
 
+            // Text deduplication: match outgoing optimistic message by body
             if let body = message.body,
                message.senderId == TokenStore.shared.userId,
                let clientId = self.pendingByBody[body] {
                 self.pendingByBody.removeValue(forKey: body)
+                if let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
+                    self.messages[idx] = message
+                }
+                return
+            }
+
+            // Voice deduplication: match optimistic message by the uploaded mediaUrl
+            if message.type == .voice,
+               let mediaUrl = message.mediaUrl,
+               message.senderId == TokenStore.shared.userId,
+               let clientId = self.pendingVoiceByMediaUrl[mediaUrl] {
+                self.pendingVoiceByMediaUrl.removeValue(forKey: mediaUrl)
                 if let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
                     self.messages[idx] = message
                 }
@@ -223,18 +255,92 @@ final class BookViewModel: ObservableObject {
         isRecording = false
         let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartTime = nil
-        guard let (url, duration) = audioRecorder.stop() else { return }
-        guard elapsed >= 0.5 else { return } // discard accidental taps
-        guard let data = try? Data(contentsOf: url) else { return }
-        isUploading = true
-        defer { isUploading = false }
+        guard let (tempUrl, duration) = audioRecorder.stop() else { return }
+        guard elapsed >= 0.5 else { return }
+        guard let persistentUrl = VoiceSendQueue.shared.moveToQueue(from: tempUrl),
+              let userId = TokenStore.shared.userId else { return }
+
+        let localId = UUID()
+        let optimistic = Message(
+            id: localId,
+            clubId: book.clubId,
+            senderId: userId,
+            senderName: TokenStore.shared.displayName ?? "",
+            type: .voice,
+            mediaUrl: persistentUrl.absoluteString,
+            durationSeconds: duration,
+            sentAt: Date(),
+            sendState: .sending
+        )
+        messages.insert(optimistic, at: 0)
+
+        let item = VoiceQueueItem(
+            id: localId,
+            bookId: book.id,
+            clubId: book.clubId,
+            fileName: persistentUrl.lastPathComponent,
+            duration: duration,
+            uploadedMediaUrl: nil,
+            retryCount: 0
+        )
+        VoiceSendQueue.shared.enqueue(item)
+        await sendVoiceItem(item)
+    }
+
+    func retryVoiceMessage(id: UUID) async {
+        guard let item = VoiceSendQueue.shared.items.first(where: { $0.id == id }) else { return }
+        if let idx = messages.firstIndex(where: { $0.id == id }) {
+            messages[idx].sendState = .sending
+        }
+        await sendVoiceItem(item)
+    }
+
+    func cancelVoiceMessage(id: UUID) {
+        if let item = VoiceSendQueue.shared.items.first(where: { $0.id == id }) {
+            VoiceSendQueue.shared.cleanupFile(for: item)
+            VoiceSendQueue.shared.remove(id: id)
+        }
+        messages.removeAll { $0.id == id }
+    }
+
+    private func sendVoiceItem(_ item: VoiceQueueItem) async {
         do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
-            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-            try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "audio/mp4")
-            try await ChatService.shared.sendVoice(bookId: book.id, mediaUrl: response.mediaUrl, durationSeconds: duration)
+            let mediaUrl: String
+            if let uploaded = item.uploadedMediaUrl {
+                // Upload already succeeded on a previous attempt — only SignalR needed
+                mediaUrl = uploaded
+                pendingVoiceByMediaUrl[mediaUrl] = item.id
+            } else {
+                let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId)
+                guard let uploadUrl = URL(string: response.uploadUrl) else { return }
+                try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: "audio/mp4")
+                mediaUrl = response.mediaUrl
+                VoiceSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
+                pendingVoiceByMediaUrl[mediaUrl] = item.id
+            }
+            try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration)
+            VoiceSendQueue.shared.remove(id: item.id)
+            VoiceSendQueue.shared.cleanupFile(for: item)
+            // Server echo will replace the optimistic message via onMessageReceived;
+            // clear sendState so the bubble shows as normal in the brief window before echo arrives
+            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                messages[idx].sendState = nil
+            }
         } catch {
-            errorMessage = "Failed to send voice message."
+            VoiceSendQueue.shared.incrementRetry(id: item.id)
+            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                messages[idx].sendState = .failed
+            }
+        }
+    }
+
+    private func flushPendingVoice() async {
+        let pending = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
+        for item in pending {
+            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                messages[idx].sendState = .sending
+            }
+            await sendVoiceItem(item)
         }
     }
 
@@ -335,7 +441,10 @@ final class BookViewModel: ObservableObject {
             let wasOffline = prevStatus.map { $0 != .satisfied } ?? false
             prevStatus = path.status
             guard wasOffline, path.status == .satisfied else { return }
-            Task { await self?.load() }
+            Task {
+                await self?.load()
+                await self?.flushPendingVoice()
+            }
         }
         monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }

@@ -43,6 +43,10 @@ struct User: Identifiable, Codable {
     var avatarUrl: String?
 }
 
+enum MessageSendState: String, Codable {
+    case sending, failed
+}
+
 struct Message: Identifiable, Codable {
     let id: UUID
     var clubId: UUID
@@ -56,6 +60,11 @@ struct Message: Identifiable, Codable {
     var sentAt: Date
     var isDeleted: Bool = false
     var isForwarded: Bool = false
+    var sendState: MessageSendState? = nil  // local only — never sent to or received from server
+
+    enum CodingKeys: String, CodingKey {
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded
+    }
 }
 
 extension Message {
