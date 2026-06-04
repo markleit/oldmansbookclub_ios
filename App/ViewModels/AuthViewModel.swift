@@ -149,6 +149,7 @@ final class AuthViewModel: ObservableObject {
             isAdmin: response.user.isAdmin,
             isClubAdmin: response.user.isClubAdmin
         )
+        UserDefaults.standard.set(response.user.tapToTalk, forKey: "tapToTalkEnabled")
         isAuthenticated = true
     }
 

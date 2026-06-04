@@ -27,6 +27,7 @@ final class ProfileViewModel: ObservableObject {
         TokenStore.shared.displayName = user.displayName
         TokenStore.shared.nickname = user.nickname
         TokenStore.shared.avatarUrl = user.avatarUrl
+        UserDefaults.standard.set(user.tapToTalk, forKey: "tapToTalkEnabled")
 
         guard let urlStr = user.avatarUrl, let url = URL(string: urlStr) else { return }
         if let cached = ImageCache.shared[url] { loadedAvatarImage = cached; return }

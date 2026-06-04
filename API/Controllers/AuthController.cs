@@ -28,7 +28,7 @@ public class AuthController(
             ? await blob.GenerateAvatarReadUrlAsync(u.Id)
             : null;
         var isClubAdmin = await db.Memberships.AnyAsync(m => m.UserId == u.Id && m.IsClubAdmin);
-        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin);
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin, u.TapToTalk);
     }
 
     [HttpPost("demo-login")]

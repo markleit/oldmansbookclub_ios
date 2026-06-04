@@ -56,6 +56,7 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
             if (!IsOwnBlobUrl(req.AvatarUrl)) return BadRequest("Invalid avatar URL.");
             user.AvatarUrl = req.AvatarUrl;
         }
+        if (req.TapToTalk.HasValue) user.TapToTalk = req.TapToTalk.Value;
 
         await db.SaveChangesAsync();
         return await ToDto(user);
@@ -148,6 +149,6 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
         var avatarUrl = u.AvatarUrl is not null
             ? await blob.GenerateAvatarReadUrlAsync(u.Id)
             : null;
-        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin);
+        return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin, u.TapToTalk);
     }
 }
