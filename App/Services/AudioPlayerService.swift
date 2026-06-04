@@ -114,6 +114,7 @@ final class AudioPlayerService: ObservableObject {
         isBuffering = false
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private func startTimer() {

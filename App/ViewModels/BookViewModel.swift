@@ -214,7 +214,7 @@ final class BookViewModel: ObservableObject {
             isRecording = true
             recordingStartTime = Date()
         } catch {
-            errorMessage = "Could not start recording."
+            errorMessage = "Could not start recording: \(error.localizedDescription)"
         }
     }
 
