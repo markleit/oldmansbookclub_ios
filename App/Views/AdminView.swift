@@ -391,7 +391,8 @@ struct AdminView: View {
                 members[idx] = APIClient.UserResponse(
                     id: m.id, displayName: m.displayName,
                     nickname: m.nickname, avatarUrl: m.avatarUrl,
-                    isAdmin: m.isAdmin, isClubAdmin: isClubAdmin)
+                    isAdmin: m.isAdmin, isClubAdmin: isClubAdmin,
+                    preferences: m.preferences)
             }
         } catch {
             errorMessage = "Failed to update club admin status."
@@ -417,7 +418,8 @@ struct AdminView: View {
                 members[idx] = APIClient.UserResponse(
                     id: m.id, displayName: m.displayName,
                     nickname: m.nickname, avatarUrl: m.avatarUrl,
-                    isAdmin: isAdmin, isClubAdmin: m.isClubAdmin)
+                    isAdmin: isAdmin, isClubAdmin: m.isClubAdmin,
+                    preferences: m.preferences)
             }
             if id == myId {
                 TokenStore.shared.isAdmin = isAdmin
