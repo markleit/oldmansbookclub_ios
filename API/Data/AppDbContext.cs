@@ -38,6 +38,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(u => u.AppleSubject)
             .IsUnique();
 
+        modelBuilder.Entity<User>()
+            .OwnsOne(u => u.Preferences, b => b.ToJson());
+
         modelBuilder.Entity<SavedMessage>()
             .HasIndex(s => new { s.UserId, s.MessageId })
             .IsUnique();

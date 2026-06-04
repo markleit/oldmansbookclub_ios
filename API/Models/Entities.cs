@@ -14,11 +14,17 @@ public class User
     [MaxLength(2048)] public string? AppleRefreshToken { get; set; }
     public bool IsApproved { get; set; } = false;
     public bool IsAdmin { get; set; } = false;
-    public bool TapToTalk { get; set; } = false;
+    public UserPreferences Preferences { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public ICollection<Membership> Memberships { get; set; } = [];
 
     public string EffectiveName => Nickname ?? DisplayName;
+}
+
+// Stored as a JSON column — add new settings here, no migration needed
+public class UserPreferences
+{
+    public bool TapToTalk { get; set; } = false;
 }
 
 public class Club

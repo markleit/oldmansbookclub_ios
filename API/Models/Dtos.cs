@@ -12,13 +12,16 @@ public record DevLoginRequest(string DisplayName);
 public record DemoLoginRequest(string Passphrase);
 public record AuthResponse(string AccessToken, UserDto User);
 
-public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin, bool IsClubAdmin, bool TapToTalk);
+public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin, bool IsClubAdmin, UserPreferencesDto Preferences);
+public record UserPreferencesDto(bool TapToTalk);
+
 public record PendingUserDto(Guid Id, string DisplayName, string? Email, DateTime CreatedAt);
 public record UpdateProfileRequest(
     [MaxLength(200)] string? DisplayName,
     [MaxLength(50)] string? Nickname,
     [MaxLength(2048)] string? AvatarUrl,
-    bool? TapToTalk);
+    UpdatePreferencesRequest? Preferences);
+public record UpdatePreferencesRequest(bool? TapToTalk);
 
 public record CreateClubRequest(
     [Required, MaxLength(200)] string Name,

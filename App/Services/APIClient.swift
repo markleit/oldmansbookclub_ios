@@ -102,6 +102,10 @@ final class APIClient {
         let user: UserResponse
     }
 
+    struct UserPreferences: Decodable {
+        let tapToTalk: Bool
+    }
+
     struct UserResponse: Decodable {
         let id: UUID
         let displayName: String
@@ -109,7 +113,7 @@ final class APIClient {
         let avatarUrl: String?
         let isAdmin: Bool
         let isClubAdmin: Bool
-        let tapToTalk: Bool
+        let preferences: UserPreferences
     }
 
     func signInWithApple(identityToken: String, displayName: String, email: String?, clubName: String? = nil, joinClubId: UUID? = nil, authorizationCode: String? = nil) async throws -> AuthResponse {
@@ -261,7 +265,11 @@ final class APIClient {
         let displayName: String?
         let nickname: String?
         let avatarUrl: String?
-        let tapToTalk: Bool?
+        let preferences: UpdatePreferencesRequest?
+
+        struct UpdatePreferencesRequest: Encodable {
+            let tapToTalk: Bool?
+        }
     }
 
     func getMe() async throws -> UserResponse {
@@ -274,7 +282,8 @@ final class APIClient {
     }
 
     func updateProfile(displayName: String?, nickname: String?, avatarUrl: String?, tapToTalk: Bool? = nil) async throws -> UserResponse {
-        let body = UpdateProfileRequest(displayName: displayName, nickname: nickname, avatarUrl: avatarUrl, tapToTalk: tapToTalk)
+        let prefs = tapToTalk.map { UpdateProfileRequest.UpdatePreferencesRequest(tapToTalk: $0) }
+        let body = UpdateProfileRequest(displayName: displayName, nickname: nickname, avatarUrl: avatarUrl, preferences: prefs)
         return try await patch(path: "/users/me", body: body)
     }
 
