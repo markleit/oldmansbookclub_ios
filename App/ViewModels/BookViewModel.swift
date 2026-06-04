@@ -31,6 +31,7 @@ final class BookViewModel: ObservableObject {
 
     private var pendingByBody: [String: UUID] = [:]
     private var pendingVoiceByMediaUrl: [String: UUID] = [:]
+    private var currentlySendingVoice: Set<UUID> = []
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -90,6 +91,23 @@ final class BookViewModel: ObservableObject {
         } catch {
             if hasCachedState {
                 isOffline = true
+                // Keep any pending voice items visible while offline
+                let pendingVoice = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
+                for item in pendingVoice where !messages.contains(where: { $0.id == item.id }) {
+                    guard let userId = TokenStore.shared.userId else { continue }
+                    let restored = Message(
+                        id: item.id,
+                        clubId: item.clubId,
+                        senderId: userId,
+                        senderName: TokenStore.shared.displayName ?? "",
+                        type: .voice,
+                        mediaUrl: item.localFileUrl.absoluteString,
+                        durationSeconds: item.duration,
+                        sentAt: Date(),
+                        sendState: .failed
+                    )
+                    messages.insert(restored, at: 0)
+                }
             } else {
                 errorMessage = "Failed to load discussion."
             }
@@ -111,6 +129,9 @@ final class BookViewModel: ObservableObject {
 
         ChatService.shared.onMessageReceived = { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
+
+            // Drop SignalR replays on auto-reconnect (same server ID already in list)
+            guard !self.messages.contains(where: { $0.id == message.id }) else { return }
 
             // Text deduplication: match outgoing optimistic message by body
             if let body = message.body,
@@ -151,6 +172,7 @@ final class BookViewModel: ObservableObject {
         }
 
         await ChatService.shared.connect(bookId: book.id)
+        await flushPendingVoice()
     }
 
     func sendMessage() async {
@@ -304,6 +326,9 @@ final class BookViewModel: ObservableObject {
     }
 
     private func sendVoiceItem(_ item: VoiceQueueItem) async {
+        guard !currentlySendingVoice.contains(item.id) else { return }
+        currentlySendingVoice.insert(item.id)
+        defer { currentlySendingVoice.remove(item.id) }
         do {
             let mediaUrl: String
             if let uploaded = item.uploadedMediaUrl {
@@ -318,7 +343,7 @@ final class BookViewModel: ObservableObject {
                 VoiceSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
                 pendingVoiceByMediaUrl[mediaUrl] = item.id
             }
-            try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration)
+            try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
             VoiceSendQueue.shared.remove(id: item.id)
             VoiceSendQueue.shared.cleanupFile(for: item)
             // Server echo will replace the optimistic message via onMessageReceived;
@@ -441,10 +466,7 @@ final class BookViewModel: ObservableObject {
             let wasOffline = prevStatus.map { $0 != .satisfied } ?? false
             prevStatus = path.status
             guard wasOffline, path.status == .satisfied else { return }
-            Task {
-                await self?.load()
-                await self?.flushPendingVoice()
-            }
+            Task { await self?.load() }
         }
         monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }

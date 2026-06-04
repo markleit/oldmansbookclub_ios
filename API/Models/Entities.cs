@@ -65,6 +65,7 @@ public class Message
     public DateTime SentAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
     public bool IsForwarded { get; set; } = false;
+    public Guid? ClientId { get; set; }
 }
 
 public enum MessageType { Text, Voice, Photo, Video }

@@ -30,11 +30,32 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds)
+    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
+
+        if (clientId.HasValue)
+        {
+            var userId = GetUserId();
+            var existing = await db.Messages
+                .Include(m => m.Sender)
+                .FirstOrDefaultAsync(m => m.ClientId == clientId && m.SenderId == userId);
+            if (existing != null)
+            {
+                string? broadcastUrl = existing.MediaUrl;
+                if (broadcastUrl != null)
+                {
+                    var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+                    broadcastUrl = blob.GenerateFreshReadUrl(broadcastUrl, key, keyExpiry);
+                }
+                await Clients.Group(bookId.ToString())
+                    .SendAsync("NewMessage", ToDto(existing, existing.Sender.EffectiveName, existing.Sender.AvatarUrl, broadcastUrl));
+                return;
+            }
+        }
+
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Voice,
-            mediaUrl: mediaUrl, durationSeconds: durationSeconds);
+            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
@@ -103,7 +124,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     }
 
     private async Task<(MessageDto dto, string bookTitle)> SaveMessageAsync(Guid bookId, MessageType type,
-        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false)
+        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false, Guid? clientId = null)
     {
         var userId = GetUserId();
         var user = await db.Users.FindAsync(userId)
@@ -127,7 +148,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             Body = body,
             MediaUrl = mediaUrl,
             DurationSeconds = durationSeconds,
-            IsForwarded = isForwarded
+            IsForwarded = isForwarded,
+            ClientId = clientId
         };
 
         db.Messages.Add(message);

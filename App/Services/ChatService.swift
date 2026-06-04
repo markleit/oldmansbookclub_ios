@@ -121,8 +121,8 @@ final class ChatService: ObservableObject {
         try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
     }
 
-    nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int) async throws {
-        try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds)
+    nonisolated func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID) async throws {
+        try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString)
     }
 
     nonisolated func deleteMessage(messageId: UUID) async throws {

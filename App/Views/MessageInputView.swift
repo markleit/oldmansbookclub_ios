@@ -33,14 +33,6 @@ struct MessageInputView: View {
         VStack(spacing: 0) {
             Divider()
 
-            if isOffline {
-                Label("You're offline — messages are read-only", systemImage: "wifi.slash")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemGray6))
-            } else {
                 // Pending image thumbnail
                 if let image = pendingImage {
                     HStack {
@@ -163,7 +155,6 @@ struct MessageInputView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-            }
         }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
