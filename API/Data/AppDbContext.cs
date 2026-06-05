@@ -29,6 +29,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(m => new { m.BookId, m.SentAt });
 
         modelBuilder.Entity<Message>()
+            .HasIndex(m => m.ClientId)
+            .HasFilter("[ClientId] IS NOT NULL");
+
+        modelBuilder.Entity<Message>()
             .HasOne(m => m.Book)
             .WithMany(b => b.Messages)
             .HasForeignKey(m => m.BookId)

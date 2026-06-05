@@ -42,3 +42,22 @@ jobs:
             --subscription c6c735c0-e3e6-452d-871d-ba10e3e32ae9 \
             --src-path deploy.zip \
             --type zip
+
+      - name: Wait for readiness
+        run: |
+          set -e
+          URL="https://oldmansbookclub-api.azurewebsites.net/health/ready"
+          echo "Polling $URL (90s deadline)…"
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/ready.out -w "%{http_code}" "$URL" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "Ready after ${i} attempt(s)."
+              cat /tmp/ready.out
+              exit 0
+            fi
+            echo "Attempt ${i}: HTTP $code"
+            sleep 3
+          done
+          echo "::error::API never became ready (last status: $code). Likely a migration or DB failure — check App Service logs."
+          cat /tmp/ready.out || true
+          exit 1

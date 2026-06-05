@@ -28,6 +28,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"),
         sql => sql.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorNumbersToAdd: null)));
 
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("database", tags: ["ready"]);
+
 // Azure SignalR
 builder.Services.AddSignalR()
     .AddJsonProtocol(options =>
@@ -136,13 +139,16 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat");
-app.MapGet("/health", () => Results.Ok("healthy"));
 
-// Run migration in background after app starts so startup probe succeeds
-_ = Task.Run(async () =>
+// Liveness — no dependencies. App Service / orchestrators use this to know the process is up.
+app.MapGet("/health", () => Results.Ok("healthy"));
+// Readiness — fails 503 if the DB is unreachable. Use for traffic gating.
+app.MapHealthChecks("/health/ready");
+
+// Run migrations synchronously before serving traffic. Fail-fast so a bad migration
+// doesn't leave the app reporting healthy with the wrong schema.
+using (var scope = app.Services.CreateScope())
 {
-    await Task.Delay(TimeSpan.FromSeconds(5)); // Let app fully start first
-    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<AppDbContext>>();
     try
@@ -152,8 +158,9 @@ _ = Task.Run(async () =>
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "Database migration failed.");
+        logger.LogCritical(ex, "Database migration failed — aborting startup.");
+        throw;
     }
-});
+}
 
 app.Run();

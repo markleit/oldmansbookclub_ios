@@ -63,12 +63,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         let userInfo = notification.request.content.userInfo
-        if let bookIdStr = userInfo["bookId"] as? String,
-           let bookId = UUID(uuidString: bookIdStr),
-           ChatService.shared.currentBookId == bookId {
-            completionHandler([])
+        guard let bookIdStr = userInfo["bookId"] as? String,
+              let bookId = UUID(uuidString: bookIdStr) else {
+            completionHandler([.banner, .list, .sound, .badge])
             return
         }
-        completionHandler([.banner, .list, .sound, .badge])
+        Task {
+            let active = await ChatService.shared.activeBookId
+            completionHandler(active == bookId ? [] : [.banner, .list, .sound, .badge])
+        }
     }
 }

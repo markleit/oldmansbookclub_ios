@@ -126,7 +126,7 @@ final class BookViewModel: ObservableObject {
             try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
         }
 
-        ChatService.shared.onMessageReceived = { [weak self] message in
+        await ChatService.shared.setOnMessageReceived { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
 
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
@@ -156,7 +156,7 @@ final class BookViewModel: ObservableObject {
             Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
         }
 
-        ChatService.shared.onMessageDeleted = { [weak self] messageId in
+        await ChatService.shared.setOnMessageDeleted { [weak self] messageId in
             guard let self else { return }
             if let idx = self.messages.firstIndex(where: { $0.id == messageId }) {
                 self.messages[idx].isDeleted = true
