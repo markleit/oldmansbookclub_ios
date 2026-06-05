@@ -6,4 +6,8 @@ public static class BroadcastDiagnostics
 {
     public static string? LastBroadcastMediaUrl;
     public static DateTime? LastBroadcastAt;
+    public static int BroadcastCount;
+    public static int SendPhotoMessageEntryCount;
+    public static string? LastSendPhotoError;
+    public static DateTime ProcessStart = DateTime.UtcNow;
 }

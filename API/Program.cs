@@ -148,7 +148,11 @@ app.MapGet("/debug/last-broadcast", () => new {
     url = BookClubApi.Services.BroadcastDiagnostics.LastBroadcastMediaUrl,
     hasQuery = BookClubApi.Services.BroadcastDiagnostics.LastBroadcastMediaUrl?.Contains('?') == true,
     length = BookClubApi.Services.BroadcastDiagnostics.LastBroadcastMediaUrl?.Length ?? 0,
-    at = BookClubApi.Services.BroadcastDiagnostics.LastBroadcastAt
+    at = BookClubApi.Services.BroadcastDiagnostics.LastBroadcastAt,
+    broadcastCount = BookClubApi.Services.BroadcastDiagnostics.BroadcastCount,
+    sendPhotoEntryCount = BookClubApi.Services.BroadcastDiagnostics.SendPhotoMessageEntryCount,
+    lastSendPhotoError = BookClubApi.Services.BroadcastDiagnostics.LastSendPhotoError,
+    processStart = BookClubApi.Services.BroadcastDiagnostics.ProcessStart
 });
 // Readiness — fails 503 if the DB is unreachable. Use for traffic gating.
 app.MapHealthChecks("/health/ready");

@@ -65,10 +65,19 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
     {
-        EnforceRateLimit();
-        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        System.Threading.Interlocked.Increment(ref BroadcastDiagnostics.SendPhotoMessageEntryCount);
+        try
+        {
+            EnforceRateLimit();
+            if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
+            var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
+            await BroadcastAndNotify(bookId, message, bookTitle);
+        }
+        catch (Exception ex)
+        {
+            BroadcastDiagnostics.LastSendPhotoError = $"{DateTime.UtcNow:O} {ex.GetType().Name}: {ex.Message}";
+            throw;
+        }
     }
 
     public async Task SendVideoMessage(Guid bookId, string mediaUrl)
@@ -185,6 +194,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     {
         BroadcastDiagnostics.LastBroadcastMediaUrl = dto.MediaUrl;
         BroadcastDiagnostics.LastBroadcastAt = DateTime.UtcNow;
+        System.Threading.Interlocked.Increment(ref BroadcastDiagnostics.BroadcastCount);
         Console.WriteLine($"[DIAG] BroadcastAndNotify: dto.MediaUrl hasQuery={dto.MediaUrl?.Contains('?') == true} length={dto.MediaUrl?.Length ?? 0}");
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
