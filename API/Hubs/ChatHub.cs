@@ -26,6 +26,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendTextMessage(Guid bookId, string body)
     {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
+            throw new HubException("Message must be 1–4000 characters.");
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
@@ -185,13 +187,26 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
 
+    private const string AllowedBlobHost = "oldmansbookclubstore.blob.core.windows.net";
+
     private static bool IsOwnBlobUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == "https" &&
-        uri.Host.EndsWith(".blob.core.windows.net");
+        uri.Host == AllowedBlobHost;
 
-    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null) => new(
-        m.Id, m.ClubId, m.SenderId, senderName, senderAvatarUrl,
-        m.Type, m.Body, broadcastMediaUrl ?? m.MediaUrl, m.DurationSeconds, m.SentAt,
-        m.DeletedAt != null, m.IsForwarded, m.ClientId);
+    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null)
+    {
+        var deleted = m.DeletedAt != null;
+        return new MessageDto(
+            m.Id, m.ClubId,
+            deleted ? Guid.Empty : m.SenderId,
+            deleted ? "" : senderName,
+            deleted ? null : senderAvatarUrl,
+            m.Type,
+            deleted ? null : m.Body,
+            deleted ? null : (broadcastMediaUrl ?? m.MediaUrl),
+            deleted ? null : m.DurationSeconds,
+            m.SentAt,
+            deleted, m.IsForwarded, m.ClientId);
+    }
 }

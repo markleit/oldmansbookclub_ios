@@ -82,9 +82,9 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     [HttpPost]
     public async Task<ActionResult<BookDto>> CreateBook([FromBody] CreateBookRequest request)
     {
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId);
-        if (!isMember) return Forbid();
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
 
         var book = new Book
         {
@@ -108,9 +108,9 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return NotFound();
 
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
-        if (!isMember) return Forbid();
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
 
         await db.Messages.Where(m => m.BookId == bookId).ExecuteDeleteAsync();
         db.Books.Remove(book);
@@ -127,9 +127,9 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return NotFound();
 
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
-        if (!isMember) return Forbid();
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
 
         book.Status = request.Status;
         book.FinishedAt = request.Status == "past" ? DateTime.UtcNow : null;
@@ -158,7 +158,8 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
-                m.Id, m.ClubId, m.SenderId,
+                m.Id, m.ClubId,
+                m.DeletedAt == null ? m.SenderId : Guid.Empty,
                 m.DeletedAt == null ? (m.Sender.Nickname ?? m.Sender.DisplayName) : "",
                 m.DeletedAt == null ? m.Sender.AvatarUrl : null,
                 m.Type,

@@ -56,7 +56,8 @@ public class ClubsController(AppDbContext db) : ControllerBase
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
-                m.Id, m.ClubId, m.SenderId,
+                m.Id, m.ClubId,
+                m.DeletedAt == null ? m.SenderId : Guid.Empty,
                 m.DeletedAt == null ? (m.Sender.Nickname ?? m.Sender.DisplayName) : "",
                 m.DeletedAt == null ? m.Sender.AvatarUrl : null,
                 m.Type,
@@ -111,9 +112,9 @@ public class ClubsController(AppDbContext db) : ControllerBase
     [HttpPost("{clubId}/members")]
     public async Task<IActionResult> AddMember(Guid clubId, [FromBody] Guid userId)
     {
-        var callerIsMember = await db.Memberships
-            .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId);
-        if (!callerIsMember) return Forbid();
+        var callerIsClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId && m.IsClubAdmin);
+        if (!callerIsClubAdmin) return Forbid();
 
         var targetExists = await db.Users.AnyAsync(u => u.Id == userId);
         if (!targetExists) return NotFound("User not found.");

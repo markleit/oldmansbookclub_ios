@@ -42,14 +42,15 @@ public class AuthController(
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == reviewerSubject);
         if (user is null)
         {
-            user = new User { AppleSubject = reviewerSubject, DisplayName = "Reviewer", IsApproved = true, IsAdmin = true };
+            user = new User { AppleSubject = reviewerSubject, DisplayName = "Reviewer", IsApproved = true };
             db.Users.Add(user);
             await db.SaveChangesAsync();
         }
-        else if (!user.IsApproved || !user.IsAdmin)
+        else if (!user.IsApproved || user.IsAdmin)
         {
+            // Approve if needed; defensively drop global admin in case prior version granted it
             user.IsApproved = true;
-            user.IsAdmin = true;
+            user.IsAdmin = false;
             await db.SaveChangesAsync();
         }
 
@@ -60,7 +61,7 @@ public class AuthController(
         var allClubIds = await db.Clubs.Select(c => c.Id).ToListAsync();
         var missing = allClubIds.Where(id => !existingClubIds.Contains(id)).ToList();
         foreach (var clubId in missing)
-            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = clubId, IsClubAdmin = true });
+            db.Memberships.Add(new Membership { UserId = user.Id, ClubId = clubId, IsClubAdmin = false });
         if (missing.Count > 0)
             await db.SaveChangesAsync();
 
@@ -71,6 +72,9 @@ public class AuthController(
     [HttpPost("dev-login")]
     public async Task<ActionResult<AuthResponse>> DevLogin([FromBody] DevLoginRequest request)
     {
+#if !DEBUG
+        return NotFound();
+#else
         if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
             return NotFound();
 
@@ -112,6 +116,7 @@ public class AuthController(
 
         var token = GenerateJwt(user);
         return Ok(new AuthResponse(token, await BuildUserDto(user)));
+#endif
     }
 
     [HttpPost("apple")]
