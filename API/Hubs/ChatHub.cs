@@ -163,18 +163,18 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await db.SaveChangesAsync();
 
         string? broadcastMediaUrl = mediaUrl;
+        Console.WriteLine($"[DIAG] SaveMessageAsync entered, mediaUrl={(mediaUrl == null ? "<null>" : "<set>")}, type={type}");
         if (mediaUrl != null)
         {
             try
             {
                 var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
                 broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
-                logger.LogInformation("[SaveMessageAsync] broadcast URL has query: {HasQuery}, length: {Length}",
-                    broadcastMediaUrl?.Contains('?') == true, broadcastMediaUrl?.Length ?? 0);
+                Console.WriteLine($"[DIAG] broadcast URL hasQuery={broadcastMediaUrl?.Contains('?') == true} length={broadcastMediaUrl?.Length ?? 0}");
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "[SaveMessageAsync] GenerateFreshReadUrl FAILED for {Url}", mediaUrl);
+                Console.WriteLine($"[DIAG] GenerateFreshReadUrl THREW: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
