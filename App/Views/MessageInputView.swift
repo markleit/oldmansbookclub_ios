@@ -138,23 +138,6 @@ struct MessageInputView: View {
                             .foregroundColor(.secondary)
                             .frame(width: 44, height: 44)
                     }
-                    .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]))
-                    .onChange(of: selectedPhotoItem) { item in
-                        Task {
-                            guard let item else { return }
-                            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
-                                if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
-                                    pendingVideo = video.url
-                                    pendingImage = nil
-                                }
-                            } else if let data = try? await item.loadTransferable(type: Data.self),
-                                      let image = UIImage(data: data) {
-                                pendingImage = image
-                                pendingVideo = nil
-                            }
-                            selectedPhotoItem = nil
-                        }
-                    }
 
                     // Growing text input
                     GrowingTextEditor(text: $text, placeholder: "Message…")
@@ -186,6 +169,23 @@ struct MessageInputView: View {
                 .padding(.vertical, 8)
         }
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isRecording)
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]))
+        .onChange(of: selectedPhotoItem) { item in
+            Task {
+                guard let item else { return }
+                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
+                    if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
+                        pendingVideo = video.url
+                        pendingImage = nil
+                    }
+                } else if let data = try? await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: data) {
+                    pendingImage = image
+                    pendingVideo = nil
+                }
+                selectedPhotoItem = nil
+            }
+        }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
                 pendingImage = image

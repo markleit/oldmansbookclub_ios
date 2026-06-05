@@ -90,3 +90,4 @@ Azure SQL firewall must allow your dev machine's IP — add a rule via `az sql s
 
 ## Known gaps / next up
 
+- **Saved Messages UX rework** — currently a row tap forwards immediately to the current chat. Replace with explicit per-row forward button + destination chat/book picker so users can choose the target and avoid accidental forwards.
