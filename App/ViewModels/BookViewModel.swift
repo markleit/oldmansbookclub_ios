@@ -115,15 +115,15 @@ final class BookViewModel: ObservableObject {
             }
 
             // Media deduplication (voice/photo/video): server echoes back clientId = optimistic Message.id.
-            // Replace the optimistic bubble and schedule cleanup of its local file.
+            // Echo is the confirmed-delivery signal — remove the queue entry, replace the
+            // optimistic bubble, and schedule cleanup of the local file.
             if (message.type == .voice || message.type == .photo || message.type == .video),
                message.senderId == TokenStore.shared.userId,
                let clientId = message.clientId,
                let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
                 let oldUrlString = self.messages[idx].mediaUrl
                 self.messages[idx] = message
-                // If the optimistic bubble's URL was a local file://, schedule deletion —
-                // delayed so the new SAS URL has time to start loading without a flash of broken image.
+                MediaSendQueue.shared.remove(id: clientId)
                 if let oldUrlString,
                    let oldUrl = URL(string: oldUrlString),
                    oldUrl.scheme == "file" {
@@ -375,12 +375,14 @@ final class BookViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(500))
                 try await invokeHub(for: item, mediaUrl: mediaUrl)
             }
-            // Remove from queue; file cleanup is deferred to the server echo (onMessageReceived)
-            // so the optimistic bubble keeps rendering until the SAS URL is ready.
-            MediaSendQueue.shared.remove(id: item.id)
+            // Don't remove from queue here — wait for the server echo to confirm delivery.
+            // Echo handler (onMessageReceived) removes the queue entry + schedules file
+            // cleanup. If no echo arrives within the timeout, the bubble flips to .failed
+            // and the queue entry stays so retry works.
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
                 messages[idx].sendState = nil
             }
+            scheduleEchoTimeout(for: item.id)
         } catch {
             MediaSendQueue.shared.incrementRetry(id: item.id)
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
@@ -401,6 +403,24 @@ final class BookViewModel: ObservableObject {
         case .video:
             try await ChatService.shared.sendVideo(
                 bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
+        }
+    }
+
+    // Safety net for silent SignalR failures: if invoke() returns success but the
+    // server echo never arrives within the timeout, treat the send as failed so the
+    // user knows (and can retry). The queue entry is preserved so retry works.
+    private func scheduleEchoTimeout(for itemId: UUID, after seconds: TimeInterval = 15) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard let self else { return }
+            // Echo would have replaced the optimistic message's id with the server's id;
+            // if we still find the optimistic id, no echo arrived in time.
+            guard let idx = self.messages.firstIndex(where: { $0.id == itemId }) else { return }
+            // Only flip to failed if not already terminal — covers user-cancelled or
+            // late-arriving echo edge cases.
+            if self.messages[idx].sendState == nil {
+                self.messages[idx].sendState = .failed
+            }
         }
     }
 
