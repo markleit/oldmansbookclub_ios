@@ -75,6 +75,9 @@ actor ChatService {
         connection = conn
 
         await conn.on("NewMessage") { [weak self] (dto: MessageDto) async in
+            #if DEBUG
+            print("[DIAG-WIRE] NewMessage mediaUrl hasQuery=\(dto.mediaUrl?.contains("?") == true) length=\(dto.mediaUrl?.count ?? 0)")
+            #endif
             let message = Message(
                 id: dto.id,
                 clubId: dto.clubId,

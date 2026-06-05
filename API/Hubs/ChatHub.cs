@@ -183,6 +183,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
     {
+        Console.WriteLine($"[DIAG] BroadcastAndNotify: dto.MediaUrl hasQuery={dto.MediaUrl?.Contains('?') == true} length={dto.MediaUrl?.Length ?? 0} preview={dto.MediaUrl?[..Math.Min(80, dto.MediaUrl.Length)]}");
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
         // Push to all members except the sender; iOS willPresent suppresses it if they're actively viewing that chat
