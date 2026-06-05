@@ -30,10 +30,11 @@ final class BookViewModel: ObservableObject {
     private var cacheKey: String { "messages_\(book.id)" }
 
     private var pendingByBody: [String: UUID] = [:]
-    private var currentlySendingVoice: Set<UUID> = []
+    private var currentlySendingMedia: Set<UUID> = []
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
+    private let maxAutoRetries = 5
 
     init(book: Book) {
         self.book = book
@@ -67,46 +68,16 @@ final class BookViewModel: ObservableObject {
             }
             CacheService.shared.save(fetched, key: cacheKey)
 
-            // Restore any voice messages that were pending when the app was last closed
-            let pendingVoice = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
-            for item in pendingVoice where !messages.contains(where: { $0.id == item.id }) {
-                guard let userId = TokenStore.shared.userId else { continue }
-                let restored = Message(
-                    id: item.id,
-                    clubId: item.clubId,
-                    senderId: userId,
-                    senderName: TokenStore.shared.displayName ?? "",
-                    type: .voice,
-                    mediaUrl: item.localFileUrl.absoluteString,
-                    durationSeconds: item.duration,
-                    sentAt: Date(),
-                    sendState: .failed
-                )
-                messages.insert(restored, at: 0)
-            }
+            // Restore any media messages that were pending when the app was last closed
+            restorePendingMediaBubbles()
         } catch is CancellationError {
             isLoadingMessages = false
             return
         } catch {
             if hasCachedState {
                 isOffline = true
-                // Keep any pending voice items visible while offline
-                let pendingVoice = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
-                for item in pendingVoice where !messages.contains(where: { $0.id == item.id }) {
-                    guard let userId = TokenStore.shared.userId else { continue }
-                    let restored = Message(
-                        id: item.id,
-                        clubId: item.clubId,
-                        senderId: userId,
-                        senderName: TokenStore.shared.displayName ?? "",
-                        type: .voice,
-                        mediaUrl: item.localFileUrl.absoluteString,
-                        durationSeconds: item.duration,
-                        sentAt: Date(),
-                        sendState: .failed
-                    )
-                    messages.insert(restored, at: 0)
-                }
+                // Keep any pending media items visible while offline
+                restorePendingMediaBubbles()
             } else {
                 errorMessage = "Failed to load discussion."
             }
@@ -143,12 +114,21 @@ final class BookViewModel: ObservableObject {
                 return
             }
 
-            // Voice deduplication: server echoes back clientId (= item.id), find and replace the optimistic bubble
-            if message.type == .voice,
+            // Media deduplication (voice/photo/video): server echoes back clientId = optimistic Message.id.
+            // Replace the optimistic bubble and schedule cleanup of its local file.
+            if (message.type == .voice || message.type == .photo || message.type == .video),
                message.senderId == TokenStore.shared.userId,
                let clientId = message.clientId,
                let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
+                let oldUrlString = self.messages[idx].mediaUrl
                 self.messages[idx] = message
+                // If the optimistic bubble's URL was a local file://, schedule deletion —
+                // delayed so the new SAS URL has time to start loading without a flash of broken image.
+                if let oldUrlString,
+                   let oldUrl = URL(string: oldUrlString),
+                   oldUrl.scheme == "file" {
+                    MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
+                }
                 return
             }
 
@@ -168,7 +148,35 @@ final class BookViewModel: ObservableObject {
         }
 
         await ChatService.shared.connect(bookId: book.id)
-        await flushPendingVoice()
+        await flushPendingMedia()
+    }
+
+    // Re-insert optimistic bubbles for any media items still in the queue. Marks them
+    // .failed by default — flushPendingMedia will flip them to .sending and resend.
+    private func restorePendingMediaBubbles() {
+        let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
+        guard let userId = TokenStore.shared.userId else { return }
+        for item in pending where !messages.contains(where: { $0.id == item.id }) {
+            let type: MessageType
+            switch item.kind {
+            case .voice: type = .voice
+            case .photo: type = .photo
+            case .video: type = .video
+            }
+            let restored = Message(
+                id: item.id,
+                clubId: item.clubId,
+                senderId: userId,
+                senderName: TokenStore.shared.displayName ?? "",
+                type: type,
+                mediaUrl: item.localFileUrl.absoluteString,
+                durationSeconds: item.durationSeconds,
+                sentAt: Date(),
+                sendState: .failed,
+                clientId: item.id
+            )
+            messages.insert(restored, at: 0)
+        }
     }
 
     func sendMessage() async {
@@ -212,33 +220,71 @@ final class BookViewModel: ObservableObject {
 
     func sendPhoto() async {
         guard let image = pendingImage,
-              let data = image.resizedForUpload().jpegData(compressionQuality: 0.7) else { return }
+              let data = image.resizedForUpload().jpegData(compressionQuality: 0.7),
+              let userId = TokenStore.shared.userId,
+              let persistentUrl = MediaSendQueue.shared.saveToQueue(data: data, extension: "jpg")
+        else { return }
         pendingImage = nil
-        isUploading = true
-        defer { isUploading = false }
-        do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
-            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-            try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
-            try await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
-        } catch {
-            errorMessage = "Failed to send photo."
-        }
+        await enqueueAndSendMedia(
+            kind: .photo, contentType: "image/jpeg", durationSeconds: nil,
+            persistentUrl: persistentUrl, userId: userId
+        )
     }
 
     func sendVideo() async {
-        guard let videoUrl = pendingVideo else { return }
+        guard let videoUrl = pendingVideo,
+              let userId = TokenStore.shared.userId,
+              let persistentUrl = MediaSendQueue.shared.moveToQueue(from: videoUrl, extension: "mp4")
+        else { return }
         pendingVideo = nil
-        isUploading = true
-        defer { isUploading = false }
-        do {
-            let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
-            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-            try await APIClient.shared.uploadMediaFile(at: videoUrl, to: uploadUrl, contentType: "video/mp4")
-            try await ChatService.shared.sendVideo(bookId: book.id, mediaUrl: response.mediaUrl)
-        } catch {
-            errorMessage = "Failed to send video."
+        await enqueueAndSendMedia(
+            kind: .video, contentType: "video/mp4", durationSeconds: nil,
+            persistentUrl: persistentUrl, userId: userId
+        )
+    }
+
+    // Shared optimistic-insert + enqueue + send entry point for all media kinds.
+    private func enqueueAndSendMedia(
+        kind: MediaQueueKind,
+        contentType: String,
+        durationSeconds: Int?,
+        persistentUrl: URL,
+        userId: UUID
+    ) async {
+        let localId = UUID()
+        let messageType: MessageType
+        switch kind {
+        case .voice: messageType = .voice
+        case .photo: messageType = .photo
+        case .video: messageType = .video
         }
+        let optimistic = Message(
+            id: localId,
+            clubId: book.clubId,
+            senderId: userId,
+            senderName: TokenStore.shared.displayName ?? "",
+            type: messageType,
+            mediaUrl: persistentUrl.absoluteString,
+            durationSeconds: durationSeconds,
+            sentAt: Date(),
+            sendState: .sending,
+            clientId: localId
+        )
+        messages.insert(optimistic, at: 0)
+
+        let item = MediaQueueItem(
+            id: localId,
+            bookId: book.id,
+            clubId: book.clubId,
+            kind: kind,
+            fileName: persistentUrl.lastPathComponent,
+            contentType: contentType,
+            durationSeconds: durationSeconds,
+            uploadedMediaUrl: nil,
+            retryCount: 0
+        )
+        MediaSendQueue.shared.enqueue(item)
+        await sendMediaItem(item)
     }
 
     func toggleRecording() async {
@@ -272,101 +318,99 @@ final class BookViewModel: ObservableObject {
         recordingStartTime = nil
         guard let (tempUrl, duration) = audioRecorder.stop() else { return }
         guard elapsed >= 0.5 else { return }
-        guard let persistentUrl = VoiceSendQueue.shared.moveToQueue(from: tempUrl),
+        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: tempUrl, extension: "m4a"),
               let userId = TokenStore.shared.userId else { return }
 
-        let localId = UUID()
-        let optimistic = Message(
-            id: localId,
-            clubId: book.clubId,
-            senderId: userId,
-            senderName: TokenStore.shared.displayName ?? "",
-            type: .voice,
-            mediaUrl: persistentUrl.absoluteString,
-            durationSeconds: duration,
-            sentAt: Date(),
-            sendState: .sending
+        await enqueueAndSendMedia(
+            kind: .voice, contentType: "audio/mp4", durationSeconds: duration,
+            persistentUrl: persistentUrl, userId: userId
         )
-        messages.insert(optimistic, at: 0)
-
-        let item = VoiceQueueItem(
-            id: localId,
-            bookId: book.id,
-            clubId: book.clubId,
-            fileName: persistentUrl.lastPathComponent,
-            duration: duration,
-            uploadedMediaUrl: nil,
-            retryCount: 0
-        )
-        VoiceSendQueue.shared.enqueue(item)
-        await sendVoiceItem(item)
     }
 
-    func retryVoiceMessage(id: UUID) async {
-        guard let item = VoiceSendQueue.shared.items.first(where: { $0.id == id }) else { return }
+    func retryMediaMessage(id: UUID) async {
+        guard let item = MediaSendQueue.shared.items.first(where: { $0.id == id }) else { return }
         if let idx = messages.firstIndex(where: { $0.id == id }) {
             messages[idx].sendState = .sending
         }
-        await sendVoiceItem(item)
+        await sendMediaItem(item)
     }
 
-    func cancelVoiceMessage(id: UUID) {
-        if let item = VoiceSendQueue.shared.items.first(where: { $0.id == id }) {
-            VoiceSendQueue.shared.cleanupFile(for: item)
-            VoiceSendQueue.shared.remove(id: id)
+    func cancelMediaMessage(id: UUID) {
+        if let item = MediaSendQueue.shared.items.first(where: { $0.id == id }) {
+            MediaSendQueue.shared.cleanupFile(for: item)
+            MediaSendQueue.shared.remove(id: id)
         }
         messages.removeAll { $0.id == id }
     }
 
-    private func sendVoiceItem(_ item: VoiceQueueItem) async {
-        guard !currentlySendingVoice.contains(item.id) else { return }
-        currentlySendingVoice.insert(item.id)
-        defer { currentlySendingVoice.remove(item.id) }
+    private func sendMediaItem(_ item: MediaQueueItem) async {
+        guard !currentlySendingMedia.contains(item.id) else { return }
+        guard item.retryCount < maxAutoRetries else {
+            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                messages[idx].sendState = .failed
+            }
+            return
+        }
+        currentlySendingMedia.insert(item.id)
+        defer { currentlySendingMedia.remove(item.id) }
         do {
             let mediaUrl: String
             if let uploaded = item.uploadedMediaUrl {
-                // Upload already succeeded on a previous attempt — only SignalR needed
+                // Upload succeeded on a previous attempt — only SignalR remains.
                 mediaUrl = uploaded
             } else {
-                let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId)
+                let ext = (item.fileName as NSString).pathExtension
+                let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-                try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: "audio/mp4")
+                try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: item.contentType)
                 mediaUrl = response.mediaUrl
-                VoiceSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
+                MediaSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
             }
             do {
-                try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
+                try await invokeHub(for: item, mediaUrl: mediaUrl)
             } catch {
-                // Disconnect first — onClosed may not have fired yet, so connection is non-nil
-                // but dead. connect() would return early without that explicit reset.
-                // Safe to retry because clientId idempotency key prevents server-side duplicates.
+                // Stale-connection recovery — clientId idempotency prevents server-side duplicates.
                 await ChatService.shared.disconnect()
                 await ChatService.shared.connect(bookId: item.bookId)
                 try? await Task.sleep(for: .milliseconds(500))
-                try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
+                try await invokeHub(for: item, mediaUrl: mediaUrl)
             }
-            VoiceSendQueue.shared.remove(id: item.id)
-            VoiceSendQueue.shared.cleanupFile(for: item)
-            // Server echo will replace the optimistic message via onMessageReceived;
-            // clear sendState so the bubble shows as normal in the brief window before echo arrives
+            // Remove from queue; file cleanup is deferred to the server echo (onMessageReceived)
+            // so the optimistic bubble keeps rendering until the SAS URL is ready.
+            MediaSendQueue.shared.remove(id: item.id)
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
                 messages[idx].sendState = nil
             }
         } catch {
-            VoiceSendQueue.shared.incrementRetry(id: item.id)
+            MediaSendQueue.shared.incrementRetry(id: item.id)
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
                 messages[idx].sendState = .failed
             }
         }
     }
 
-    private func flushPendingVoice() async {
-        let pending = VoiceSendQueue.shared.items.filter { $0.bookId == book.id }
+    private func invokeHub(for item: MediaQueueItem, mediaUrl: String) async throws {
+        switch item.kind {
+        case .voice:
+            try await ChatService.shared.sendVoice(
+                bookId: item.bookId, mediaUrl: mediaUrl,
+                durationSeconds: item.durationSeconds ?? 0, clientId: item.id)
+        case .photo:
+            try await ChatService.shared.sendPhoto(
+                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
+        case .video:
+            try await ChatService.shared.sendVideo(
+                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
+        }
+    }
+
+    private func flushPendingMedia() async {
+        let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
         for item in pending {
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
                 messages[idx].sendState = .sending
             }
-            await sendVoiceItem(item)
+            await sendMediaItem(item)
         }
     }
 

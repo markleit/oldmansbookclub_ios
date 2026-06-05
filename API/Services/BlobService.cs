@@ -22,9 +22,13 @@ public class BlobService
             new DefaultAzureCredential());
     }
 
-    public async Task<(string UploadUrl, string MediaUrl)> GenerateUploadUrlAsync(Guid clubId)
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { "m4a", "jpg", "jpeg", "mp4" };
+
+    public async Task<(string UploadUrl, string MediaUrl)> GenerateUploadUrlAsync(Guid clubId, string? extension = null)
     {
-        var blobName = $"{clubId}/{Guid.NewGuid()}.m4a";
+        var ext = (extension ?? "m4a").TrimStart('.');
+        if (!AllowedExtensions.Contains(ext)) ext = "m4a";  // safe default, container doesn't care
+        var blobName = $"{clubId}/{Guid.NewGuid()}.{ext.ToLowerInvariant()}";
         var uploadUrl = await GenerateUserDelegationSasAsync(MediaContainer, blobName,
             BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(10));
         // Plain URL — SAS is added fresh when serving messages, so it never expires in the DB

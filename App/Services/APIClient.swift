@@ -286,8 +286,10 @@ final class APIClient {
         let mediaUrl: String
     }
 
-    func getUploadUrl(clubId: UUID) async throws -> UploadUrlResponse {
-        try await post(path: "/media/upload-url?clubId=\(clubId)", body: EmptyRequest(), authenticated: true)
+    func getUploadUrl(clubId: UUID, ext: String? = nil) async throws -> UploadUrlResponse {
+        var path = "/media/upload-url?clubId=\(clubId)"
+        if let ext { path += "&ext=\(ext)" }
+        return try await post(path: path, body: EmptyRequest(), authenticated: true)
     }
 
     func getAvatarUploadUrl() async throws -> UploadUrlResponse {

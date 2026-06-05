@@ -169,12 +169,12 @@ actor ChatService {
         try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
     }
 
-    func sendPhoto(bookId: UUID, mediaUrl: String) async throws {
-        try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl)
+    func sendPhoto(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
+        try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
     }
 
-    func sendVideo(bookId: UUID, mediaUrl: String) async throws {
-        try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl)
+    func sendVideo(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
+        try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
     }
 
     func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID) async throws {

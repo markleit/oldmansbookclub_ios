@@ -237,12 +237,12 @@ struct MessageRow: View {
         .contextMenu {
             if message.sendState == .failed {
                 Button {
-                    Task { await viewModel.retryVoiceMessage(id: message.id) }
+                    Task { await viewModel.retryMediaMessage(id: message.id) }
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                 }
                 Button(role: .destructive) {
-                    viewModel.cancelVoiceMessage(id: message.id)
+                    viewModel.cancelMediaMessage(id: message.id)
                 } label: {
                     Label("Cancel", systemImage: "xmark")
                 }
@@ -379,41 +379,31 @@ struct MessageRow: View {
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
-                Button { showFullScreen = true } label: {
-                    CachedRemoteImage(url: url) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 200, height: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                        } else {
-                            Color(.systemGray5)
-                                .frame(width: 200, height: 200)
-                                .clipShape(RoundedRectangle(cornerRadius: 16))
-                                .overlay(
-                                    phase.isError
-                                        ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
-                                        : AnyView(ProgressView())
-                                )
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .contentShape(RoundedRectangle(cornerRadius: 16))
+                PhotoMessageBubble(
+                    url: url,
+                    sendState: message.sendState,
+                    onTap: { showFullScreen = true },
+                    onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
+                    onCancel: { viewModel.cancelMediaMessage(id: message.id) }
+                )
             }
 
         case .voice:
             VoiceMessageBubble(
                 message: message,
                 isMe: isMe,
-                onRetry: { Task { await viewModel.retryVoiceMessage(id: message.id) } },
-                onCancel: { viewModel.cancelVoiceMessage(id: message.id) }
+                onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
+                onCancel: { viewModel.cancelMediaMessage(id: message.id) }
             )
 
         case .video:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
-                VideoMessageBubble(url: url)
+                VideoMessageBubble(
+                    url: url,
+                    sendState: message.sendState,
+                    onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
+                    onCancel: { viewModel.cancelMediaMessage(id: message.id) }
+                )
             }
         case .unknown:
             EmptyView()
@@ -640,23 +630,132 @@ private func formatMessageDate(_ date: Date) -> String {
 
 struct VideoMessageBubble: View {
     let url: URL
+    var sendState: MessageSendState? = nil
+    var onRetry: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
     @State private var showFullScreen = false
 
+    private var isSending: Bool { sendState == .sending }
+    private var isFailed: Bool { sendState == .failed }
+
     var body: some View {
-        Button { showFullScreen = true } label: {
-            VideoThumbnailView(url: url)
-                .frame(width: 240, height: 180)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.white, .black.opacity(0.4))
-                }
+        ZStack(alignment: .bottomTrailing) {
+            Button {
+                guard !isSending && !isFailed else { return }
+                showFullScreen = true
+            } label: {
+                VideoThumbnailView(url: url)
+                    .frame(width: 240, height: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay {
+                        if !isSending && !isFailed {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 48))
+                                .foregroundStyle(.white, .black.opacity(0.4))
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .disabled(isSending || isFailed)
+            if isSending {
+                SendStateBadge(state: .sending)
+                    .padding(8)
+            } else if isFailed {
+                SendStateBadge(state: .failed, onRetry: onRetry, onCancel: onCancel)
+                    .padding(8)
+            }
         }
-        .buttonStyle(.plain)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
         .fullScreenCover(isPresented: $showFullScreen) {
             FullScreenVideoView(url: url)
+        }
+    }
+}
+
+// MARK: - PhotoMessageBubble
+
+struct PhotoMessageBubble: View {
+    let url: URL
+    var sendState: MessageSendState? = nil
+    var onTap: () -> Void
+    var onRetry: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
+
+    private var isSending: Bool { sendState == .sending }
+    private var isFailed: Bool { sendState == .failed }
+    private var isLocalFile: Bool { url.scheme == "file" }
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Button {
+                guard !isSending && !isFailed else { return }
+                onTap()
+            } label: {
+                imageContent
+                    .frame(width: 200, height: 200)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .disabled(isSending || isFailed)
+            if isSending {
+                SendStateBadge(state: .sending).padding(8)
+            } else if isFailed {
+                SendStateBadge(state: .failed, onRetry: onRetry, onCancel: onCancel).padding(8)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if isLocalFile, let image = UIImage(contentsOfFile: url.path) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            CachedRemoteImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    Color(.systemGray5)
+                        .overlay(
+                            phase.isError
+                                ? AnyView(Image(systemName: "photo").foregroundColor(.secondary))
+                                : AnyView(ProgressView())
+                        )
+                }
+            }
+        }
+    }
+}
+
+// Shared overlay for .sending / .failed bubbles. Sending → spinner badge.
+// Failed → exclamation icon; tap shows a small Retry/Cancel menu.
+struct SendStateBadge: View {
+    let state: MessageSendState
+    var onRetry: (() -> Void)? = nil
+    var onCancel: (() -> Void)? = nil
+
+    var body: some View {
+        switch state {
+        case .sending:
+            ProgressView()
+                .tint(.white)
+                .padding(8)
+                .background(Color.black.opacity(0.55))
+                .clipShape(Circle())
+        case .failed:
+            Menu {
+                Button { onRetry?() } label: { Label("Retry", systemImage: "arrow.clockwise") }
+                Button(role: .destructive) { onCancel?() } label: { Label("Cancel", systemImage: "xmark") }
+            } label: {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(.white, .red)
+                    .padding(4)
+                    .background(Color.black.opacity(0.3))
+                    .clipShape(Circle())
+            }
         }
     }
 }
