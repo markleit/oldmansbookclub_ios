@@ -56,7 +56,7 @@ final class ChatService: ObservableObject {
         connection = HubConnectionBuilder()
             .withUrl(url: url)
             .withAutomaticReconnect(retryDelays: [2, 5, 10, 30])
-            .withKeepAliveInterval(keepAliveInterval: 15)
+            .withKeepAliveInterval(keepAliveInterval: 5)
             .build()
 
         let onMessage = onMessageReceived

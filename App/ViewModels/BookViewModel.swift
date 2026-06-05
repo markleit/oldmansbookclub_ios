@@ -197,7 +197,8 @@ final class BookViewModel: ObservableObject {
 
         do {
             try await ChatService.shared.sendText(bookId: book.id, body: text)
-        } catch ChatError.notConnected {
+        } catch {
+            await ChatService.shared.disconnect()
             await ChatService.shared.connect(bookId: book.id)
             do {
                 try await ChatService.shared.sendText(bookId: book.id, body: text)
@@ -206,10 +207,6 @@ final class BookViewModel: ObservableObject {
                 pendingByBody.removeValue(forKey: text)
                 errorMessage = "Failed to send — connection lost. Please try again."
             }
-        } catch {
-            messages.removeAll { $0.id == clientId }
-            pendingByBody.removeValue(forKey: text)
-            errorMessage = "Failed to send message."
         }
     }
 
@@ -337,7 +334,17 @@ final class BookViewModel: ObservableObject {
                 mediaUrl = response.mediaUrl
                 VoiceSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
             }
-            try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
+            do {
+                try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
+            } catch {
+                // Disconnect first — onClosed may not have fired yet, so connection is non-nil
+                // but dead. connect() would return early without that explicit reset.
+                // Safe to retry because clientId idempotency key prevents server-side duplicates.
+                await ChatService.shared.disconnect()
+                await ChatService.shared.connect(bookId: item.bookId)
+                try? await Task.sleep(for: .milliseconds(500))
+                try await ChatService.shared.sendVoice(bookId: item.bookId, mediaUrl: mediaUrl, durationSeconds: item.duration, clientId: item.id)
+            }
             VoiceSendQueue.shared.remove(id: item.id)
             VoiceSendQueue.shared.cleanupFile(for: item)
             // Server echo will replace the optimistic message via onMessageReceived;

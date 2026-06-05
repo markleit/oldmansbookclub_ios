@@ -56,8 +56,17 @@ final class APIClient {
 
     private let session: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 10
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 30
+        config.waitsForConnectivity = true
+        return URLSession(configuration: config)
+    }()
+
+    private let uploadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 300  // 5 min ceiling for large video
+        config.waitsForConnectivity = true
         return URLSession(configuration: config)
     }()
 
@@ -294,7 +303,7 @@ final class APIClient {
         request.setValue("\(data.count)", forHTTPHeaderField: "Content-Length")
         request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
         request.httpBody = data
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await uploadSession.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
@@ -307,7 +316,7 @@ final class APIClient {
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("\(fileSize)", forHTTPHeaderField: "Content-Length")
         request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
-        let (_, response) = try await URLSession.shared.upload(for: request, fromFile: fileUrl)
+        let (_, response) = try await uploadSession.upload(for: request, fromFile: fileUrl)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }

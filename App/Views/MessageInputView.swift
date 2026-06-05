@@ -33,6 +33,35 @@ struct MessageInputView: View {
         VStack(spacing: 0) {
             Divider()
 
+                // Recording indicator for press-and-hold — finger covers the mic button,
+                // so surface a banner above the input row that's always visible
+                if !tapToTalk && isRecording {
+                    HStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.red.opacity(0.12))
+                                .frame(width: 80, height: 80)
+                                .scaleEffect(pulsing ? 1.3 : 1.0)
+                                .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulsing)
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 36, weight: .semibold))
+                                .foregroundColor(.red)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(formatElapsed(elapsedSeconds))
+                                .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                                .foregroundColor(.red)
+                            Text("Release to send")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 // Pending image thumbnail
                 if let image = pendingImage {
                     HStack {
@@ -156,6 +185,7 @@ struct MessageInputView: View {
                 .padding(.horizontal)
                 .padding(.vertical, 8)
         }
+        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isRecording)
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
                 pendingImage = image
