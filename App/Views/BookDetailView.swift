@@ -149,7 +149,9 @@ struct BookDetailView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
-                // Force-clear any stale connection from OS background suspension
+                // Mark stale immediately so any in-flight send waits for a rebuild,
+                // even if it races ahead of the disconnect/reload below.
+                await ChatService.shared.markStaleAfterBackground()
                 await ChatService.shared.disconnect()
                 await viewModel.load()
             }

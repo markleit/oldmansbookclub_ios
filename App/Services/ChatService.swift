@@ -10,6 +10,10 @@ actor ChatService {
     private var currentBookId: UUID?
     // Tracks an in-flight connect so concurrent callers (and send retries) can await it
     private var pendingConnect: Task<Void, Never>?
+    // Set by didBecomeActive — after a long iOS background the lib's connection.state()
+    // can report .Connected even when the underlying WebSocket is dead, so we don't
+    // trust state alone; the next send-side call forces a full disconnect + reconnect.
+    private var requiresRebuild: Bool = false
 
     // Callbacks are set by the view model. Stored here so we can rewire them after a
     // connection rebuild without losing the active handler.
@@ -27,6 +31,13 @@ actor ChatService {
 
     func setOnMessageDeleted(_ handler: @escaping (UUID) -> Void) {
         onMessageDeleted = handler
+    }
+
+    // Called from the iOS foreground transition. Marks the existing connection as
+    // suspect so the next send-side call forces a rebuild before invoking, regardless
+    // of what the lib's state() reports.
+    func markStaleAfterBackground() {
+        requiresRebuild = true
     }
 
     func connect(bookId: UUID) async {
@@ -131,11 +142,22 @@ actor ChatService {
     //
     // After long iOS background suspension the underlying WebSocket can die without
     // the SignalR client noticing — invoke() then completes locally without ever
-    // reaching the server (silent message loss). If the client reports anything other
-    // than .Connected, tear down and rebuild before invoking.
+    // reaching the server (silent message loss). Two protections:
+    //   1. requiresRebuild flag set by didBecomeActive — always tear down + rebuild
+    //      on the first send after foreground, regardless of state().
+    //   2. state() check — catches the case where the lib already noticed.
     private func readyConnection() async throws -> HubConnection {
         await pendingConnect?.value
-        if let conn = connection, await conn.state() != .Connected, let bookId = currentBookId {
+        let needsRebuild: Bool
+        if requiresRebuild {
+            needsRebuild = true
+        } else if let conn = connection {
+            needsRebuild = await conn.state() != .Connected
+        } else {
+            needsRebuild = false
+        }
+        if needsRebuild, let bookId = currentBookId {
+            requiresRebuild = false
             await disconnect()
             await connect(bookId: bookId)
         }
