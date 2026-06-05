@@ -123,6 +123,19 @@ public class ChatRead
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+public class RefreshToken
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    // SHA-256 of the opaque token returned to the client. We never store the raw token
+    // so a DB compromise doesn't yield live sessions.
+    [Required, MaxLength(64)] public string TokenHash { get; set; } = "";
+    public DateTime ExpiresAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? RevokedAt { get; set; }
+}
+
 public class Book
 {
     public Guid Id { get; set; } = Guid.NewGuid();

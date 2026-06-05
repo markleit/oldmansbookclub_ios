@@ -10,7 +10,8 @@ public record PublicClubDto(Guid Id, string Name, int MemberCount);
 public record JoinRequestDto(Guid Id, Guid UserId, string DisplayName, string? Email, Guid ClubId, string ClubName, DateTime CreatedAt);
 public record DevLoginRequest(string DisplayName);
 public record DemoLoginRequest(string Passphrase);
-public record AuthResponse(string AccessToken, UserDto User);
+public record AuthResponse(string AccessToken, string RefreshToken, UserDto User);
+public record RefreshTokenRequest(string RefreshToken);
 
 public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin, bool IsClubAdmin, UserPreferencesDto Preferences);
 public record UserPreferencesDto(bool TapToTalk);

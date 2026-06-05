@@ -6,6 +6,7 @@ final class TokenStore {
 
     private let keychainService = "com.example.oldmansbookclub"
     private let keychainTokenAccount = "jwt_token"
+    private let keychainRefreshAccount = "refresh_token"
 
     private let userIdKey = "user_id"
     private let userNameKey = "user_name"
@@ -18,8 +19,8 @@ final class TokenStore {
 
     private init() {
         // Migrate any existing UserDefaults token into Keychain on first run
-        if let legacy = UserDefaults.standard.string(forKey: "jwt_token"), keychainToken == nil {
-            keychainToken = legacy
+        if let legacy = UserDefaults.standard.string(forKey: "jwt_token"), token == nil {
+            token = legacy
             UserDefaults.standard.removeObject(forKey: "jwt_token")
         }
     }
@@ -27,45 +28,44 @@ final class TokenStore {
     // MARK: - Token (Keychain)
 
     var token: String? {
-        get { keychainToken }
-        set { keychainToken = newValue }
+        get { keychainRead(account: keychainTokenAccount) }
+        set { keychainWrite(account: keychainTokenAccount, value: newValue) }
     }
 
-    private var keychainToken: String? {
-        get {
-            let query: [CFString: Any] = [
-                kSecClass: kSecClassGenericPassword,
-                kSecAttrService: keychainService,
-                kSecAttrAccount: keychainTokenAccount,
-                kSecReturnData: true,
-                kSecMatchLimit: kSecMatchLimitOne
-            ]
-            var result: AnyObject?
-            guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-                  let data = result as? Data else { return nil }
-            return String(data: data, encoding: .utf8)
-        }
-        set {
-            if let value = newValue, let data = value.data(using: .utf8) {
-                let query: [CFString: Any] = [
-                    kSecClass: kSecClassGenericPassword,
-                    kSecAttrService: keychainService,
-                    kSecAttrAccount: keychainTokenAccount
-                ]
-                let attributes: [CFString: Any] = [kSecValueData: data]
-                if SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
-                    var add = query
-                    add[kSecValueData] = data
-                    SecItemAdd(add as CFDictionary, nil)
-                }
-            } else {
-                let query: [CFString: Any] = [
-                    kSecClass: kSecClassGenericPassword,
-                    kSecAttrService: keychainService,
-                    kSecAttrAccount: keychainTokenAccount
-                ]
-                SecItemDelete(query as CFDictionary)
+    var refreshToken: String? {
+        get { keychainRead(account: keychainRefreshAccount) }
+        set { keychainWrite(account: keychainRefreshAccount, value: newValue) }
+    }
+
+    private func keychainRead(account: String) -> String? {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func keychainWrite(account: String, value: String?) {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: keychainService,
+            kSecAttrAccount: account
+        ]
+        if let value, let data = value.data(using: .utf8) {
+            let attributes: [CFString: Any] = [kSecValueData: data]
+            if SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
+                var add = query
+                add[kSecValueData] = data
+                SecItemAdd(add as CFDictionary, nil)
             }
+        } else {
+            SecItemDelete(query as CFDictionary)
         }
     }
 
@@ -134,8 +134,9 @@ final class TokenStore {
         return Date(timeIntervalSince1970: exp) < Date()
     }
 
-    func save(token: String, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false, isClubAdmin: Bool = false) {
+    func save(token: String, refreshToken: String?, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false, isClubAdmin: Bool = false) {
         self.token = token
+        self.refreshToken = refreshToken
         self.userId = userId
         self.displayName = displayName
         self.nickname = nickname
@@ -146,6 +147,7 @@ final class TokenStore {
 
     func clear() {
         token = nil
+        refreshToken = nil
         userId = nil
         // displayName intentionally kept — Apple only sends it on first auth,
         // so we preserve it as a fallback for re-login on the same device

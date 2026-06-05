@@ -53,6 +53,9 @@ actor ChatService {
     }
 
     private func _startConnection(bookId: UUID) async {
+        // Refresh access token if near expiry — SignalR's `?access_token=` is bound
+        // at handshake, and a mid-stream 401 won't auto-recover.
+        _ = await APIClient.shared.ensureFreshToken()
         guard let token = TokenStore.shared.token else { return }
 
         currentBookId = bookId

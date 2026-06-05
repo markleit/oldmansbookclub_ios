@@ -46,6 +46,7 @@ builder.Services.AddSignalR()
 builder.Services.AddScoped<AppleTokenValidator>();
 builder.Services.AddSingleton<BlobService>();
 builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddHttpClient("apns", client =>
 {
     client.BaseAddress = new Uri("https://api.push.apple.com");

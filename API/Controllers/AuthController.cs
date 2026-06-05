@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using BookClubApi.Data;
 using BookClubApi.Models;
@@ -65,8 +66,7 @@ public class AuthController(
         if (missing.Count > 0)
             await db.SaveChangesAsync();
 
-        var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, await BuildUserDto(user)));
+        return Ok(await BuildAuthResponse(user));
     }
 
     [HttpPost("dev-login")]
@@ -114,8 +114,7 @@ public class AuthController(
         if (missing.Count > 0)
             await db.SaveChangesAsync();
 
-        var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, await BuildUserDto(user)));
+        return Ok(await BuildAuthResponse(user));
 #endif
     }
 
@@ -191,7 +190,7 @@ public class AuthController(
                 return jr.Status switch
                 {
                     JoinRequestStatus.Declined => StatusCode(202, new { status = "request_declined", club_name = club.Name }),
-                    JoinRequestStatus.Approved => Ok(new AuthResponse(GenerateJwt(user), await BuildUserDto(user))),
+                    JoinRequestStatus.Approved => Ok(await BuildAuthResponse(user)),
                     _ => StatusCode(202, new { status = "pending_approval", club_name = club.Name })
                 };
             }
@@ -209,7 +208,7 @@ public class AuthController(
                     return existingRequest.Status switch
                     {
                         JoinRequestStatus.Declined => StatusCode(202, new { status = "request_declined", club_name = existingRequest.Club.Name }),
-                        JoinRequestStatus.Approved => Ok(new AuthResponse(GenerateJwt(user), await BuildUserDto(user))),
+                        JoinRequestStatus.Approved => Ok(await BuildAuthResponse(user)),
                         _ => StatusCode(202, new { status = "pending_approval", club_name = existingRequest.Club.Name })
                     };
                 }
@@ -218,8 +217,7 @@ public class AuthController(
             }
         }
 
-        var token = GenerateJwt(user);
-        return Ok(new AuthResponse(token, await BuildUserDto(user)));
+        return Ok(await BuildAuthResponse(user));
     }
 
     [Authorize]
@@ -276,9 +274,73 @@ public class AuthController(
             issuer: config["Jwt:Issuer"],
             audience: config["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddDays(365),
+            expires: DateTime.UtcNow.AddHours(1),
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
         return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
+    // Issues a 90-day opaque refresh token. We persist only its SHA-256 hash so a DB
+    // compromise doesn't expose live sessions; the raw token is returned to the client once.
+    private async Task<string> IssueRefreshTokenAsync(Guid userId)
+    {
+        var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        var hash = Sha256Hex(raw);
+        db.RefreshTokens.Add(new RefreshToken
+        {
+            UserId = userId,
+            TokenHash = hash,
+            ExpiresAt = DateTime.UtcNow.AddDays(90)
+        });
+        await db.SaveChangesAsync();
+        return raw;
+    }
+
+    private async Task<AuthResponse> BuildAuthResponse(User user)
+    {
+        var access = GenerateJwt(user);
+        var refresh = await IssueRefreshTokenAsync(user.Id);
+        return new AuthResponse(access, refresh, await BuildUserDto(user));
+    }
+
+    private static string Sha256Hex(string input)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    [HttpPost("refresh")]
+    public async Task<ActionResult<AuthResponse>> Refresh([FromBody] RefreshTokenRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)) return Unauthorized();
+        var hash = Sha256Hex(request.RefreshToken);
+        var existing = await db.RefreshTokens
+            .Include(rt => rt.User)
+            .FirstOrDefaultAsync(rt => rt.TokenHash == hash);
+        if (existing is null) return Unauthorized();
+        if (existing.RevokedAt is not null) return Unauthorized();
+        if (existing.ExpiresAt <= DateTime.UtcNow) return Unauthorized();
+
+        // Rotate: revoke the presented token, issue a fresh pair.
+        existing.RevokedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return Ok(await BuildAuthResponse(existing.User));
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.RefreshToken)) return NoContent();
+        var hash = Sha256Hex(request.RefreshToken);
+        var rt = await db.RefreshTokens.FirstOrDefaultAsync(x => x.TokenHash == hash);
+        if (rt is not null && rt.RevokedAt is null)
+        {
+            rt.RevokedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        return NoContent();
     }
 }

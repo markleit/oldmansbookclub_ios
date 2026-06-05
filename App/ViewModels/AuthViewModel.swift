@@ -142,6 +142,7 @@ final class AuthViewModel: ObservableObject {
     private func finishSignIn(_ response: APIClient.AuthResponse) {
         TokenStore.shared.save(
             token: response.accessToken,
+            refreshToken: response.refreshToken,
             userId: response.user.id,
             displayName: response.user.displayName,
             nickname: response.user.nickname,
@@ -160,6 +161,10 @@ final class AuthViewModel: ObservableObject {
     }
 
     func signOut() {
+        // Fire-and-forget revoke; we don't block sign-out on the round trip.
+        if let rt = TokenStore.shared.refreshToken {
+            Task { try? await APIClient.shared.logout(refreshToken: rt) }
+        }
         TokenStore.shared.clear()
         isAuthenticated = false
         needsClubSetup = false

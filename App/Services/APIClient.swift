@@ -108,7 +108,33 @@ final class APIClient {
 
     struct AuthResponse: Decodable {
         let accessToken: String
+        let refreshToken: String
         let user: UserResponse
+    }
+
+    struct RefreshTokenRequest: Encodable { let refreshToken: String }
+
+    func refresh(refreshToken: String) async throws -> AuthResponse {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/auth/refresh")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(RefreshTokenRequest(refreshToken: refreshToken))
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        return try decoder.decode(AuthResponse.self, from: data)
+    }
+
+    func logout(refreshToken: String) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/auth/logout")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try encoder.encode(RefreshTokenRequest(refreshToken: refreshToken))
+        _ = try? await session.data(for: request)
     }
 
     struct UserPreferences: Decodable {
@@ -624,7 +650,66 @@ final class APIClient {
 
     // MARK: - Helpers
 
-    private func get<Response: Decodable>(path: String) async throws -> Response {
+    // Single in-flight refresh task — multiple concurrent 401s coalesce so we don't
+    // burn through rotated refresh tokens with parallel refreshes.
+    private var refreshTask: Task<Bool, Never>?
+    private let refreshLock = NSLock()
+
+    // Refresh the access token if it's expired or within 2 minutes of expiry.
+    // Returns true if the token is valid afterwards. Call before opening long-lived
+    // connections (SignalR) where 401 mid-stream is messier than refreshing up-front.
+    func ensureFreshToken() async -> Bool {
+        guard TokenStore.shared.refreshToken != nil else { return TokenStore.shared.token != nil }
+        if !shouldRefreshPreemptively() { return TokenStore.shared.token != nil }
+        return await attemptRefresh()
+    }
+
+    private func shouldRefreshPreemptively() -> Bool {
+        guard let token = TokenStore.shared.token else { return true }
+        let parts = token.components(separatedBy: ".")
+        guard parts.count == 3 else { return true }
+        var base64 = parts[1].replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder > 0 { base64 += String(repeating: "=", count: 4 - remainder) }
+        guard let data = Data(base64Encoded: base64),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let exp = json["exp"] as? TimeInterval else { return true }
+        return Date(timeIntervalSince1970: exp).timeIntervalSinceNow < 120
+    }
+
+    private func attemptRefresh() async -> Bool {
+        refreshLock.lock()
+        if let existing = refreshTask {
+            refreshLock.unlock()
+            return await existing.value
+        }
+        let task = Task<Bool, Never> { [weak self] in
+            guard let self, let rt = TokenStore.shared.refreshToken else { return false }
+            do {
+                let response = try await self.refresh(refreshToken: rt)
+                TokenStore.shared.token = response.accessToken
+                TokenStore.shared.refreshToken = response.refreshToken
+                return true
+            } catch {
+                return false
+            }
+        }
+        refreshTask = task
+        refreshLock.unlock()
+        let result = await task.value
+        refreshLock.lock()
+        refreshTask = nil
+        refreshLock.unlock()
+        return result
+    }
+
+    private func handleAuthFailure() {
+        TokenStore.shared.token = nil
+        TokenStore.shared.refreshToken = nil
+        onUnauthorized?()
+    }
+
+    private func get<Response: Decodable>(path: String, retried: Bool = false) async throws -> Response {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "GET"
         if let token = TokenStore.shared.token {
@@ -632,7 +717,10 @@ final class APIClient {
         }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
+        if http.statusCode == 401 {
+            if !retried, await attemptRefresh() { return try await get(path: path, retried: true) }
+            handleAuthFailure(); throw URLError(.userAuthenticationRequired)
+        }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }
@@ -640,7 +728,8 @@ final class APIClient {
     private func post<Body: Encodable, Response: Decodable>(
         path: String,
         body: Body,
-        authenticated: Bool
+        authenticated: Bool,
+        retried: Bool = false
     ) async throws -> Response {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "POST"
@@ -651,26 +740,36 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
+        if http.statusCode == 401 {
+            if authenticated, !retried, await attemptRefresh() {
+                return try await post(path: path, body: body, authenticated: authenticated, retried: true)
+            }
+            if authenticated { handleAuthFailure() }
+            throw URLError(.userAuthenticationRequired)
+        }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }
 
-    private func postEmpty(path: String) async throws {
+    private func postEmpty(path: String, retried: Bool = false) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "POST"
         if let token = TokenStore.shared.token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 {
+            if !retried, await attemptRefresh() { return try await postEmpty(path: path, retried: true) }
+            handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
     }
 
     private func patch<Body: Encodable, Response: Decodable>(
         path: String,
-        body: Body
+        body: Body,
+        retried: Bool = false
     ) async throws -> Response {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "PATCH"
@@ -681,7 +780,10 @@ final class APIClient {
         request.httpBody = try encoder.encode(body)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        if http.statusCode == 401 { onUnauthorized?(); throw URLError(.userAuthenticationRequired) }
+        if http.statusCode == 401 {
+            if !retried, await attemptRefresh() { return try await patch(path: path, body: body, retried: true) }
+            handleAuthFailure(); throw URLError(.userAuthenticationRequired)
+        }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try decoder.decode(Response.self, from: data)
     }

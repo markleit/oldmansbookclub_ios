@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications) : Hub
+public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -26,6 +26,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendTextMessage(Guid bookId, string body)
     {
+        EnforceRateLimit();
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
             throw new HubException("Message must be 1–4000 characters.");
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body);
@@ -34,6 +35,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
     {
+        EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
 
         if (clientId.HasValue)
@@ -63,6 +65,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
     {
+        EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
         await BroadcastAndNotify(bookId, message, bookTitle);
@@ -70,6 +73,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendVideoMessage(Guid bookId, string mediaUrl)
     {
+        EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Video, mediaUrl: mediaUrl);
         await BroadcastAndNotify(bookId, message, bookTitle);
@@ -98,6 +102,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task ForwardMessage(Guid bookId, Guid messageId)
     {
+        EnforceRateLimit();
         var userId = GetUserId();
 
         var hasSaved = await db.SavedMessages
@@ -186,6 +191,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     private Guid GetUserId() =>
         Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
+
+    private void EnforceRateLimit()
+    {
+        if (!rateLimiter.TryAcquire(GetUserId()))
+            throw new HubException("Slow down — too many messages. Try again in a minute.");
+    }
 
     private const string AllowedBlobHost = "oldmansbookclubstore.blob.core.windows.net";
 
