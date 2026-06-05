@@ -69,23 +69,39 @@ struct CachedRemoteImage<Content: View>: View {
             return
         }
         phase = .empty
-        // Retry once on transient failure — Azure Blob has a brief eventual-consistency
-        // window where a GET immediately after PUT can 404, which surfaces as a "preview
-        // missing" bubble until the user re-enters the chat. One retry covers that.
-        for attempt in 0..<2 {
-            if attempt > 0 {
-                try? await Task.sleep(for: .milliseconds(750))
+        // Retry with backoff on transient failure — Azure Blob can take a moment to
+        // become readable after the SAS is broadcast; a "preview missing" bubble
+        // that resolves on chat re-entry is this race.
+        let delaysMs: [UInt64] = [0, 500, 1500, 3500]
+        for delay in delaysMs {
+            if delay > 0 {
+                try? await Task.sleep(for: .milliseconds(Int(delay)))
                 if Task.isCancelled { return }
             }
             let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+                #if DEBUG
+                print("[CachedRemoteImage] network failure for \(url.lastPathComponent)")
+                #endif
+                continue
+            }
+            let http = response as? HTTPURLResponse
+            guard let http, (200..<300).contains(http.statusCode) else {
+                #if DEBUG
+                print("[CachedRemoteImage] HTTP \(http?.statusCode ?? -1) for \(url.lastPathComponent) (retry in \(delay)ms)")
+                print("[CachedRemoteImage] URL: \(url.absoluteString)")
+                #endif
                 continue
             }
             let uiImage = await Task.detached(priority: .userInitiated) {
                 UIImage(data: data)
             }.value
-            guard let uiImage else { continue }
+            guard let uiImage else {
+                #if DEBUG
+                print("[CachedRemoteImage] decode failed for \(url.lastPathComponent) (\(data.count) bytes)")
+                #endif
+                continue
+            }
             ImageCache.shared[url] = uiImage
             phase = .success(Image(uiImage: uiImage))
             return

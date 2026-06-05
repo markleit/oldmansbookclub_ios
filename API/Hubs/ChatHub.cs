@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter) : Hub
+public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter, ILogger<ChatHub> logger) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -165,8 +165,17 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         string? broadcastMediaUrl = mediaUrl;
         if (mediaUrl != null)
         {
-            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-            broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
+            try
+            {
+                var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+                broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
+                logger.LogInformation("[SaveMessageAsync] broadcast URL has query: {HasQuery}, length: {Length}",
+                    broadcastMediaUrl?.Contains('?') == true, broadcastMediaUrl?.Length ?? 0);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "[SaveMessageAsync] GenerateFreshReadUrl FAILED for {Url}", mediaUrl);
+            }
         }
 
         return (ToDto(message, user.EffectiveName, user.AvatarUrl, broadcastMediaUrl), book.Title);
