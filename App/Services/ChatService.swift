@@ -75,9 +75,6 @@ actor ChatService {
         connection = conn
 
         await conn.on("NewMessage") { [weak self] (dto: MessageDto) async in
-            #if DEBUG
-            print("[DIAG-WIRE] NewMessage mediaUrl hasQuery=\(dto.mediaUrl?.contains("?") == true) length=\(dto.mediaUrl?.count ?? 0)")
-            #endif
             let message = Message(
                 id: dto.id,
                 clubId: dto.clubId,
@@ -131,8 +128,17 @@ actor ChatService {
 
     // Waits for any in-flight connect to finish, then validates the connection is ready.
     // All send methods call this so they never race against an unstarted connection.
+    //
+    // After long iOS background suspension the underlying WebSocket can die without
+    // the SignalR client noticing — invoke() then completes locally without ever
+    // reaching the server (silent message loss). If the client reports anything other
+    // than .Connected, tear down and rebuild before invoking.
     private func readyConnection() async throws -> HubConnection {
         await pendingConnect?.value
+        if let conn = connection, await conn.state() != .Connected, let bookId = currentBookId {
+            await disconnect()
+            await connect(bookId: bookId)
+        }
         guard let conn = connection else { throw ChatError.notConnected }
         return conn
     }

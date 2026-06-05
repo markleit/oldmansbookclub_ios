@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter, ILogger<ChatHub> logger) : Hub
+public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -65,19 +65,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     public async Task SendPhotoMessage(Guid bookId, string mediaUrl)
     {
-        System.Threading.Interlocked.Increment(ref BroadcastDiagnostics.SendPhotoMessageEntryCount);
-        try
-        {
-            EnforceRateLimit();
-            if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-            var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
-            await BroadcastAndNotify(bookId, message, bookTitle);
-        }
-        catch (Exception ex)
-        {
-            BroadcastDiagnostics.LastSendPhotoError = $"{DateTime.UtcNow:O} {ex.GetType().Name}: {ex.Message}";
-            throw;
-        }
+        EnforceRateLimit();
+        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo, mediaUrl: mediaUrl);
+        await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
     public async Task SendVideoMessage(Guid bookId, string mediaUrl)
@@ -172,19 +163,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await db.SaveChangesAsync();
 
         string? broadcastMediaUrl = mediaUrl;
-        Console.WriteLine($"[DIAG] SaveMessageAsync entered, mediaUrl={(mediaUrl == null ? "<null>" : "<set>")}, type={type}");
         if (mediaUrl != null)
         {
-            try
-            {
-                var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-                broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
-                Console.WriteLine($"[DIAG] broadcast URL hasQuery={broadcastMediaUrl?.Contains('?') == true} length={broadcastMediaUrl?.Length ?? 0}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[DIAG] GenerateFreshReadUrl THREW: {ex.GetType().Name}: {ex.Message}");
-            }
+            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
         }
 
         return (ToDto(message, user.EffectiveName, user.AvatarUrl, broadcastMediaUrl), book.Title);
@@ -192,10 +174,6 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
     {
-        BroadcastDiagnostics.LastBroadcastMediaUrl = dto.MediaUrl;
-        BroadcastDiagnostics.LastBroadcastAt = DateTime.UtcNow;
-        System.Threading.Interlocked.Increment(ref BroadcastDiagnostics.BroadcastCount);
-        Console.WriteLine($"[DIAG] BroadcastAndNotify: dto.MediaUrl hasQuery={dto.MediaUrl?.Contains('?') == true} length={dto.MediaUrl?.Length ?? 0}");
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
         // Push to all members except the sender; iOS willPresent suppresses it if they're actively viewing that chat

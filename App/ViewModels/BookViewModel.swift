@@ -217,17 +217,11 @@ final class BookViewModel: ObservableObject {
         isUploading = true
         defer { isUploading = false }
         do {
-            print("[DIAG-PHOTO] requesting upload URL")
             let response = try await APIClient.shared.getUploadUrl(clubId: book.clubId)
-            print("[DIAG-PHOTO] got upload URL, media URL: \(response.mediaUrl)")
-            guard let uploadUrl = URL(string: response.uploadUrl) else { print("[DIAG-PHOTO] uploadUrl parse failed"); return }
-            print("[DIAG-PHOTO] uploading \(data.count) bytes to blob")
+            guard let uploadUrl = URL(string: response.uploadUrl) else { return }
             try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
-            print("[DIAG-PHOTO] blob upload OK, invoking SendPhotoMessage via SignalR")
             try await ChatService.shared.sendPhoto(bookId: book.id, mediaUrl: response.mediaUrl)
-            print("[DIAG-PHOTO] SendPhotoMessage invoke returned")
         } catch {
-            print("[DIAG-PHOTO] FAILED: \(type(of: error)) \(error)")
             errorMessage = "Failed to send photo."
         }
     }
