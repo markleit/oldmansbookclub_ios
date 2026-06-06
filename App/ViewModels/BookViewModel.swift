@@ -35,6 +35,7 @@ final class BookViewModel: ObservableObject {
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
     private let maxAutoRetries = 5
+    private let maxCachedMessages = 1000  // ~weeks of normal chat at modest disk cost
 
     init(book: Book) {
         self.book = book
@@ -66,7 +67,7 @@ final class BookViewModel: ObservableObject {
             for msg in surviving where !messages.contains(where: { $0.id == msg.id }) {
                 messages.insert(msg, at: 0)
             }
-            CacheService.shared.save(fetched, key: cacheKey)
+            saveMessagesCache()
 
             // Restore any media messages that were pending when the app was last closed
             restorePendingMediaBubbles()
@@ -114,6 +115,7 @@ final class BookViewModel: ObservableObject {
                 if let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
                     self.messages[idx] = message
                 }
+                self.saveMessagesCache()
                 return
             }
 
@@ -132,10 +134,12 @@ final class BookViewModel: ObservableObject {
                    oldUrl.scheme == "file" {
                     MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
                 }
+                self.saveMessagesCache()
                 return
             }
 
             self.messages.insert(message, at: 0)
+            self.saveMessagesCache()
             Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
         }
 
@@ -146,7 +150,7 @@ final class BookViewModel: ObservableObject {
                 self.messages[idx].body = nil
                 self.messages[idx].mediaUrl = nil
                 self.messages[idx].durationSeconds = nil
-                CacheService.shared.save(self.messages, key: self.cacheKey)
+                self.saveMessagesCache()
             }
         }
 
@@ -418,6 +422,20 @@ final class BookViewModel: ObservableObject {
     // evidence of connectivity rather than reflecting some stale prior failure.
     private func markOnline() {
         if isOffline { isOffline = false }
+    }
+
+    // Persist the current messages to disk cache, bounded to the most recent N
+    // and filtered to only confirmed messages. Optimistic-only entries (text
+    // waiting on echo, media still in the send queue) are excluded so a kill +
+    // relaunch doesn't show ghost messages that never actually got delivered.
+    private func saveMessagesCache() {
+        let pendingTextIds = Set(pendingByBody.values)
+        let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
+        let confirmed = messages.filter {
+            !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)
+        }
+        let bounded = Array(confirmed.prefix(maxCachedMessages))
+        CacheService.shared.save(bounded, key: cacheKey)
     }
 
     // Safety net for silent SignalR failures: if invoke() returns success but the
