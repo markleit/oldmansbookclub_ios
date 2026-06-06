@@ -31,16 +31,21 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database", tags: ["ready"]);
 
-// Azure SignalR
-builder.Services.AddSignalR()
+// SignalR. Production uses the shared Azure SignalR Service backplane; local dev
+// runs in-process so the simulator can hit localhost directly without colliding
+// with prod's ChatHub registration in the shared Azure SignalR Service.
+var signalR = builder.Services.AddSignalR()
     .AddJsonProtocol(options =>
     {
         options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeConverter());
-    })
-    .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
+    });
+if (!builder.Environment.IsDevelopment())
+{
+    signalR.AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
         ?? "Endpoint=https://oldmansbookclub-signalr.service.signalr.net;AuthType=aad;Version=1.0;");
+}
 
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();
