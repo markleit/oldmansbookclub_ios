@@ -9,6 +9,10 @@ public class User
     [Required, MaxLength(200)] public string DisplayName { get; set; } = "";
     [MaxLength(50)] public string? Nickname { get; set; }
     [MaxLength(2048)] public string? AvatarUrl { get; set; }
+    // Updated whenever AvatarUrl is set/changed. Used to bust client-side image
+    // caches that key blob URLs by path (since avatar blobs reuse a fixed path
+    // per user, the path alone doesn't change when the avatar is replaced).
+    public DateTime? AvatarUpdatedAt { get; set; }
     [MaxLength(512)] public string? DeviceToken { get; set; }
     [MaxLength(255)] public string? Email { get; set; }
     [MaxLength(2048)] public string? AppleRefreshToken { get; set; }

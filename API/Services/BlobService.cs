@@ -50,11 +50,21 @@ public class BlobService
         return (uploadUrl, blobClient.Uri.ToString());
     }
 
-    public Task<string> GenerateAvatarReadUrlAsync(Guid userId)
+    public async Task<string> GenerateAvatarReadUrlAsync(Guid userId, DateTime? avatarUpdatedAt = null)
     {
         var blobName = $"{userId}/avatar.jpg";
-        return GenerateUserDelegationSasAsync(AvatarContainer, blobName,
+        var url = await GenerateUserDelegationSasAsync(AvatarContainer, blobName,
             BlobSasPermissions.Read, TimeSpan.FromDays(7));
+        // Cache-bust hint as a URL fragment. Fragments aren't sent over HTTP so the
+        // blob fetch is unaffected, but iOS preserves the fragment in its image
+        // cache key — so when the avatar is replaced, the version changes and the
+        // path-based key no longer collides with the prior cached bytes.
+        if (avatarUpdatedAt is DateTime t)
+        {
+            var unix = ((DateTimeOffset)DateTime.SpecifyKind(t, DateTimeKind.Utc)).ToUnixTimeSeconds();
+            url += $"#v={unix}";
+        }
+        return url;
     }
 
     // Returns a cached delegation key valid for 7 days. Refreshes only when within 1 hour of expiry.

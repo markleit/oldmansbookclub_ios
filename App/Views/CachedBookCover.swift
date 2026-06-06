@@ -42,9 +42,12 @@ final class ImageCache {
         guard url.host == "oldmansbookclubstore.blob.core.windows.net" else {
             return url.absoluteString
         }
+        // Strip the SAS query (it rotates on every server fetch, so keying by it
+        // would defeat the cache). KEEP the fragment — the server uses it as a
+        // versioning hint (e.g. avatar URLs gain `#v=<timestamp>` on upload, so
+        // a replaced avatar produces a different cache key from the old one).
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         components?.query = nil
-        components?.fragment = nil
         return components?.url?.absoluteString ?? url.absoluteString
     }
 

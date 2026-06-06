@@ -26,7 +26,7 @@ public class AuthController(
     private async Task<UserDto> BuildUserDto(User u)
     {
         var avatarUrl = u.AvatarUrl is not null
-            ? await blob.GenerateAvatarReadUrlAsync(u.Id)
+            ? await blob.GenerateAvatarReadUrlAsync(u.Id, u.AvatarUpdatedAt)
             : null;
         var isClubAdmin = await db.Memberships.AnyAsync(m => m.UserId == u.Id && m.IsClubAdmin);
         return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin, new UserPreferencesDto(u.Preferences.TapToTalk));

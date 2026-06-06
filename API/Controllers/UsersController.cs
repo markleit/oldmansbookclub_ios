@@ -54,7 +54,13 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
         if (req.AvatarUrl is not null)
         {
             if (!IsOwnBlobUrl(req.AvatarUrl)) return BadRequest("Invalid avatar URL.");
-            user.AvatarUrl = req.AvatarUrl;
+            // Bake a cache-bust version into the stored URL as a fragment. Avatar
+            // blobs reuse a fixed path per user; without this hint, downstream
+            // consumers (sender avatars in messages, etc.) would key the iOS image
+            // cache by path alone and serve the old bytes after a replacement.
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            user.AvatarUrl = $"{req.AvatarUrl}#v={now}";
+            user.AvatarUpdatedAt = DateTime.UtcNow;
         }
         if (req.Preferences?.TapToTalk.HasValue == true)
             user.Preferences.TapToTalk = req.Preferences.TapToTalk.Value;
@@ -150,7 +156,7 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
     private async Task<UserDto> ToDto(User u, bool isClubAdmin)
     {
         var avatarUrl = u.AvatarUrl is not null
-            ? await blob.GenerateAvatarReadUrlAsync(u.Id)
+            ? await blob.GenerateAvatarReadUrlAsync(u.Id, u.AvatarUpdatedAt)
             : null;
         return new UserDto(u.Id, u.DisplayName, u.Nickname, avatarUrl, u.IsAdmin, isClubAdmin, new UserPreferencesDto(u.Preferences.TapToTalk));
     }
