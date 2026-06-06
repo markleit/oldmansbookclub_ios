@@ -8,6 +8,8 @@ final class BookViewModel: ObservableObject {
     @Published var book: Book
     @Published var messages: [Message] = []
     @Published var isLoadingMessages = false
+    @Published var isLoadingOlderMessages = false
+    @Published var reachedBeginning = false
     @Published var isOffline = false
     @Published var messageText = ""
     @Published var errorMessage: String?
@@ -51,6 +53,7 @@ final class BookViewModel: ObservableObject {
         }
         isOffline = false
         isLoadingMessages = !hasCachedState
+        reachedBeginning = false
 
         let bookId = book.id
 
@@ -61,12 +64,12 @@ final class BookViewModel: ObservableObject {
 
         do {
             let fetched = try await messagesFetch
-            let pendingIds = Set(pendingByBody.values)
-            let surviving = messages.filter { pendingIds.contains($0.id) }
-            messages = fetched
-            for msg in surviving where !messages.contains(where: { $0.id == msg.id }) {
-                messages.insert(msg, at: 0)
-            }
+            // Merge by id so previously-paginated older messages and unconfirmed
+            // optimistic entries survive across refresh. Fresh fetch wins on
+            // overlapping ids (server-side edits propagate).
+            var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+            for msg in fetched { byId[msg.id] = msg }
+            messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
             saveMessagesCache()
 
             // Restore any media messages that were pending when the app was last closed
@@ -213,16 +216,27 @@ final class BookViewModel: ObservableObject {
         do {
             try await ChatService.shared.sendText(bookId: book.id, body: text)
             markOnline()
-        } catch {
+        } catch let outer {
+            // Server-side rejection (rate limit, validation) — don't retry, just surface it.
+            if case ChatError.serverError(let msg) = outer {
+                messages.removeAll { $0.id == clientId }
+                pendingByBody.removeValue(forKey: text)
+                errorMessage = msg
+                return
+            }
             await ChatService.shared.disconnect()
             await ChatService.shared.connect(bookId: book.id)
             do {
                 try await ChatService.shared.sendText(bookId: book.id, body: text)
                 markOnline()
-            } catch {
+            } catch let inner {
                 messages.removeAll { $0.id == clientId }
                 pendingByBody.removeValue(forKey: text)
-                errorMessage = "Failed to send — connection lost. Please try again."
+                if case ChatError.serverError(let msg) = inner {
+                    errorMessage = msg
+                } else {
+                    errorMessage = "Failed to send — connection lost. Please try again."
+                }
             }
         }
     }
@@ -377,7 +391,9 @@ final class BookViewModel: ObservableObject {
             }
             do {
                 try await invokeHub(for: item, mediaUrl: mediaUrl)
-            } catch {
+            } catch let invokeErr {
+                // Server-side rejection — don't reconnect+retry, it'll fail the same way.
+                if case ChatError.serverError = invokeErr { throw invokeErr }
                 // Stale-connection recovery — clientId idempotency prevents server-side duplicates.
                 await ChatService.shared.disconnect()
                 await ChatService.shared.connect(bookId: item.bookId)
@@ -398,6 +414,11 @@ final class BookViewModel: ObservableObject {
             MediaSendQueue.shared.incrementRetry(id: item.id)
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {
                 messages[idx].sendState = .failed
+            }
+            // Surface server-thrown error text (rate limit, etc.) since the failed bubble
+            // alone doesn't explain why.
+            if case ChatError.serverError(let msg) = error {
+                errorMessage = msg
             }
         }
     }
@@ -422,6 +443,38 @@ final class BookViewModel: ObservableObject {
     // evidence of connectivity rather than reflecting some stale prior failure.
     private func markOnline() {
         if isOffline { isOffline = false }
+    }
+
+    // Paginate back to older messages. Fired by a sentinel view at the top of the
+    // chat scroll view; idempotent under repeated calls (in-flight or terminal).
+    func loadOlderMessages() async {
+        guard !isLoadingOlderMessages, !reachedBeginning else { return }
+        // Find the oldest confirmed message — skip optimistic entries whose sentAt
+        // is "now" and would yield a useless query.
+        let pendingTextIds = Set(pendingByBody.values)
+        let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
+        let oldestConfirmed = messages.last(where: {
+            !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)
+        })
+        guard let before = oldestConfirmed?.sentAt else { return }
+
+        isLoadingOlderMessages = true
+        defer { isLoadingOlderMessages = false }
+        do {
+            let older = try await APIClient.shared.getMessages(bookId: book.id, before: before)
+            markOnline()
+            if older.isEmpty {
+                reachedBeginning = true
+                return
+            }
+            // Merge into messages, dedup by id (server might overlap on the boundary).
+            var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+            for msg in older where byId[msg.id] == nil { byId[msg.id] = msg }
+            messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
+            saveMessagesCache()
+        } catch {
+            // Silent — the sentinel will fire again on next scroll attempt.
+        }
     }
 
     // Persist the current messages to disk cache, bounded to the most recent N

@@ -356,6 +356,10 @@ final class APIClient {
         var path = "/books/\(bookId)/messages?limit=\(limit)"
         if let before {
             let iso = ISO8601DateFormatter()
+            // Include fractional seconds to match server-side UtcDateTimeConverter
+            // (yyyy-MM-ddTHH:mm:ss.fffZ). Without this, sub-second precision is
+            // lost and pagination could skip messages on the boundary second.
+            iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
             path += "&before=\(iso.string(from: before))"
         }
         return try await get(path: path)

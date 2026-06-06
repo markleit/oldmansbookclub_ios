@@ -8,8 +8,15 @@ import UserNotifications
 struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
+    @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingDeleteConfirm = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
+    // Tracks rows currently rendered by LazyVStack (slight superset of the visible
+    // viewport since LazyVStack keeps a small buffer). Used only to auto-dismiss
+    // the "New message" pill once the user can see the newest message.
+    @State private var visibleMessageIds: Set<UUID> = []
+    @State private var hasUnseenMessage: Bool = false
+    @State private var lastSeenNewestId: UUID? = nil
     var onDeleted: (() -> Void)?
     var onStatusChanged: ((BookStatus) -> Void)?
 
@@ -40,25 +47,121 @@ struct BookDetailView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 8) {
+                            // Top sentinel for pagination. Becomes visible only when
+                            // the user scrolls to the top of the rendered window; its
+                            // .onAppear triggers loadOlderMessages. The view model
+                            // guards against re-entry and terminal state, so repeated
+                            // scrolls back and forth are safe.
+                            if viewModel.reachedBeginning {
+                                Text("Beginning of discussion")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.vertical, 12)
+                            } else {
+                                HStack {
+                                    Spacer()
+                                    if viewModel.isLoadingOlderMessages {
+                                        ProgressView()
+                                    } else {
+                                        Color.clear.frame(height: 1)
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 12)
+                                .onAppear { Task { await viewModel.loadOlderMessages() } }
+                            }
                             ForEach(viewModel.visibleMessages.reversed()) { message in
                                 MessageRow(message: message, viewModel: viewModel)
                                     .id(message.id)
+                                    .onAppear { visibleMessageIds.insert(message.id) }
+                                    .onDisappear { visibleMessageIds.remove(message.id) }
                             }
                         }
                         .padding(.horizontal)
                         .padding(.top, 8)
                     }
-                    .onAppear {
-                        if let newest = viewModel.visibleMessages.first {
-                            proxy.scrollTo(newest.id, anchor: .bottom)
+                    .overlay(alignment: .bottom) {
+                        // "New message" pill: surfaces when somebody else's message
+                        // arrives while the user is in the chat (possibly mid-playback
+                        // of audio/video, or looking at an image). Tap to jump to it.
+                        if hasUnseenMessage {
+                            Button {
+                                if let newest = viewModel.visibleMessages.first {
+                                    withAnimation(.easeOut(duration: 0.25)) {
+                                        proxy.scrollTo(newest.id, anchor: .bottom)
+                                    }
+                                    hasUnseenMessage = false
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.down")
+                                    Text("New message")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.accentColor)
+                                .foregroundColor(.white)
+                                .clipShape(Capsule())
+                                .shadow(radius: 2, y: 1)
+                            }
+                            .padding(.bottom, 12)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
-                    .onChange(of: viewModel.visibleMessages.first?.id) { _ in
-                        if let newest = viewModel.visibleMessages.first {
-                            withAnimation(.easeOut(duration: 0.2)) {
+                    // Always scroll to newest on entry. Multiple attempts handle the
+                    // cache→fresh-fetch transition and the LazyVStack layout-pass timing.
+                    .task(id: viewModel.book.id) {
+                        let delaysMs: [UInt64] = [0, 50, 150, 400, 1000]
+                        for delay in delaysMs {
+                            if delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay))) }
+                            if let newest = viewModel.visibleMessages.first {
                                 proxy.scrollTo(newest.id, anchor: .bottom)
                             }
                         }
+                        lastSeenNewestId = viewModel.visibleMessages.first?.id
+                    }
+                    // New message arrived. Two cases:
+                    //   - Your own send (optimistic insert OR server echo) → scroll, no pill.
+                    //     You want to see what you sent.
+                    //   - Anyone else → show the pill, do NOT yank. Audio/video playback,
+                    //     reading, image preview all continue uninterrupted.
+                    .onChange(of: viewModel.visibleMessages.first?.id) { newId in
+                        guard let newId else { return }
+                        if lastSeenNewestId == nil { lastSeenNewestId = newId; return }
+                        if lastSeenNewestId == newId { return }
+                        let newest = viewModel.visibleMessages.first
+                        let isMine = newest?.senderId == TokenStore.shared.userId
+                        if isMine {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(newId, anchor: .bottom)
+                            }
+                            hasUnseenMessage = false
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                hasUnseenMessage = true
+                            }
+                        }
+                        lastSeenNewestId = newId
+                    }
+                    // Once the newest message becomes visible (user scrolled down,
+                    // tapped the pill, etc.) auto-dismiss the pill.
+                    .onChange(of: visibleMessageIds.contains(viewModel.visibleMessages.first?.id ?? UUID())) { atBottom in
+                        if atBottom, hasUnseenMessage {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                hasUnseenMessage = false
+                            }
+                        }
+                    }
+                    // Notification tap on a still-alive chat view: .task doesn't re-fire,
+                    // so explicitly scroll to newest and consume the pending deep link.
+                    .onChange(of: deepLink.pendingBookId) { pending in
+                        guard pending == viewModel.book.id, let newest = viewModel.visibleMessages.first else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo(newest.id, anchor: .bottom)
+                        }
+                        deepLink.pendingBookId = nil
                     }
                 }
             }

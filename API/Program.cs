@@ -31,21 +31,21 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database", tags: ["ready"]);
 
-// SignalR. Production uses the shared Azure SignalR Service backplane; local dev
-// runs in-process so the simulator can hit localhost directly without colliding
-// with prod's ChatHub registration in the shared Azure SignalR Service.
-var signalR = builder.Services.AddSignalR()
+// SignalR. Both dev and prod use the Azure SignalR Service backplane so the
+// simulator and physical device can exchange messages in real time end-to-end.
+// Trade-off: simulator's hub invocations route through SignalR Service to one of
+// the registered servers (local or Azure prod), so local dotnet may not see
+// every invoke. Flip to AddSignalR()-only (no AzureSignalR) when you need
+// guaranteed local invoke routing for server-side debugging.
+builder.Services.AddSignalR()
     .AddJsonProtocol(options =>
     {
         options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeConverter());
-    });
-if (!builder.Environment.IsDevelopment())
-{
-    signalR.AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
+    })
+    .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
         ?? "Endpoint=https://oldmansbookclub-signalr.service.signalr.net;AuthType=aad;Version=1.0;");
-}
 
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();

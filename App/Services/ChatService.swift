@@ -1,7 +1,20 @@
 import Foundation
 import SignalRClient
 
-enum ChatError: Error { case notConnected }
+enum ChatError: Error {
+    case notConnected
+    // Server-side HubException — carries the message the server threw so the UI
+    // can surface it (rate limit, validation failures, etc.) instead of a generic
+    // "connection lost" string.
+    case serverError(String)
+}
+
+private func translateInvokeError(_ error: Error) -> Error {
+    if let sigr = error as? SignalRError, case .invocationError(let msg) = sigr {
+        return ChatError.serverError(msg)
+    }
+    return error
+}
 
 actor ChatService {
     static let shared = ChatService()
@@ -166,27 +179,33 @@ actor ChatService {
     }
 
     func sendText(bookId: UUID, body: String) async throws {
-        try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body)
+        do { try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body) }
+        catch { throw translateInvokeError(error) }
     }
 
     func sendPhoto(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
-        try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
+        do { try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString) }
+        catch { throw translateInvokeError(error) }
     }
 
     func sendVideo(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
-        try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
+        do { try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString) }
+        catch { throw translateInvokeError(error) }
     }
 
     func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID) async throws {
-        try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString)
+        do { try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString) }
+        catch { throw translateInvokeError(error) }
     }
 
     func deleteMessage(messageId: UUID) async throws {
-        try await readyConnection().invoke(method: "DeleteMessage", arguments: messageId.uuidString)
+        do { try await readyConnection().invoke(method: "DeleteMessage", arguments: messageId.uuidString) }
+        catch { throw translateInvokeError(error) }
     }
 
     func forwardMessage(bookId: UUID, messageId: UUID) async throws {
-        try await readyConnection().invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString)
+        do { try await readyConnection().invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString) }
+        catch { throw translateInvokeError(error) }
     }
 
     func disconnect() async {
