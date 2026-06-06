@@ -100,6 +100,9 @@ final class BookViewModel: ObservableObject {
         await ChatService.shared.setOnMessageReceived { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
 
+            // Any SignalR receive proves we're online — clear the stale offline banner.
+            self.markOnline()
+
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
             guard !self.messages.contains(where: { $0.id == message.id }) else { return }
 
@@ -205,11 +208,13 @@ final class BookViewModel: ObservableObject {
 
         do {
             try await ChatService.shared.sendText(bookId: book.id, body: text)
+            markOnline()
         } catch {
             await ChatService.shared.disconnect()
             await ChatService.shared.connect(bookId: book.id)
             do {
                 try await ChatService.shared.sendText(bookId: book.id, body: text)
+                markOnline()
             } catch {
                 messages.removeAll { $0.id == clientId }
                 pendingByBody.removeValue(forKey: text)
@@ -375,6 +380,8 @@ final class BookViewModel: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(500))
                 try await invokeHub(for: item, mediaUrl: mediaUrl)
             }
+            // Invoke succeeded — round trip proves we're online.
+            markOnline()
             // Don't remove from queue here — wait for the server echo to confirm delivery.
             // Echo handler (onMessageReceived) removes the queue entry + schedules file
             // cleanup. If no echo arrives within the timeout, the bubble flips to .failed
@@ -404,6 +411,13 @@ final class BookViewModel: ObservableObject {
             try await ChatService.shared.sendVideo(
                 bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
         }
+    }
+
+    // Clear the offline banner whenever something proves we're online (a SignalR
+    // receive, a successful send, etc.). The banner sticks until we see fresh
+    // evidence of connectivity rather than reflecting some stale prior failure.
+    private func markOnline() {
+        if isOffline { isOffline = false }
     }
 
     // Safety net for silent SignalR failures: if invoke() returns success but the
