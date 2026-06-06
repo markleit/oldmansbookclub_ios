@@ -24,6 +24,7 @@ struct MessageInputView: View {
     @State private var showingPhotoPicker = false
     @State private var pulsing = false
     @State private var elapsedSeconds = 0
+    @State private var isPreparingMedia = false
 
     private var hasContent: Bool {
         !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil || pendingVideo != nil
@@ -60,6 +61,22 @@ struct MessageInputView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                // Media-preparation indicator — PhotosPicker's loadTransferable does a
+                // file copy that can take several seconds for large videos. Show
+                // explicit feedback so the UI doesn't appear frozen.
+                if isPreparingMedia {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Preparing media…")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .transition(.opacity)
                 }
 
                 // Pending image thumbnail
@@ -173,6 +190,8 @@ struct MessageInputView: View {
         .onChange(of: selectedPhotoItem) { item in
             Task {
                 guard let item else { return }
+                isPreparingMedia = true
+                defer { isPreparingMedia = false }
                 if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
                     if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
                         pendingVideo = video.url
