@@ -30,7 +30,7 @@ final class ProfileViewModel: ObservableObject {
         UserDefaults.standard.set(user.preferences.tapToTalk, forKey: "tapToTalkEnabled")
 
         guard let urlStr = user.avatarUrl, let url = URL(string: urlStr) else { return }
-        if let cached = ImageCache.shared[url] { loadedAvatarImage = cached; return }
+        if let cached = await ImageCache.shared.get(url) { loadedAvatarImage = cached; return }
         let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         guard let (data, _) = try? await URLSession.shared.data(for: request),
               let img = UIImage(data: data) else { return }

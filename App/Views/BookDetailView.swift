@@ -1029,7 +1029,7 @@ struct SenderProfileView: View {
             }
             .task {
                 guard let urlStr = avatarUrl, let url = URL(string: urlStr) else { return }
-                if let cached = ImageCache.shared[url] { avatarImage = cached; return }
+                if let cached = await ImageCache.shared.get(url) { avatarImage = cached; return }
                 let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
                 guard let (data, _) = try? await URLSession.shared.data(for: request),
                       let img = UIImage(data: data) else { return }

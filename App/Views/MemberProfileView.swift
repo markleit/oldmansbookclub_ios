@@ -61,8 +61,11 @@ struct MemberProfileView: View {
 
     private func loadAvatar() async {
         guard let urlStr = member.avatarUrl, let url = URL(string: urlStr) else { return }
+        if let cached = await ImageCache.shared.get(url) { avatarImage = cached; return }
         let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
-        guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }
-        avatarImage = UIImage(data: data)
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let img = UIImage(data: data) else { return }
+        ImageCache.shared[url] = img
+        avatarImage = img
     }
 }

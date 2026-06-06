@@ -439,8 +439,9 @@ struct VideoThumbnailView: View {
             }
         }
         .task(id: url) {
-            // Check in-memory cache first — avoids re-downloading on every LazyVStack recycle
-            if let cached = ImageCache.shared[url] {
+            // Check the two-tier cache first — avoids re-downloading on every
+            // LazyVStack recycle and survives app launches via the disk layer.
+            if let cached = await ImageCache.shared.get(url) {
                 thumbnail = cached
                 return
             }
