@@ -17,8 +17,10 @@ final class CacheService {
 
     private init() {}
 
+    // Caches/ — iOS purges automatically under disk pressure, not backed up to iCloud,
+    // matches the regenerable-from-server semantics of message data.
     private func fileURL(key: String) -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("cache_\(key).json")
     }
 
