@@ -22,8 +22,15 @@ final class AudioRecorder {
             AVEncoderBitRateKey: 32000,
         ]
 
-        recorder = try AVAudioRecorder(url: url, settings: settings)
-        recorder?.record()
+        let newRecorder = try AVAudioRecorder(url: url, settings: settings)
+        // record() returns false if the session isn't ready; surface that as an
+        // error instead of leaving a recorder that reports isRecording == false
+        // (which would later make stop() return nil and silently drop the message).
+        guard newRecorder.record() else {
+            throw NSError(domain: "AudioRecorder", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to start recording."])
+        }
+        recorder = newRecorder
         startTime = Date()
     }
 

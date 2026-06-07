@@ -338,8 +338,10 @@ final class BookViewModel: ObservableObject {
         guard granted else { showMicDeniedAlert = true; return }
         // Recording is the primary action: stop any active playback first so the
         // player and recorder don't run on the shared playAndRecord session at once
-        // (which mixes the playing audio into the live capture).
-        AudioPlayerService.shared.stopAll()
+        // (which mixes the playing audio into the live capture). Leave session
+        // deactivation to the recorder — it reactivates immediately, and a
+        // deactivate/reactivate race here makes record() silently fail.
+        AudioPlayerService.shared.stopAll(deactivateSession: false)
         do {
             try audioRecorder.start()
             isRecording = true

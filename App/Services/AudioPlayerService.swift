@@ -56,8 +56,12 @@ final class AudioPlayerService: ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    func stopAll() {
-        stopCurrentPlayer()
+    // deactivateSession: pass false when the caller is about to immediately
+    // reconfigure + reactivate the session itself (e.g. starting a recording).
+    // Deactivating here and reactivating microseconds later races the audio
+    // session and can make AVAudioRecorder.record() silently fail.
+    func stopAll(deactivateSession: Bool = true) {
+        stopCurrentPlayer(deactivateSession: deactivateSession)
     }
 
     func seek(to fraction: Double) {
@@ -102,7 +106,7 @@ final class AudioPlayerService: ObservableObject {
             }
     }
 
-    private func stopCurrentPlayer() {
+    private func stopCurrentPlayer(deactivateSession: Bool = true) {
         isUserInitiatedPause = true
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
@@ -114,7 +118,9 @@ final class AudioPlayerService: ObservableObject {
         isBuffering = false
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if deactivateSession {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     private func startTimer() {
