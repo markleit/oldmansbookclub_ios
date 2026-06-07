@@ -64,7 +64,7 @@ struct Message: Identifiable, Codable {
     var clientId: UUID? = nil               // local only — set on SignalR echo for dedup, nil elsewhere
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId
     }
 }
 
@@ -83,6 +83,10 @@ extension Message {
         sentAt = try c.decode(Date.self, forKey: .sentAt)
         isDeleted = try c.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
         isForwarded = try c.decodeIfPresent(Bool.self, forKey: .isForwarded) ?? false
+        // Present on the sender's own messages (REST + SignalR echo); lets load()
+        // reconcile a confirmed server message with its optimistic copy when the
+        // live SignalR echo was missed (e.g. app backgrounded mid-send).
+        clientId = try c.decodeIfPresent(UUID.self, forKey: .clientId)
     }
 }
 

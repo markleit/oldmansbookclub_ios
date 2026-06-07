@@ -66,7 +66,8 @@ public class ClubsController(AppDbContext db) : ControllerBase
                 m.DeletedAt == null ? m.DurationSeconds : null,
                 m.SentAt,
                 m.DeletedAt != null,
-                m.IsForwarded))
+                m.IsForwarded,
+                m.DeletedAt == null ? m.ClientId : null))
             .ToListAsync();
     }
 

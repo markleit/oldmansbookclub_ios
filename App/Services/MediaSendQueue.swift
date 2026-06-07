@@ -66,6 +66,12 @@ final class MediaSendQueue {
         save()
     }
 
+    func resetRetry(id: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        items[idx].retryCount = 0
+        save()
+    }
+
     // Moves a temp file (e.g. AVAudioRecorder output, or PhotosPicker video URL) into
     // the persistent queue directory. Returns the destination URL or nil on failure.
     func moveToQueue(from tempUrl: URL, extension ext: String) -> URL? {

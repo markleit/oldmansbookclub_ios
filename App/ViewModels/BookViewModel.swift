@@ -68,7 +68,18 @@ final class BookViewModel: ObservableObject {
             // optimistic entries survive across refresh. Fresh fetch wins on
             // overlapping ids (server-side edits propagate).
             var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-            for msg in fetched { byId[msg.id] = msg }
+            let myId = TokenStore.shared.userId
+            for msg in fetched {
+                // Reconcile a confirmed server message with its optimistic copy when the
+                // live SignalR echo was missed (e.g. app backgrounded mid-send). The
+                // optimistic entry's id equals our clientId; without this the server copy
+                // (different id) would appear as a duplicate and the queue entry would stick.
+                if let cid = msg.clientId, msg.senderId == myId, byId[cid] != nil {
+                    byId.removeValue(forKey: cid)
+                    clearPendingSend(clientId: cid)
+                }
+                byId[msg.id] = msg
+            }
             messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
             saveMessagesCache()
 
@@ -351,11 +362,25 @@ final class BookViewModel: ObservableObject {
     }
 
     func retryMediaMessage(id: UUID) async {
+        // Manual retry resets the auto-retry budget so the user can always try again,
+        // even after the automatic attempts were exhausted (retryCount hit the ceiling).
+        MediaSendQueue.shared.resetRetry(id: id)
         guard let item = MediaSendQueue.shared.items.first(where: { $0.id == id }) else { return }
         if let idx = messages.firstIndex(where: { $0.id == id }) {
             messages[idx].sendState = .sending
         }
         await sendMediaItem(item)
+    }
+
+    // Reconciliation cleanup when load() finds a confirmed server message for one of
+    // our optimistic sends (the live echo was missed): drop the media queue entry and
+    // schedule its local file for deletion, and clear any pending-text bookkeeping.
+    private func clearPendingSend(clientId: UUID) {
+        if let item = MediaSendQueue.shared.items.first(where: { $0.id == clientId }) {
+            MediaSendQueue.shared.remove(id: clientId)
+            MediaSendQueue.shared.scheduleCleanup(fileName: item.fileName)
+        }
+        pendingByBody = pendingByBody.filter { $0.value != clientId }
     }
 
     func cancelMediaMessage(id: UUID) {

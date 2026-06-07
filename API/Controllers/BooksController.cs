@@ -168,7 +168,8 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                 m.DeletedAt == null ? m.DurationSeconds : null,
                 m.SentAt,
                 m.DeletedAt != null,
-                m.IsForwarded))
+                m.IsForwarded,
+                m.DeletedAt == null ? m.ClientId : null))
             .ToListAsync();
 
         if (messages.Any(m => m.MediaUrl != null))
