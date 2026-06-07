@@ -114,16 +114,30 @@ final class APIClient {
 
     struct RefreshTokenRequest: Encodable { let refreshToken: String }
 
+    // Distinguishes a definitive refresh-token rejection (the token is dead → sign out)
+    // from a transient failure (network down, server 5xx, timeout → keep the session and
+    // retry later). Conflating the two is what signs users out after an idle period.
+    enum RefreshError: Error { case rejected, transient }
+
     func refresh(refreshToken: String) async throws -> AuthResponse {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/auth/refresh")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(RefreshTokenRequest(refreshToken: refreshToken))
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.userAuthenticationRequired)
+        request.httpBody = try? encoder.encode(RefreshTokenRequest(refreshToken: refreshToken))
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw RefreshError.transient   // network blip — not the token's fault
         }
-        return try decoder.decode(AuthResponse.self, from: data)
+        guard let http = response as? HTTPURLResponse else { throw RefreshError.transient }
+        if http.statusCode == 401 || http.statusCode == 403 { throw RefreshError.rejected }
+        guard (200..<300).contains(http.statusCode) else { throw RefreshError.transient }
+        do {
+            return try decoder.decode(AuthResponse.self, from: data)
+        } catch {
+            throw RefreshError.transient
+        }
     }
 
     func logout(refreshToken: String) async throws {
@@ -658,7 +672,8 @@ final class APIClient {
 
     // Single in-flight refresh task — multiple concurrent 401s coalesce so we don't
     // burn through rotated refresh tokens with parallel refreshes.
-    private var refreshTask: Task<Bool, Never>?
+    private enum RefreshOutcome { case refreshed, rejected, transient }
+    private var refreshTask: Task<RefreshOutcome, Never>?
     private let refreshLock = NSLock()
 
     // Refresh the access token if it's expired or within 2 minutes of expiry.
@@ -667,7 +682,11 @@ final class APIClient {
     func ensureFreshToken() async -> Bool {
         guard TokenStore.shared.refreshToken != nil else { return TokenStore.shared.token != nil }
         if !shouldRefreshPreemptively() { return TokenStore.shared.token != nil }
-        return await attemptRefresh()
+        switch await attemptRefresh() {
+        case .refreshed: return true
+        case .transient: return TokenStore.shared.token != nil  // keep current token; try again later
+        case .rejected: handleAuthFailure(); return false       // token is dead — sign out
+        }
     }
 
     private func shouldRefreshPreemptively() -> Bool {
@@ -683,7 +702,7 @@ final class APIClient {
         return Date(timeIntervalSince1970: exp).timeIntervalSinceNow < 120
     }
 
-    private func attemptRefresh() async -> Bool {
+    private func attemptRefresh() async -> RefreshOutcome {
         // Coalesce concurrent 401s onto a single in-flight refresh. The locked
         // bookkeeping lives in synchronous helpers — NSLock can't be held across
         // an `await` and isn't callable from an async context under Swift 6.
@@ -693,19 +712,21 @@ final class APIClient {
         return result
     }
 
-    private func existingOrNewRefreshTask() -> (task: Task<Bool, Never>, isOwner: Bool) {
+    private func existingOrNewRefreshTask() -> (task: Task<RefreshOutcome, Never>, isOwner: Bool) {
         refreshLock.lock()
         defer { refreshLock.unlock() }
         if let existing = refreshTask { return (existing, false) }
-        let task = Task<Bool, Never> { [weak self] in
-            guard let self, let rt = TokenStore.shared.refreshToken else { return false }
+        let task = Task<RefreshOutcome, Never> { [weak self] in
+            guard let self, let rt = TokenStore.shared.refreshToken else { return .rejected }
             do {
                 let response = try await self.refresh(refreshToken: rt)
                 TokenStore.shared.token = response.accessToken
                 TokenStore.shared.refreshToken = response.refreshToken
-                return true
+                return .refreshed
+            } catch RefreshError.rejected {
+                return .rejected
             } catch {
-                return false
+                return .transient
             }
         }
         refreshTask = task
@@ -733,7 +754,13 @@ final class APIClient {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
-            if !retried, await attemptRefresh() { return try await get(path: path, retried: true) }
+            if !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await get(path: path, retried: true)
+                case .transient: throw URLError(.timedOut)  // keep session; surface as a transient error
+                case .rejected: break                        // fall through to sign out
+                }
+            }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
@@ -756,8 +783,12 @@ final class APIClient {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
-            if authenticated, !retried, await attemptRefresh() {
-                return try await post(path: path, body: body, authenticated: authenticated, retried: true)
+            if authenticated, !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await post(path: path, body: body, authenticated: authenticated, retried: true)
+                case .transient: throw URLError(.timedOut)
+                case .rejected: break
+                }
             }
             if authenticated { handleAuthFailure() }
             throw URLError(.userAuthenticationRequired)
@@ -775,7 +806,13 @@ final class APIClient {
         let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
-            if !retried, await attemptRefresh() { return try await postEmpty(path: path, retried: true) }
+            if !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await postEmpty(path: path, retried: true)
+                case .transient: throw URLError(.timedOut)
+                case .rejected: break
+                }
+            }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
@@ -796,7 +833,13 @@ final class APIClient {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
-            if !retried, await attemptRefresh() { return try await patch(path: path, body: body, retried: true) }
+            if !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await patch(path: path, body: body, retried: true)
+                case .transient: throw URLError(.timedOut)
+                case .rejected: break
+                }
+            }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
