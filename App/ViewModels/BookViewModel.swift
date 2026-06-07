@@ -611,13 +611,20 @@ final class BookViewModel: ObservableObject {
         guard networkMonitor == nil else { return }
         let monitor = NWPathMonitor()
         networkMonitor = monitor
-        var prevStatus: NWPath.Status?
+        let prevStatus = NetPathStatusBox()
         monitor.pathUpdateHandler = { [weak self] path in
-            let wasOffline = prevStatus.map { $0 != .satisfied } ?? false
-            prevStatus = path.status
+            let wasOffline = prevStatus.value.map { $0 != .satisfied } ?? false
+            prevStatus.value = path.status
             guard wasOffline, path.status == .satisfied else { return }
             Task { await self?.load() }
         }
         monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }
+}
+
+/// Reference holder for the previous network status. NWPathMonitor serializes
+/// its handler on a single queue, so unsynchronized access to `value` is safe;
+/// the box lets the @Sendable handler mutate state without capturing a `var`.
+private final class NetPathStatusBox: @unchecked Sendable {
+    var value: NWPath.Status?
 }

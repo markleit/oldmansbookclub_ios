@@ -16,7 +16,10 @@ import CryptoKit
 //     blob is found across SAS rotations.
 //   - For everything else, key on full URL (Google Books encodes the book ID in the
 //     query — stripping it would collapse all covers onto one slot).
-final class ImageCache {
+// @unchecked Sendable: all mutable state is a thread-safe NSCache plus a serial
+// disk queue, so the instance is safe to share across concurrency domains (the
+// `diskQueue.async` closures capture `self`).
+final class ImageCache: @unchecked Sendable {
     static let shared = ImageCache()
 
     private let memory = NSCache<NSString, UIImage>()

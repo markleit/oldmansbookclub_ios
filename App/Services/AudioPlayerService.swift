@@ -141,7 +141,7 @@ final class AudioPlayerService: ObservableObject {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
         if isNearEar && !isExternalRouteActive {
             // Earpiece path: requires playAndRecord to override default speaker routing
             try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)

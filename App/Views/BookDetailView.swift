@@ -440,7 +440,7 @@ struct MessageRow: View {
     @ViewBuilder
     private var readReceiptRow: some View {
         let readers = viewModel.reads.filter { $0.lastSeenMessageId == message.id }
-        return Group {
+        Group {
             if !readers.isEmpty {
                 HStack(spacing: 4) {
                     Spacer()

@@ -684,11 +684,19 @@ final class APIClient {
     }
 
     private func attemptRefresh() async -> Bool {
+        // Coalesce concurrent 401s onto a single in-flight refresh. The locked
+        // bookkeeping lives in synchronous helpers — NSLock can't be held across
+        // an `await` and isn't callable from an async context under Swift 6.
+        let (task, isOwner) = existingOrNewRefreshTask()
+        let result = await task.value
+        if isOwner { clearRefreshTask() }
+        return result
+    }
+
+    private func existingOrNewRefreshTask() -> (task: Task<Bool, Never>, isOwner: Bool) {
         refreshLock.lock()
-        if let existing = refreshTask {
-            refreshLock.unlock()
-            return await existing.value
-        }
+        defer { refreshLock.unlock() }
+        if let existing = refreshTask { return (existing, false) }
         let task = Task<Bool, Never> { [weak self] in
             guard let self, let rt = TokenStore.shared.refreshToken else { return false }
             do {
@@ -701,12 +709,13 @@ final class APIClient {
             }
         }
         refreshTask = task
-        refreshLock.unlock()
-        let result = await task.value
+        return (task, true)
+    }
+
+    private func clearRefreshTask() {
         refreshLock.lock()
+        defer { refreshLock.unlock() }
         refreshTask = nil
-        refreshLock.unlock()
-        return result
     }
 
     private func handleAuthFailure() {
