@@ -147,7 +147,15 @@ final class AudioPlayerService: ObservableObject {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
+        // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK
+        // (Xcode 26 / Swift 6.2+). Gate on the compiler so this still builds on the
+        // older Xcode the CI runner uses, while staying deprecation-warning-free on
+        // the release toolchain.
+        #if compiler(>=6.2)
         let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
+        #else
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        #endif
         if isNearEar && !isExternalRouteActive {
             // Earpiece path: requires playAndRecord to override default speaker routing
             try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)

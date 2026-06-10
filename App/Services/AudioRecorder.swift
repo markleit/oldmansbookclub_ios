@@ -8,7 +8,13 @@ final class AudioRecorder {
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
+        // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK;
+        // gate on the compiler so this builds on the older Xcode CI uses too.
+        #if compiler(>=6.2)
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+        #else
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+        #endif
         try session.setActive(true)
 
         let url = FileManager.default.temporaryDirectory
