@@ -336,6 +336,13 @@ final class BookViewModel: ObservableObject {
             }
         }
         guard granted else { showMicDeniedAlert = true; return }
+        // Claim the recording state up front. The start chirp below awaits (~150ms);
+        // in press-and-hold mode a quick release fires stopRecording during that await.
+        // If we didn't set isRecording first, stopRecording's `guard isRecording` would
+        // make it a no-op and the recorder would start AFTER release — a stuck recording
+        // that mimics tap-to-talk. (Only surfaced with tones on, since tones off has no
+        // delay.) Claiming it here lets a release during the chirp cancel the start.
+        isRecording = true
         // Recording is the primary action: stop any active playback first so the
         // player and recorder don't run on the shared playAndRecord session at once
         // (which mixes the playing audio into the live capture). Leave session
@@ -345,11 +352,14 @@ final class BookViewModel: ObservableObject {
         // "Mic is open" chirp (walkie-talkie style). Plays to completion before
         // capture starts so it precedes — and never bleeds into — the recording.
         await AudioCue.shared.playRecordStart()
+        // Released during the chirp → stopRecording already flipped isRecording off;
+        // abort without starting capture.
+        guard isRecording else { return }
         do {
             try audioRecorder.start()
-            isRecording = true
             recordingStartTime = Date()
         } catch {
+            isRecording = false
             errorMessage = "Could not start recording."
         }
     }
