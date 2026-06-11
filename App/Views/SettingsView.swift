@@ -2,11 +2,17 @@ import SwiftUI
 
 struct SettingsView: View {
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
+    // Local-only (device audio feedback). Default on. Read in AudioCue via the same key.
+    @AppStorage("micChirpEnabled") private var micChirp = true
 
     var body: some View {
         Form {
             Section(footer: Text("When off, hold the mic button to record and release to send.")) {
                 Toggle("Tap-to-Talk", isOn: $tapToTalk)
+            }
+
+            Section(footer: Text("Play a short tone when a voice recording starts and stops.")) {
+                Toggle("Recording Tones", isOn: $micChirp)
             }
 
             Section {

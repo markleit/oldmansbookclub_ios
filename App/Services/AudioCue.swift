@@ -8,6 +8,12 @@ final class AudioCue {
     static let shared = AudioCue()
 
     private var player: AVAudioPlayer?
+
+    // User setting (Settings → "Recording Tones"), stored via @AppStorage under the
+    // same key. Defaults to on when the key has never been written.
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: "micChirpEnabled") as? Bool ?? true
+    }
     // Rising = "go ahead" (mic open). Falling = "over" (mic closed).
     private lazy var recordStartData: Data = AudioCue.chirp(tones: [(1174.66, 60), (1567.98, 60)])
     private lazy var recordStopData: Data = AudioCue.chirp(tones: [(1567.98, 55), (1174.66, 75)])
@@ -15,6 +21,7 @@ final class AudioCue {
     // Plays the start chirp and returns once it has finished (~130ms). Callers start
     // the recorder after this so the beep precedes capture, walkie-talkie style.
     func playRecordStart() async {
+        guard AudioCue.isEnabled else { return }
         // Ensure the beep is audible regardless of the silent switch by routing it
         // through the playAndRecord session (the recorder reuses this category next).
         let session = AVAudioSession.sharedInstance()
@@ -32,6 +39,7 @@ final class AudioCue {
     // ended (so it won't be recorded) and the send shouldn't wait on it. Deactivates
     // the session afterward, matching the recorder's own stop behavior.
     func playRecordStop() {
+        guard AudioCue.isEnabled else { return }
         Task { [weak self] in
             guard let self else { return }
             let session = AVAudioSession.sharedInstance()
