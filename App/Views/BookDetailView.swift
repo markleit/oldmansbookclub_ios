@@ -163,6 +163,18 @@ struct BookDetailView: View {
                         }
                         deepLink.pendingBookId = nil
                     }
+                    // Keep the currently-playing voice message in focus. Autoplay
+                    // advances through voice messages chronologically; if the next one is
+                    // below the fold, bring it into view so audio never plays for an
+                    // off-screen bubble. Fires only when the playing message changes (not
+                    // on progress ticks), and only scrolls when it isn't already visible
+                    // so it never yanks a bubble that's already on screen.
+                    .onReceive(AudioPlayerService.shared.$playingMessageId) { playingId in
+                        guard let playingId, !visibleMessageIds.contains(playingId) else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo(playingId, anchor: .center)
+                        }
+                    }
                 }
             }
 
@@ -259,7 +271,12 @@ struct BookDetailView: View {
                 await viewModel.load()
             }
         }
-        .onDisappear { viewModel.disconnect() }
+        .onDisappear {
+            viewModel.disconnect()
+            // Stop voice playback when actually leaving the chat (this fires on a real
+            // navigation pop, not when a bubble merely scrolls out of view).
+            AudioPlayerService.shared.stopAll()
+        }
     }
 
     @ViewBuilder
@@ -559,9 +576,10 @@ struct VoiceMessageBubble: View {
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
         .animation(.easeInOut(duration: 0.25), value: isPlaying)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
-        .onDisappear {
-            if isPlaying { audio.pause() }
-        }
+        // NOTE: deliberately no onDisappear-pause here. The bubble disappears whenever
+        // it scrolls out of the LazyVStack, and pausing on that stopped playback when
+        // the user scrolled away. Stopping playback on leaving the chat is handled by
+        // the chat view's own onDisappear instead.
     }
 
     private var controlsRow: some View {
