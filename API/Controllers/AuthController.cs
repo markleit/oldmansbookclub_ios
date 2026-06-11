@@ -322,11 +322,22 @@ public class AuthController(
         if (existing.RevokedAt is not null) return Unauthorized();
         if (existing.ExpiresAt <= DateTime.UtcNow) return Unauthorized();
 
-        // Rotate: revoke the presented token, issue a fresh pair.
-        existing.RevokedAt = DateTime.UtcNow;
+        // Non-rotating refresh token with sliding expiry. We deliberately do NOT
+        // rotate (revoke-and-reissue) on every refresh. Rotation revokes the old
+        // token before the client can confirm it persisted the new one; a refresh
+        // whose response is lost — e.g. a background/push-woken refresh that iOS
+        // suspends before the new token is saved — leaves the server having revoked
+        // a token the client still holds, so the next refresh 401s and the user is
+        // forced to sign in. This was the confirmed cause of the "signed out after
+        // idle" reports (the token table showed chains repeatedly orphaned). Keeping
+        // the same token valid makes a lost response harmless. Revocation still works
+        // for explicit logout and account deletion via RevokedAt. Trade-off: no
+        // refresh-token reuse detection, acceptable for this app's threat model.
+        existing.ExpiresAt = DateTime.UtcNow.AddDays(90);
         await db.SaveChangesAsync();
 
-        return Ok(await BuildAuthResponse(existing.User));
+        var access = GenerateJwt(existing.User);
+        return Ok(new AuthResponse(access, request.RefreshToken, await BuildUserDto(existing.User)));
     }
 
     [Authorize]
