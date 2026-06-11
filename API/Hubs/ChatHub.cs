@@ -186,13 +186,26 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     {
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
-        // Push to all members except the sender; iOS willPresent suppresses it if they're actively viewing that chat
+        // The sender's own device token can be registered to other accounts too (the
+        // same physical device signed in as multiple users — dev/test logins — over
+        // time). Excluding by UserId isn't enough: another account's membership carries
+        // the sender's device token, so the sender's phone gets a push for its own
+        // message. Exclude the sender's device token(s) explicitly, and Distinct() so a
+        // device shared across members isn't notified more than once.
+        var senderTokens = await db.Users
+            .Where(u => u.Id == dto.SenderId && u.DeviceToken != null)
+            .Select(u => u.DeviceToken!)
+            .ToListAsync();
+
         var tokens = await db.Memberships
             .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId)
             .Select(m => m.User.DeviceToken)
             .Where(t => t != null)
             .Cast<string>()
+            .Distinct()
             .ToListAsync();
+
+        tokens = tokens.Where(t => !senderTokens.Contains(t)).ToList();
 
         if (tokens.Count > 0)
             await notifications.SendNewMessageAsync(tokens, dto, bookTitle, bookId);
