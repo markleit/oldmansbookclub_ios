@@ -19,6 +19,7 @@
 		3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
+		57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22282622C7A5BEAAEE8961CE /* AudioCue.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
 		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
@@ -50,6 +51,7 @@
 		02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubApp.swift; sourceTree = "<group>"; };
+		22282622C7A5BEAAEE8961CE /* AudioCue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCue.swift; sourceTree = "<group>"; };
 		2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViewModel.swift; sourceTree = "<group>"; };
 		345BF07C510F9CAACFA8BD0C /* ManageClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManageClubsView.swift; sourceTree = "<group>"; };
@@ -108,6 +110,7 @@
 			isa = PBXGroup;
 			children = (
 				2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */,
+				22282622C7A5BEAAEE8961CE /* AudioCue.swift */,
 				3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */,
 				111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */,
 				8994D3123C1F58B7C697E408 /* CacheService.swift */,
@@ -268,6 +271,7 @@
 				8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */,
 				BC028A1177F026A4999F388C /* AdminView.swift in Sources */,
 				165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */,
+				57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */,
 				8945DA2868AE99040E4F7D11 /* AudioPlayerService.swift in Sources */,
 				238255509291CD03907584E8 /* AudioRecorder.swift in Sources */,
 				F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */,

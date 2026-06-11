@@ -342,6 +342,9 @@ final class BookViewModel: ObservableObject {
         // deactivation to the recorder — it reactivates immediately, and a
         // deactivate/reactivate race here makes record() silently fail.
         AudioPlayerService.shared.stopAll(deactivateSession: false)
+        // "Mic is open" chirp (walkie-talkie style). Plays to completion before
+        // capture starts so it precedes — and never bleeds into — the recording.
+        await AudioCue.shared.playRecordStart()
         do {
             try audioRecorder.start()
             isRecording = true
@@ -356,7 +359,11 @@ final class BookViewModel: ObservableObject {
         isRecording = false
         let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartTime = nil
-        guard let (tempUrl, duration) = audioRecorder.stop() else { return }
+        let recording = audioRecorder.stop()
+        // "Mic closed" chirp — capture has ended, so it won't be in the recording.
+        // Plays on close regardless of whether the take is kept or discarded.
+        AudioCue.shared.playRecordStop()
+        guard let (tempUrl, duration) = recording else { return }
         guard elapsed >= 0.5 else { return }
         guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: tempUrl, extension: "m4a"),
               let userId = TokenStore.shared.userId else { return }
