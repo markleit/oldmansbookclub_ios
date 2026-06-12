@@ -302,7 +302,7 @@ struct GrowingTextEditor: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             GrowingTextView(text: $text, height: $height)
-                .frame(height: min(height, 120))
+                .frame(height: min(height, GrowingTextView.maxHeight))
 
             if text.isEmpty {
                 Text(placeholder)
@@ -319,6 +319,8 @@ struct GrowingTextEditor: View {
 }
 
 struct GrowingTextView: UIViewRepresentable {
+    static let maxHeight: CGFloat = 120
+
     @Binding var text: String
     @Binding var height: CGFloat
 
@@ -342,6 +344,10 @@ struct GrowingTextView: UIViewRepresentable {
     func recalcHeight(_ tv: UITextView) {
         let size = tv.sizeThatFits(CGSize(width: tv.frame.width > 0 ? tv.frame.width : UIScreen.main.bounds.width, height: .infinity))
         let newHeight = max(size.height, 44)
+        // Once the content is taller than the visible cap, let the text view scroll so
+        // the caret stays in view instead of growing past (and clipping under) the cap.
+        let shouldScroll = newHeight > GrowingTextView.maxHeight
+        if tv.isScrollEnabled != shouldScroll { tv.isScrollEnabled = shouldScroll }
         if abs(newHeight - height) > 0.5 {
             DispatchQueue.main.async { height = newHeight }
         }
