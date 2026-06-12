@@ -17,7 +17,17 @@ final class BookViewModel: ObservableObject {
     @Published var blockedUserIds: Set<UUID> = []
     @Published var pendingImage: UIImage?
     @Published var pendingVideo: URL?
-    @Published var isRecording = false
+    @Published var isRecording = false {
+        didSet {
+            guard isRecording != oldValue else { return }
+            // Keep the screen awake while recording so a long voice message isn't cut
+            // off when the display auto-locks. Covers every start/stop/abort/error path
+            // since they all flow through isRecording. Playback manages this flag
+            // separately (AudioPlayerService); the two are mutually exclusive because
+            // starting a recording stops playback first.
+            UIApplication.shared.isIdleTimerDisabled = isRecording
+        }
+    }
     @Published var isUploading = false
     @Published var showSavedMessages = false
     @Published var savedMessages: [SavedMessage] = []
