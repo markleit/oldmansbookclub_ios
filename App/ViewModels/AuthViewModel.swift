@@ -15,7 +15,20 @@ final class AuthViewModel: ObservableObject {
     private var pendingEmail: String?
 
     init() {
-        if TokenStore.shared.isTokenExpired {
+        // A session is valid as long as a refresh token exists — the short-lived (1h)
+        // access token being expired on launch is normal and recoverable via
+        // /auth/refresh. Previously a cold launch with an expired access token cleared
+        // BOTH tokens and forced a re-login, never using the still-valid 90-day refresh
+        // token: the #1 cause of "asked to sign in again after idle". Stay authenticated
+        // and refresh in the background; only a hard rejection (or no refresh token at
+        // all) signs the user out.
+        if TokenStore.shared.refreshToken != nil {
+            isAuthenticated = TokenStore.shared.isAuthenticated
+            Task { @MainActor [weak self] in
+                let ok = await APIClient.shared.ensureFreshToken()
+                if !ok { self?.signOut() }
+            }
+        } else if TokenStore.shared.isTokenExpired {
             TokenStore.shared.clear()
             isAuthenticated = false
         } else {
