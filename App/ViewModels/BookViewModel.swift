@@ -346,19 +346,21 @@ final class BookViewModel: ObservableObject {
             }
         }
         guard granted else { showMicDeniedAlert = true; return }
+        // Stop any active playback FIRST (recording is the primary action; the player
+        // and recorder must not share the playAndRecord session, which would mix the
+        // playing audio into the capture). This must happen before claiming isRecording
+        // below: stopAll -> stopCurrentPlayer re-enables the idle timer, so if we
+        // claimed isRecording first its didSet would disable the timer and then stopAll
+        // would immediately turn it back on — leaving the screen free to lock mid-
+        // recording. Order matters; keep stopAll above isRecording = true.
+        AudioPlayerService.shared.stopAll(deactivateSession: false)
         // Claim the recording state up front. The start chirp below awaits (~150ms);
         // in press-and-hold mode a quick release fires stopRecording during that await.
         // If we didn't set isRecording first, stopRecording's `guard isRecording` would
         // make it a no-op and the recorder would start AFTER release — a stuck recording
-        // that mimics tap-to-talk. (Only surfaced with tones on, since tones off has no
-        // delay.) Claiming it here lets a release during the chirp cancel the start.
+        // that mimics tap-to-talk. Claiming it here lets a release during the chirp
+        // cancel the start, and its didSet disables the idle timer for the recording.
         isRecording = true
-        // Recording is the primary action: stop any active playback first so the
-        // player and recorder don't run on the shared playAndRecord session at once
-        // (which mixes the playing audio into the live capture). Leave session
-        // deactivation to the recorder — it reactivates immediately, and a
-        // deactivate/reactivate race here makes record() silently fail.
-        AudioPlayerService.shared.stopAll(deactivateSession: false)
         // "Mic is open" chirp (walkie-talkie style). Plays to completion before
         // capture starts so it precedes — and never bleeds into — the recording.
         await AudioCue.shared.playRecordStart()
