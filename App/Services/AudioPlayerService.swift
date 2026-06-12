@@ -47,6 +47,7 @@ final class AudioPlayerService: ObservableObject {
     }
 
     func pause() {
+        saveCurrentPosition(completed: false)
         isUserInitiatedPause = true
         player?.pause()
         playingMessageId = nil
@@ -56,11 +57,26 @@ final class AudioPlayerService: ObservableObject {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
+    // Persist the playing message's position so it can be resumed later. `completed`
+    // marks it fully played (green); otherwise saves the current elapsed time.
+    private func saveCurrentPosition(completed: Bool) {
+        guard let id = playingMessageId, let player, let item = player.currentItem else { return }
+        let dur = item.duration.seconds
+        let cur = player.currentTime().seconds
+        guard dur.isFinite, dur > 0, cur.isFinite else { return }
+        PlaybackProgressStore.shared.set(
+            id: id,
+            position: completed ? dur : min(max(cur, 0), dur),
+            completed: completed
+        )
+    }
+
     // deactivateSession: pass false when the caller is about to immediately
     // reconfigure + reactivate the session itself (e.g. starting a recording).
     // Deactivating here and reactivating microseconds later races the audio
     // session and can make AVAudioRecorder.record() silently fail.
     func stopAll(deactivateSession: Bool = true) {
+        saveCurrentPosition(completed: false)
         stopCurrentPlayer(deactivateSession: deactivateSession)
     }
 
@@ -75,15 +91,30 @@ final class AudioPlayerService: ObservableObject {
     }
 
     private func play(message: Message) {
+        saveCurrentPosition(completed: false)   // remember where the outgoing message was
         stopCurrentPlayer()
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+
+        // Resume from the saved position. Replaying a fully-played message starts over
+        // and clears its green/completed state.
+        let store = PlaybackProgressStore.shared
+        var resume = store.position(for: message.id)
+        if store.isCompleted(message.id) {
+            store.clear(message.id)
+            resume = 0
+        }
+
         let newPlayer = AVPlayer(url: url)
         player = newPlayer
         playingMessageId = message.id
         isUserInitiatedPause = false
-        progress = 0
-        currentSeconds = 0
+        let dur = Double(message.durationSeconds ?? 0)
+        progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
+        currentSeconds = Int(resume)
         isBuffering = true
+        if resume > 0.5 {
+            newPlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
+        }
         activateAudioSession()
         enableProximityMonitoring()
         newPlayer.rate = playbackRate
@@ -138,6 +169,7 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(current)
         if current >= duration - 0.05 {
             let completedId = playingMessageId
+            saveCurrentPosition(completed: true)   // mark fully played (green)
             stopCurrentPlayer()
             if let id = completedId {
                 onPlaybackCompleted?(id)

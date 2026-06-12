@@ -537,6 +537,8 @@ struct VoiceMessageBubble: View {
     var onRetry: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
+    @ObservedObject private var store = PlaybackProgressStore.shared
+    @GestureState private var isScrubbing = false
     @State private var showTranscription = false
     @State private var transcription: String?
     @State private var isTranscribing = false
@@ -545,6 +547,19 @@ struct VoiceMessageBubble: View {
     private var isSending: Bool { message.sendState == .sending }
     private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
+    private var isCompleted: Bool { store.isCompleted(message.id) }
+
+    // Live position while playing; otherwise the persisted resume position.
+    private var displayFraction: Double {
+        if isPlaying { return audio.progress }
+        guard totalSeconds > 0 else { return 0 }
+        return min(store.position(for: message.id) / Double(totalSeconds), 1)
+    }
+    // Green once fully played; replaying clears it (see PlaybackProgressStore).
+    private var barColor: Color {
+        if isCompleted { return .green }
+        return isMe ? Color.white : Color.accentColor
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -607,22 +622,42 @@ struct VoiceMessageBubble: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geo in
+                    let frac = displayFraction
+                    let thumb: CGFloat = isScrubbing ? 20 : 14
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(isMe ? Color.white.opacity(0.35) : Color(.systemGray3))
                             .frame(height: 6)
                         Capsule()
-                            .fill(isMe ? Color.white : Color.accentColor)
-                            .frame(width: geo.size.width * (isPlaying ? audio.progress : 0), height: 6)
+                            .fill(barColor)
+                            .frame(width: geo.size.width * frac, height: 6)
+                        // Draggable position indicator. Visible at all times (shows the
+                        // persisted resume point on idle bubbles), turns green when the
+                        // message has been played to the end.
+                        Circle()
+                            .fill(barColor)
+                            .frame(width: thumb, height: thumb)
+                            .overlay(Circle().stroke(Color.black.opacity(0.12), lineWidth: 0.5))
+                            .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)
+                            .offset(x: min(max(geo.size.width * frac - thumb / 2, 0), geo.size.width - thumb))
+                            .animation(.easeOut(duration: 0.12), value: isScrubbing)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                        guard isPlaying else { return }
-                        audio.seek(to: value.location.x / geo.size.width)
-                    })
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .updating($isScrubbing) { _, state, _ in state = true }
+                            .onChanged { value in
+                                let f = max(0, min(1, value.location.x / geo.size.width))
+                                if isPlaying {
+                                    audio.seek(to: f)            // live scrub
+                                } else {
+                                    store.setPosition(id: message.id, fraction: f, duration: totalSeconds)
+                                }
+                            }
+                    )
                 }
-                .frame(height: 24)
+                .frame(height: 28)
 
                 Text(formatDuration(isPlaying ? audio.currentSeconds : totalSeconds))
                     .font(.caption2)

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */; };
 		165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D395542233ADC1273F05370D /* AppDelegate.swift */; };
 		19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */; };
 		205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */; };
@@ -65,6 +66,7 @@
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
 		62112635C861D78687D704A9 /* BrowseClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseClubsView.swift; sourceTree = "<group>"; };
 		6531FD0CE01104B5FBC19167 /* MessageInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputView.swift; sourceTree = "<group>"; };
+		6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProgressStore.swift; sourceTree = "<group>"; };
 		6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EULAView.swift; sourceTree = "<group>"; };
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
@@ -116,6 +118,7 @@
 				8994D3123C1F58B7C697E408 /* CacheService.swift */,
 				EF8FBEB2C7086C94FA433207 /* ChatService.swift */,
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
+				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 			);
 			path = Services;
@@ -295,6 +298,7 @@
 				3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */,
 				58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */,
 				3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */,
+				0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
 				3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
