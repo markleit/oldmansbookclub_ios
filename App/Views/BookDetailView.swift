@@ -311,6 +311,7 @@ struct MessageRow: View {
     @ObservedObject var viewModel: BookViewModel
     @State private var showFullScreen = false
     @State private var showSenderProfile = false
+    @State private var profileReader: APIClient.ChatReadDto?
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
@@ -449,38 +450,50 @@ struct MessageRow: View {
             .fill(Color(.systemGray4))
             .overlay(
                 Text(String(name.prefix(1)).uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
             )
     }
 
     @ViewBuilder
     private var readReceiptRow: some View {
-        let readers = viewModel.reads.filter { $0.lastSeenMessageId == message.id }
+        // Every message the reader has seen (their last-seen message or any newer one)
+        // shows their avatar — not just the single message that is their exact frontier.
+        let readers = viewModel.readers(of: message)
         Group {
             if !readers.isEmpty {
                 HStack(spacing: 4) {
                     Spacer()
                     Text("Read by")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     ForEach(readers, id: \.userId) { reader in
-                        Group {
-                            if let urlStr = reader.avatarUrl, let url = URL(string: urlStr) {
-                                CachedRemoteImage(url: url) { phase in
-                                    if let image = phase.image {
-                                        image.resizable().scaledToFill()
-                                    } else {
-                                        avatarInitial(reader.displayName)
+                        Button { profileReader = reader } label: {
+                            Group {
+                                if let urlStr = reader.avatarUrl, let url = URL(string: urlStr) {
+                                    CachedRemoteImage(url: url) { phase in
+                                        if let image = phase.image {
+                                            image.resizable().scaledToFill()
+                                        } else {
+                                            avatarInitial(reader.displayName)
+                                        }
                                     }
+                                } else {
+                                    avatarInitial(reader.displayName)
                                 }
-                            } else {
-                                avatarInitial(reader.displayName)
                             }
+                            .frame(width: 28, height: 28)
+                            .clipShape(Circle())
                         }
-                        .frame(width: 22, height: 22)
-                        .clipShape(Circle())
+                        .buttonStyle(.plain)
                     }
+                }
+                .sheet(item: $profileReader) { reader in
+                    SenderProfileView(
+                        senderId: reader.userId,
+                        senderName: reader.displayName,
+                        avatarUrl: reader.avatarUrl
+                    )
                 }
             }
         }
@@ -493,7 +506,7 @@ struct MessageRow: View {
             Text(message.body ?? "")
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(isMe ? Color.blue : Color(.systemGray5))
+                .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
                 .foregroundColor(isMe ? .white : .primary)
                 .cornerRadius(16)
 
@@ -531,6 +544,15 @@ struct MessageRow: View {
     }
 }
 
+// Soft, slightly muted "my message" blue shared by text + voice bubbles and the voice
+// play icon (the vivid system blue read too harsh against the white play chip).
+extension Color {
+    static let myMessageBlue = Color(red: 0.38, green: 0.55, blue: 0.80)
+    // Slightly dimmed white for the "my" play chip + progress bar/dot, so they don't
+    // irradiate against the blue bubble and read as oversized.
+    static let softWhite = Color(white: 0.90)
+}
+
 struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
@@ -547,18 +569,35 @@ struct VoiceMessageBubble: View {
     private var isSending: Bool { message.sendState == .sending }
     private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
-    private var isCompleted: Bool { store.isCompleted(message.id) }
+    // The "my message" blue — softer/muted vs the vivid system blue. Shared by the
+    // bubble and the play icon so they read as one color family.
+    private var myBlue: Color { .myMessageBlue }
 
+    // All three play/pause controls share one circle "chip" of the same size: a light
+    // chip with a dark/accent icon. White chip on own (blue) bubbles and while playing
+    // (black bubble); grey chip on others' (grey) bubbles.
+    private var chipBackground: Color {
+        if isPlaying { return .white }
+        // Soft white (not pure white) on own bubbles so the chip doesn't irradiate
+        // against the blue and read as oversized; the others' chip is darker than its
+        // grey bubble by a comparable amount so both read as the same visual weight.
+        return isMe ? .softWhite : Color(.systemGray2)
+    }
+    private var chipIconColor: Color {
+        if isPlaying { return .black }
+        return isMe ? myBlue : Color(.darkGray)
+    }
     // Live position while playing; otherwise the persisted resume position.
     private var displayFraction: Double {
         if isPlaying { return audio.progress }
         guard totalSeconds > 0 else { return 0 }
         return min(store.position(for: message.id) / Double(totalSeconds), 1)
     }
-    // Green once fully played; replaying clears it (see PlaybackProgressStore).
+    // Progress bar / thumb color, matched to the play control: white while playing
+    // (black bubble) and on own (blue) bubbles, dark grey on others' (grey) bubbles.
     private var barColor: Color {
-        if isCompleted { return .green }
-        return isMe ? Color.white : Color.accentColor
+        if isPlaying { return .white }
+        return isMe ? .softWhite : Color(.darkGray)
     }
 
     var body: some View {
@@ -585,7 +624,9 @@ struct VoiceMessageBubble: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(isPlaying ? Color(red: 0.0, green: 0.35, blue: 0.95) : (isMe ? Color.blue : Color(.systemGray5)))
+        // Softer, slightly muted blue (vs the vivid system blue) so the white play
+        // chip doesn't contrast so hard that the control looks oversized.
+        .background(isPlaying ? Color.black : (isMe ? myBlue : Color(.systemGray5)))
         .foregroundColor(isPlaying || isMe ? .white : .primary)
         .cornerRadius(16)
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
@@ -609,14 +650,22 @@ struct VoiceMessageBubble: View {
                     .frame(width: 36, height: 36)
             } else {
                 Button { audio.toggle(message: message) } label: {
-                    if isPlaying && audio.isBuffering {
-                        ProgressView()
-                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
-                    } else {
-                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: isPlaying ? 28 : 20, weight: .semibold))
-                            .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
+                    Group {
+                        if isPlaying && audio.isBuffering {
+                            ProgressView().tint(.black)
+                        } else {
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(chipIconColor)
+                                // play.fill sits optically left of center; nudge right so it
+                                // centers in the chip. pause is symmetric, so no offset.
+                                .offset(x: isPlaying ? 0 : 1.5)
+                        }
                     }
+                    .frame(width: 36, height: 36)
+                    .background(chipBackground)
+                    .clipShape(Circle())
+                    .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
                 }
             }
 
@@ -626,14 +675,13 @@ struct VoiceMessageBubble: View {
                     let thumb: CGFloat = isScrubbing ? 20 : 14
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(isMe ? Color.white.opacity(0.35) : Color(.systemGray3))
+                            .fill(isPlaying ? Color.white.opacity(0.3) : (isMe ? Color.white.opacity(0.35) : Color(.systemGray3)))
                             .frame(height: 6)
                         Capsule()
                             .fill(barColor)
                             .frame(width: geo.size.width * frac, height: 6)
-                        // Draggable position indicator. Visible at all times (shows the
-                        // persisted resume point on idle bubbles), turns green when the
-                        // message has been played to the end.
+                        // Draggable position indicator — shows the live position while
+                        // playing and the persisted resume point on idle bubbles.
                         Circle()
                             .fill(barColor)
                             .frame(width: thumb, height: thumb)
@@ -670,7 +718,7 @@ struct VoiceMessageBubble: View {
                         .frame(width: 44, height: 44)
                 }
 
-                RoutePickerView(tintColor: isMe ? .white : .label)
+                RoutePickerView(tintColor: .white)   // only shown while playing (black bubble)
                     .frame(width: 44, height: 44)
             }
 

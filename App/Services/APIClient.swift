@@ -379,11 +379,12 @@ final class APIClient {
         return try await get(path: path)
     }
 
-    struct ChatReadDto: Decodable {
+    struct ChatReadDto: Decodable, Identifiable {
         let userId: UUID
         let displayName: String
         let avatarUrl: String?
         let lastSeenMessageId: UUID
+        var id: UUID { userId }
     }
 
     func getReads(bookId: UUID) async throws -> [ChatReadDto] {

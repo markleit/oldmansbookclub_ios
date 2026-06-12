@@ -33,10 +33,30 @@ final class BookViewModel: ObservableObject {
     @Published var savedMessages: [SavedMessage] = []
     @Published var isLoadingSaved = false
     @Published var messageSaved = false
-    @Published var reads: [APIClient.ChatReadDto] = []
+    @Published var reads: [APIClient.ChatReadDto] = [] {
+        didSet { recomputeReadFrontiers() }
+    }
+    // member userId -> sentAt of their last-seen message, for read receipts.
+    private var readFrontierByUser: [UUID: Date] = [:]
 
     var visibleMessages: [Message] {
         messages.filter { !blockedUserIds.contains($0.senderId) }
+    }
+
+    private func recomputeReadFrontiers() {
+        let sentById = Dictionary(messages.map { ($0.id, $0.sentAt) }, uniquingKeysWith: { first, _ in first })
+        var map: [UUID: Date] = [:]
+        for r in reads where sentById[r.lastSeenMessageId] != nil {
+            map[r.userId] = sentById[r.lastSeenMessageId]
+        }
+        readFrontierByUser = map
+    }
+
+    // Members who have read the given message — i.e. their last-seen message is this
+    // one or a newer one. Drives the per-message read receipt (each read message shows
+    // its readers, not just the single message that is someone's exact last-seen point).
+    func readers(of message: Message) -> [APIClient.ChatReadDto] {
+        reads.filter { (readFrontierByUser[$0.userId] ?? .distantPast) >= message.sentAt }
     }
 
     private var cacheKey: String { "messages_\(book.id)" }
