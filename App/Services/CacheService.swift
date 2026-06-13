@@ -3,11 +3,8 @@ import Foundation
 final class CacheService {
     static let shared = CacheService()
 
-    private let encoder: JSONEncoder = {
-        let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
-        return e
-    }()
+    // Serial queue so writes never interleave and never run on the caller's thread.
+    private let ioQueue = DispatchQueue(label: "CacheService.io", qos: .utility)
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -24,9 +21,17 @@ final class CacheService {
             .appendingPathComponent("cache_\(key).json")
     }
 
-    func save<T: Encodable>(_ value: T, key: String) {
-        guard let data = try? encoder.encode(value) else { return }
-        try? data.write(to: fileURL(key: key), options: .atomic)
+    // Encode + write happen OFF the calling thread (serialized). Callers fire-and-forget
+    // from the @MainActor; doing this synchronously over a large message list was
+    // stalling the UI every time a message arrived in an open chat.
+    func save<T: Encodable & Sendable>(_ value: T, key: String) {
+        let url = fileURL(key: key)
+        ioQueue.async {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(value) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
