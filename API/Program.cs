@@ -52,6 +52,19 @@ builder.Services.AddScoped<AppleTokenValidator>();
 builder.Services.AddSingleton<BlobService>();
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddSingleton<HubRateLimiter>();
+builder.Services.AddSingleton<GitHubService>();
+builder.Services.AddHttpClient("github", client =>
+{
+    client.BaseAddress = new Uri("https://api.github.com/");
+    var token = builder.Configuration["GitHub:Token"];
+    if (!string.IsNullOrWhiteSpace(token))
+        client.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+    client.DefaultRequestHeaders.Accept.Add(
+        new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("oldmansbookclub-api");
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
 builder.Services.AddHttpClient("apns", client =>
 {
     client.BaseAddress = new Uri("https://api.push.apple.com");
