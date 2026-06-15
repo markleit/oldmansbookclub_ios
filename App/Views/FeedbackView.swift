@@ -13,6 +13,7 @@ struct FeedbackView: View {
     @State private var errorMessage: String?
     @State private var showCompose = false
     @State private var safariItem: SafariItem?
+    @State private var showSubmittedToast = false
 
     var body: some View {
         NavigationStack {
@@ -65,12 +66,31 @@ struct FeedbackView: View {
             }
             .task(id: state) { await load() }
             .sheet(isPresented: $showCompose) {
-                FeedbackComposeView { await load() }
+                FeedbackComposeView {
+                    await load()
+                    withAnimation { showSubmittedToast = true }
+                }
             }
             .sheet(item: $safariItem) { SafariView(url: $0.url) }
             .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: { Text(errorMessage ?? "") }
+            .overlay(alignment: .top) {
+                if showSubmittedToast {
+                    Label("Feedback submitted", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.green, in: Capsule())
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task {
+                            try? await Task.sleep(for: .seconds(2))
+                            withAnimation { showSubmittedToast = false }
+                        }
+                }
+            }
         }
     }
 
@@ -204,8 +224,27 @@ struct FeedbackComposeView: View {
             }
         }
         if let t = result?.bestTranscription.formattedString, !t.isEmpty {
-            text = text.isEmpty ? t : text + " " + t
+            await MainActor.run {
+                text = text.isEmpty ? t : text + " " + t
+                // Auto-fill the title from the dictation if the user hasn't typed one.
+                if title.trimmingCharacters(in: .whitespaces).isEmpty {
+                    title = Self.deriveTitle(from: t)
+                }
+            }
         }
+    }
+
+    // A concise title from dictated text: the first sentence, capped (word-aware) to
+    // a reasonable length. The user can still edit it.
+    private static func deriveTitle(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstSentence = trimmed.split(whereSeparator: { ".!?".contains($0) })
+            .first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? trimmed
+        let maxLen = 60
+        guard firstSentence.count > maxLen else { return firstSentence }
+        let prefix = firstSentence.prefix(maxLen)
+        let clipped = prefix.lastIndex(of: " ").map { String(prefix[..<$0]) } ?? String(prefix)
+        return clipped + "…"
     }
 
     private func submit() async {
