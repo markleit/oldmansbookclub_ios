@@ -66,8 +66,13 @@ struct FeedbackView: View {
             }
             .task(id: state) { await load() }
             .sheet(isPresented: $showCompose) {
-                FeedbackComposeView {
-                    await load()
+                FeedbackComposeView { created in
+                    // Optimistic insert — GitHub's filtered list lags a second or two
+                    // after creation, so a refetch right now would miss it. Show the
+                    // returned item immediately; pull-to-refresh reconciles later.
+                    if state == "open", !items.contains(where: { $0.number == created.number }) {
+                        items.insert(created, at: 0)
+                    }
                     withAnimation { showSubmittedToast = true }
                 }
             }
@@ -119,7 +124,7 @@ struct FeedbackView: View {
 }
 
 struct FeedbackComposeView: View {
-    let onSubmitted: () async -> Void
+    let onSubmitted: (APIClient.FeedbackDto) async -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var title = ""
@@ -253,11 +258,11 @@ struct FeedbackComposeView: View {
         let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
         do {
-            _ = try await APIClient.shared.submitFeedback(
+            let created = try await APIClient.shared.submitFeedback(
                 title: title.trimmingCharacters(in: .whitespaces),
                 body: text.trimmingCharacters(in: .whitespaces),
                 appVersion: "\(short) (\(build))")
-            await onSubmitted()
+            await onSubmitted(created)
             dismiss()
         } catch {
             errorMessage = "Couldn't submit feedback. Please try again."
