@@ -10,6 +10,7 @@ struct AdminView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var showDeleteClubConfirm = false
+    @State private var showFeedback = false
 
     private var myId: UUID? { TokenStore.shared.userId }
     private var isGlobalAdmin: Bool { TokenStore.shared.isAdmin }
@@ -62,6 +63,14 @@ struct AdminView: View {
                 Text(errorMessage ?? "")
             }
             .toolbar {
+                if showAdminTabs {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button { showFeedback = true } label: {
+                            Image(systemName: "exclamationmark.bubble")
+                        }
+                        .accessibilityLabel("Feedback")
+                    }
+                }
                 if isGlobalAdmin && selectedTab == 0, let clubId = selectedClubId,
                    let club = myClubs.first(where: { $0.id == clubId }) {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -87,6 +96,7 @@ struct AdminView: View {
             }
             .task { await load() }
             .refreshable { await load() }
+            .sheet(isPresented: $showFeedback) { FeedbackView() }
         }
     }
 

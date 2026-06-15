@@ -391,6 +391,32 @@ final class APIClient {
         try await get(path: "/books/\(bookId)/reads")
     }
 
+    // MARK: - Feedback (admin / club-admin only; backed by GitHub issues)
+
+    struct FeedbackDto: Decodable, Identifiable {
+        let number: Int
+        let title: String
+        let state: String          // "open" | "closed"
+        let htmlUrl: String
+        let createdAt: Date
+        var id: Int { number }
+    }
+    struct CreateFeedbackRequest: Encodable {
+        let title: String
+        let body: String
+        let appVersion: String
+    }
+
+    func getFeedback(state: String) async throws -> [FeedbackDto] {
+        try await get(path: "/feedback?state=\(state)")
+    }
+
+    func submitFeedback(title: String, body: String, appVersion: String) async throws -> FeedbackDto {
+        try await post(path: "/feedback",
+                        body: CreateFeedbackRequest(title: title, body: body, appVersion: appVersion),
+                        authenticated: true)
+    }
+
     func markRead(bookId: UUID, messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"
