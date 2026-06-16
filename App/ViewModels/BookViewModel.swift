@@ -112,6 +112,7 @@ final class BookViewModel: ObservableObject {
             }
             messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
             saveMessagesCache()
+            prefetchRecentVoiceAudio()
 
             // Restore any media messages that were pending when the app was last closed
             restorePendingMediaBubbles()
@@ -147,6 +148,11 @@ final class BookViewModel: ObservableObject {
 
             // Any SignalR receive proves we're online — clear the stale offline banner.
             self.markOnline()
+
+            // Prefetch the audio so tapping play is instant by the time the user does.
+            if message.type == .voice, let u = message.mediaUrl, let url = URL(string: u) {
+                AudioCache.shared.prefetch(url)
+            }
 
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
             guard !self.messages.contains(where: { $0.id == message.id }) else { return }
@@ -425,6 +431,18 @@ final class BookViewModel: ObservableObject {
             messages[idx].sendState = .sending
         }
         await sendMediaItem(item)
+    }
+
+    // Warm the audio cache for the most recent voice messages so playback starts
+    // instantly. AudioCache dedupes and skips already-cached / non-https URLs.
+    private func prefetchRecentVoiceAudio(limit: Int = 15) {
+        var count = 0
+        for m in messages where m.type == .voice {
+            guard let u = m.mediaUrl, let url = URL(string: u) else { continue }
+            AudioCache.shared.prefetch(url)
+            count += 1
+            if count >= limit { break }
+        }
     }
 
     // Reconciliation cleanup when load() finds a confirmed server message for one of

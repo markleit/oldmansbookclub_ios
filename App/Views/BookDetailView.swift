@@ -636,6 +636,13 @@ struct VoiceMessageBubble: View {
         // it scrolls out of the LazyVStack, and pausing on that stopped playback when
         // the user scrolled away. Stopping playback on leaving the chat is handled by
         // the chat view's own onDisappear instead.
+        .onAppear {
+            // Warm the audio cache as a bubble scrolls into view, so tapping play is
+            // instant. No-op if already cached / not a remote URL.
+            if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
+                AudioCache.shared.prefetch(url)
+            }
+        }
     }
 
     private var controlsRow: some View {

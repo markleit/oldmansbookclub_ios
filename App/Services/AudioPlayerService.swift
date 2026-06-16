@@ -104,7 +104,16 @@ final class AudioPlayerService: ObservableObject {
             resume = 0
         }
 
-        let newPlayer = AVPlayer(url: url)
+        // Play the cached local file if we have it (instant start); otherwise stream the
+        // remote blob and seed the cache so replays are instant.
+        let playURL: URL
+        if let cached = AudioCache.shared.cachedFileURL(for: url) {
+            playURL = cached
+        } else {
+            playURL = url
+            AudioCache.shared.prefetch(url)
+        }
+        let newPlayer = AVPlayer(url: playURL)
         player = newPlayer
         playingMessageId = message.id
         isUserInitiatedPause = false
