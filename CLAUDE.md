@@ -87,67 +87,62 @@ Azure SQL firewall must allow your dev machine's IP — add a rule via `az sql s
 - `Jwt:Secret`, `Jwt:Issuer`, `Jwt:Audience`
 - Azure Blob Storage connection string
 - APNs credentials
+- `GitHub` — PAT + owner/repo for the in-app Feedback feature and the dev backlog (server-only; never ships in the app)
 
 ## Known gaps / next up
 
-- **Chat text: actionable URLs + copiable text** — the text bubble is a plain `Text(message.body)` (`BookDetailView.messageBubble`), so (1) URLs aren't tappable — detect links in the body and render them as tappable links (open in the in-app `SafariView` we already have, or external Safari); (2) message text can't be selected/copied — add `.textSelection(.enabled)` and/or a long-press "Copy" context action. iOS approach: build an `AttributedString` with link attributes via `NSDataDetector` (URLs/phones) + `.textSelection(.enabled)`. Avoid `LocalizedStringKey` markdown auto-parsing (would misinterpret stray `*`/`_` in messages).
-- **Perf: voice-bubble rendering (re-render storm + layout)** — confirmed via code review (this is the *rendering* cost, NOT the playback-start delay — that's the audio-prefetch work). Three costs: (1) **Re-render storm** — every `VoiceMessageBubble` `@ObservedObject`s `AudioPlayerService`, which publishes `progress`/`currentSeconds` at 10Hz, so ALL on-screen voice bubbles re-render 10×/sec while one plays. Non-playing bubbles don't need live progress (they show the saved `PlaybackProgressStore` position). Fix: scope live-progress observation to only the playing bubble; the rest observe just `playingMessageId` (rare). (2) **`GeometryReader` per bubble** (the progress bar, BookDetailView ~673) — LazyVStack layout-thrash source; the main reason voice-heavy chats cost more to scroll than text. Replace with fixed-geometry layout. (3) **`visibleMessages`** is a `messages.filter{}` recomputed several times per `BookDetailView` render — memoize into a stored value updated only on `messages`/`blockedUserIds` change. Confirm dominance with Instruments before the GeometryReader change.
-- **FEATURE: voice message counts as "read" only when played** — Today "read" is one linear `lastSeenMessageId` pointer, so opening the chat sweeps everything (incl. unplayed voice) into "read" — a voice bubble shows "Read" even if never heard. Make voice receipts reflect actual listening. NOT a one-liner: the linear pointer can't express "read the text but not the voice in between," so it needs per-message play tracking for voice layered alongside the existing pointer (which stays for text/photo/video). Scope:
-  - Server: new `MessagePlay` table `(UserId, MessageId, PlayedAt)` unique on `(UserId, MessageId)` + EF migration; `POST /books/{bookId}/messages/{messageId}/play` (membership-checked); expand `GET .../reads` (or a parallel `/plays`) to return each reader's played voice-message ids.
-  - Client: `APIClient.markPlayed`; fire it when the user presses play on a voice message (`AudioPlayerService.play`); in `BookViewModel.readers(of:)`, for VOICE messages use the played-set instead of the linear-pointer/timestamp logic (text/photo/video unchanged).
-  - Decision: mark-on-play (the instant they hit play, default) vs mark-on-finish (completion already detected via `PlaybackProgressStore.completed`).
-  - Pairs with the green played-marker and the broader "what counts as read per type" discussion (true consumption). Needs a server deploy + new app build.
-- **BUG: recording mic open/close tone misbehaves on CarPlay** — the walkie-talkie chirps (`AudioCue`) don't behave correctly when audio is routed through CarPlay. Needs repro detail (tone silent? plays on wrong output? blocks/cuts the recording?). Investigate `AudioCue` session category/route handling under a CarPlay output route, and how it interacts with the recording session.
-- **FEATURE: edit text messages** — let a sender edit their own sent text message. Server: add edited body + `EditedAt` to `Message`, a hub broadcast for edits (mirrors delete), and authorization (own message only). iOS: long-press → Edit, inline editor, re-render with an "edited" marker. Decide whether edit history is kept and the edit window (always vs. time-limited).
-- **Predownload messages on notification arrival** (planned 2026-06-12; scope = full, Phases 0-3) — Make opening a chat from a push instant by warming the cache `load()` already reads (`CacheService` key `messages_<bookId>`) BEFORE the user opens. Decided scope: prefetch the **recent page (~50)**, **also predownload voice audio** (accept extra blob egress for instant playback), warm photo/video thumbnails into `ImageCache`. Foundations present: push payload already carries `bookId`/`clubId` (`NotificationService.SendNewMessageAsync`); `BookViewModel.load()` renders cache-first. Plan:
-  - **Phase 0 — extract shared chat-cache helpers** out of `BookViewModel` (cache read/write/merge/bounding/optimistic-filter) into a reusable `ChatCache` so the prefetcher writes a cache `load()` fully trusts (same key/format/bounding).
-  - **Phase 1 — `MessagePrefetcher`** (no UI): `ensureFreshToken` → `getMessages(bookId)` → write via `ChatCache` → warm `ImageCache` for thumbnails → **download voice audio to a NEW disk audio cache** (audio is currently streamed and never cached — needs a small audio-file cache + `AudioPlayerService` checking it before streaming). Idempotent; in-flight dedupe by bookId.
-  - **Phase 2 — background wake**: server adds `content-available: 1` to the new-message `aps` block (keep the visible alert); client adds `remote-notification` to `UIBackgroundModes` + implements `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` → parse bookId → prefetch → completion handler.
-  - **Phase 3 — tap/foreground acceleration**: also prefetch from `didReceive` (tap) and `willPresent` (arrived while app open but not in that chat).
-  - Caveats: silent push is **best-effort** (iOS throttles background wakes — Low Power Mode, budget); degrades gracefully to today's behavior. Cost scales with club × message rate, and prefetching audio raises egress meaningfully (every member's device downloads each voice file). Background token refresh must work headlessly (depends on launch-refresh + non-rotation fixes — both done). The new audio cache also partly addresses the "smarter local message caching" item (cache bytes, not SAS URLs).
-- **Saved Messages UX rework** — currently a row tap forwards immediately to the current chat. Replace with explicit per-row forward button + destination chat/book picker so users can choose the target and avoid accidental forwards.
-- **Secrets out of `appsettings.Development.json`** — currently SQL/SignalR/Blob/Notification Hub/APNs/JWT secrets sit in plaintext on disk (gitignored, but one accidental `git add -A` from disaster). Migrate dev secrets to `dotnet user-secrets`; production reads from Azure Key Vault via managed identity. Requires creating the Key Vault, populating it, and granting the App Service identity Key Vault Secrets User.
-- **Smarter local message caching** — current `CacheService` stores messages with SAS URLs from the last fetch. Re-entering the chat after offline shows broken images because cached SAS expires. Consider: cache by plain URL + regenerate SAS on display; OR cache the rendered image bytes; OR shorten the SAS-URL lifetime in cache to match actual blob read SAS. Investigate, propose, implement.
-- **Auto-import + chapter structure in book chat** — when a book is added (currently via Google Books search → title/author/cover), also pull its chapter / table-of-contents structure and surface it in the book's chat. Open design questions: chapter list source (Google Books volumeInfo doesn't carry TOC consistently — may need an alternative like Open Library, parsed EPUB metadata, or a manual editor for the club admin); chat UX (chapter sections, chapter-tagged messages, jump-to-chapter navigation, current-chapter indicator); DB schema (new Chapters table linked to Book; optional ChapterId on Message). Likely starts with a manual "add chapters" admin UI before automation.
-- **Discussion-subject labels** — surface what each part of the chat is about. Auto where possible (LLM-extracted topics from recent message windows, e.g. "Character development of Sam", "Plot twist in Chapter 3", "Pacing critique") with optional manual override. Open design questions: granularity (label individual messages, label threads, label time ranges); UI (subject chips at the top of clusters, filter-by-subject view, jump-to-next-subject); cost/latency model (server-side batch summarization vs on-device — and which LLM); whether labels are first-class entities (DB table, can be edited / merged / deleted) or transient computed view; co-existence with the chapter structure backlog item (chapter is a coarse axis, subject is finer-grained — likely independent dimensions of the same conversation).
-- **Apple Watch companion + CarPlay** — multi-platform expansion. Watch: send quick text or voice messages, glance at recent activity, push notification handoff. CarPlay: read-aloud incoming messages, voice replies. Big feature area; needs its own design document.
-- **Max message size limits** — voice 15 min (auto-stop with countdown), video 5 min duration + 100 MB file size (client pre-upload check + `AVAssetExportSession` compression if oversized), photos already handled via `resizedForUpload` (1024px / JPEG 0.7). Server-side: enforce blob size limit in the SignalR hub before creating the message so a misbehaving client can't bypass the client check.
-- **Offline / no-service UX** — current behavior is a cached banner and silent send failures. Needs a proper design pass: what to show when iOS reports no network vs. server unreachable vs. flaky cell; how to queue + surface pending sends (queue is already there for media, but text isn't queued); when and how to retry; per-message retry indicators that are intuitive without being noisy.
-- **Threaded messages** — reply to a specific message and render the result as a thread (parent + replies indented or in a sheet). Server-side: new `ParentMessageId` column on `Message`; iOS: long-press → Reply; thread rendering UI. Consider whether a thread is a "child collection" or a "subset of the same chat with a header".
-- **Saved Messages indexing & auto title/label** — the saved-message list is currently a flat reverse-chronological view. Add: search across saved bodies/transcripts, group by source book/chat or by topic, auto-generated summaries or titles for long voice messages, time-decayed sorting. Related to but distinct from the "rework forwarding UX" item — this one is about the *browsing/find* experience, not the action UX.
-- **Chat scroll position preservation** — previously attempted via `ScrollAnchorStore` + `LazyVStack.onAppear` tracking but the position-detection was unreliable (LazyVStack render buffer is a superset of the visible viewport, `proxy.scrollTo(anchor:)` behavior was inconsistent). Revisit with iOS 17+ `ScrollPosition` / `scrollPosition(id:)` for precise viewport tracking and deterministic scroll restoration. Goal: restore exact scroll position on chat re-entry; "↓ N new" pill when scrolled away from bottom; notification tap always jumps to newest.
+The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index keeps the list in AI context each session; fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
 
-### Open items from the 2026-06-04 full code review
+**Features / enhancements**
+- #8 — Chat text: actionable URLs + copiable text (`BookDetailView.messageBubble`)
+- #10 — Voice message counts as "read" only when played (per-message play tracking)
+- #12 — Edit text messages
+- #13 — Predownload messages on notification arrival (foreground audio prefetch shipped 1.4.1 via `AudioCache`; message/thumbnail prefetch + background-wake remain)
+- #14 — Saved Messages UX rework (explicit forward + destination picker)
+- #15 — Smarter local message caching (image SAS expiry; audio half done in 1.4.1)
+- #16 — Auto-import + chapter structure in book chat
+- #17 — Discussion-subject labels
+- #18 — Apple Watch companion + CarPlay
+- #19 — Max message size limits (voice/video/photo; size half pairs with the upload-SAS security item)
+- #20 — Offline / no-service UX
+- #21 — Threaded messages
+- #22 — Saved Messages indexing & auto title/label
+- #23 — Chat scroll position preservation
 
-The full review (3 Critical, 10 High, 19 Medium, 8 Low + roadmap) had its Critical tier and ~half the High tier closed in the Group A/B/C work (1 hr JWT + refresh tokens, demo/dev-login no longer grant admin, hub text-length + per-user rate limit, ChatService→actor, synchronous startup migrations + `/health/ready`, deleted-message `SenderId` nulled, blob URL host pinned, club-admin checks on book mutations, `CacheService`→Caches dir, `ImageCache` cost limit, media retry cap). The findings below are the ones **still open** (the source doc `docs/CODE_REVIEW_2026-06-04.md` was folded into this list and removed).
+**Bugs**
+- #11 — Recording mic open/close tone misbehaves on CarPlay (`AudioCue`)
+- #25 — Single `DeviceToken` per user → `UserDevices` table (H6; root cause of the self-notification bug)
+- #28 — Transactional gaps in multi-step writes (`SignInWithApple`, account deletion)
+- #35 — `pendingByBody` text dedup race on identical consecutive sends (M1)
 
-**Security (open):**
+**Perf**
+- #9 — Voice-bubble rendering: re-render storm + per-bubble `GeometryReader` + `visibleMessages` recompute
+- #24 — APNs fan-out blocks the hub method (H2)
+- #26 — No connection-level membership cache in `ChatHub` (H10)
+- #27 — Missing `Messages(SenderId)` index
+- #29 — `AppleTokenValidator` refetches Apple's JWKs on every login
+
+**Tech debt**
+- #30 — Observability: App Insights + structured logging
+- #31 — Blob hygiene: lifecycle policy + date-prefixed naming
+- #32 — No test target
+- #33 — `BookViewModel` ~8 responsibilities; split large views (`BookDetailView`, `MessageInputView`, `AdminView`)
+- #34 — `APIClient`: unify 20+ ad-hoc `URLRequest` builders
+- #36 — Schema niceties (`Book.Status` enum, `Message.BookId` non-null, `User.Email` uniqueness, `Membership` natural PK)
+- #37 — Misc Low cleanup (`NavigationView` in previews, duplicate book cache, `formatElapsed` rollover, `flushPendingVoice` guard)
+
+### Security backlog (kept private — NOT filed as public GitHub issues)
+
+The repo is public, so these stay here only. Still-open items from the 2026-06-04 review plus the secrets migration:
+
 - **`AdminController` has no class-level `[Authorize]`** (H8) — authorization relies on scattered inline `IsAdminAsync()` checks; one missed action is a hole (e.g. `seed-messages` is reachable unauthenticated and gated only by an `X-Seed-Key` header). Add `[Authorize]` at the class and `[AllowAnonymous]` only where intended.
 - **`ClubsController.AddMember` is open to any club member** (H9 remainder) — a regular member can mass-add accounts. The book mutations were locked down in Group A; `AddMember` was not. Require club-admin.
 - **7-day read SAS** (M2) — a media URL handed to a client keeps working for 7 days after the user is removed/blocked or the message is deleted (SAS can't be individually revoked). Cut read-SAS validity to ~1 hr.
 - **SignalR auth via `?access_token=` query** (M19) — token lands in App Service / IIS request logs. Move to a header or accept + document the risk.
 - **`/notifications/register` doesn't validate token format** — accepts any string up to 512 chars. Enforce 64-hex APNs format.
-- **Upload SAS has no Content-Type or size restriction** — client claims `audio/mp4` but anything can be PUT; pair with the "Max message size limits" item for the size half.
+- **Upload SAS has no Content-Type or size restriction** — client claims `audio/mp4` but anything can be PUT; pair with the "Max message size limits" item (#19) for the size half.
+- **Secrets out of `appsettings.Development.json`** — currently SQL/SignalR/Blob/Notification Hub/APNs/JWT/GitHub secrets sit in plaintext on disk (gitignored, but one accidental `git add -A` from disaster). Migrate dev secrets to `dotnet user-secrets`; production reads from Azure Key Vault via managed identity. Requires creating the Key Vault, populating it, and granting the App Service identity Key Vault Secrets User. (The GitHub PAT added for the Feedback feature should be rotated and moved here too.)
 
-**Reliability / scale (open):**
-- **APNs fan-out blocks the hub method** (H2) — sender's `invoke()` doesn't return until N per-member APNs round-trips finish; send latency scales with club size. Offload to a hosted `BackgroundService` + `Channel<T>` (note: `Task.Run` inside the hub is wrong — the Scoped `db` is disposed when the method returns, so the worker needs its own scope).
-- **Single `DeviceToken` column per user** (H6) — multi-device users only get push on the last-registered device; no pruning on APNs `410 Unregistered` / `BadDeviceToken`. Move to a `UserDevices` table (`(UserId, DeviceToken)` unique), deactivate on `Unregistered`. Azure Notification Hubs is already configured-but-unused and is a candidate to take this over.
-  - **Why this matters / what it would let us delete (context from the 2026-06-11 "notifications for my own messages" bug):** the root enabler is that ONE physical device's APNs token gets smeared across MULTIPLE `User` rows — every time that device signs in as a different account (dev-login / demo / test users), `POST /notifications/register` stamps the same token onto that account's `User.DeviceToken`. The chat fan-out (`ChatHub.BroadcastAndNotify`) excludes the sender by `UserId`, but another account that happens to carry the sender's token is `UserId != SenderId`, so it slips through and the sender's own phone gets pushed. There are THREE separate notification paths that have each been patched independently for variants of this, which the structural fix would unify/remove:
-    1. `AuthController` join-request/approval push — got `.Distinct()` dedup early on (stops a shared device getting the *same* push twice).
-    2. `ChatHub.BroadcastAndNotify` sender exclusion by `UserId` — present since the first backend commit (stops your *own membership* being pushed).
-    3. `ChatHub.BroadcastAndNotify` sender **device-token** exclusion + `.Distinct()` — added 2026-06-11 (`aa8eff1`) as a symptom patch (stops your *device* being pushed via another account that shares its token).
-  - With a proper `UserDevices` model, a token belongs to a device (not a borrowed list of account rows), fan-out is keyed by device, and patches #1–#3 collapse into "send to each distinct device that isn't the sender's." `Register` should also re-point a token to the current device/user (claim it) rather than leaving stale copies on old accounts.
-- **No connection-level membership cache in `ChatHub`** (H10) — every send re-queries `Users.FindAsync` + `Books.FindAsync` + `Memberships.AnyAsync` (~3 DB round-trips/message). Cache `(userId, clubIds)` in `Context.Items` on `OnConnectedAsync`.
-- **Missing `Messages(SenderId)` index** — account deletion table-scans messages. (The `Messages(ClientId)` index was added in Group B.)
-- **Transactional gaps** — `AuthController.SignInWithApple` does up to 5 sequential `SaveChangesAsync` (orphan-user risk if it fails midway); `DeleteMyAccount` / admin `DeleteUser` run 7-8 `ExecuteDeleteAsync` not wrapped in a transaction (partial-delete risk). Wrap each in `BeginTransactionAsync`.
-- **`AppleTokenValidator` refetches Apple's JWKs on every login** — cache the key set.
-- **Observability** — no Application Insights / structured logging / metrics / alerting; `NotificationService` logs success at `Warning` level (floods the channel). Wire App Insights + drop success logs to `Information`.
-- **Blob hygiene** — no lifecycle policy or orphaned-upload GC (retried uploads leak blobs forever); blob names aren't date-prefixed, so containers >10k blobs list slowly. Add `{clubId}/{yyyy/MM/dd}/{guid}` naming + a lifecycle rule.
-- **No test target** — zero unit/UI/integration tests. Singletons make mocking hard; injecting an `APIClientProtocol` would unlock view-model tests (start with `BookViewModel` dedup logic).
+### Context from the 2026-06-04 full code review
 
-**Maintainability / cleanup (open, lower priority):**
-- **`BookViewModel` carries ~8 responsibilities**; large view files (`BookDetailView`, `MessageInputView`, `AdminView`) should be split.
-- **`APIClient` has 20+ ad-hoc `URLRequest` builders** bypassing the `get/post/patch` helpers — unify into one generic `request<R: Decodable>`; also drop the vestigial extra ISO8601 date-formatter variants.
-- **`pendingByBody` text dedup races on identical consecutive sends** (M1) — the second "hi" overwrites the first's pending entry, leaving an unresolved optimistic bubble. Key by a per-message clientId like voice does.
-- **Schema niceties** — `Book.Status` is a free-form string (→ enum/tinyint); `Message.BookId` is nullable but always required; `User.Email` has no uniqueness constraint; `Membership.Id` is an artificial PK over the natural `(UserId, ClubId)`.
-- **Misc Low** — `NavigationView` (deprecated) in `BookDetailView_Previews`; duplicate book-cache mechanism (`UserDefaults` in `LibraryViewModel` vs `CacheService` for messages); `formatElapsed` has no hour rollover; `flushPendingVoice` has no concurrent-flush guard (foreground transition + SignalR reconnect can overlap).
+The full review (3 Critical, 10 High, 19 Medium, 8 Low + roadmap) had its Critical tier and ~half the High tier closed in the Group A/B/C work (1 hr JWT + refresh tokens, demo/dev-login no longer grant admin, hub text-length + per-user rate limit, ChatService→actor, synchronous startup migrations + `/health/ready`, deleted-message `SenderId` nulled, blob URL host pinned, club-admin checks on book mutations, `CacheService`→Caches dir, `ImageCache` cost limit, media retry cap). The still-open findings were migrated to GitHub Issues above (reliability/scale → #24–#32, maintainability → #33–#37) except the security items, which are kept inline above. The source doc `docs/CODE_REVIEW_2026-06-04.md` was folded into this list and removed.
