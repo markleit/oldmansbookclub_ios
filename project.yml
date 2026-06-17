@@ -30,7 +30,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BCH6CDU76R
-        MARKETING_VERSION: 1.4.1
+        MARKETING_VERSION: 1.4.2
         CURRENT_PROJECT_VERSION: 1
       configs:
         Debug:
