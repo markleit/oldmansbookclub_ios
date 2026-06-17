@@ -94,7 +94,6 @@ Azure SQL firewall must allow your dev machine's IP — add a rule via `az sql s
 The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index keeps the list in AI context each session; fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
 
 **Features / enhancements**
-- #8 — Chat text: actionable URLs + copiable text (`BookDetailView.messageBubble`)
 - #10 — Voice message counts as "read" only when played (per-message play tracking)
 - #12 — Edit text messages
 - #13 — Predownload messages on notification arrival (foreground audio prefetch shipped 1.4.1 via `AudioCache`; message/thumbnail prefetch + background-wake remain)
