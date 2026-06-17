@@ -428,6 +428,13 @@ struct MessageRow: View {
                     Label("Cancel", systemImage: "xmark")
                 }
             } else if !message.isDeleted && message.sendState == nil {
+                if message.type == .text, let body = message.body, !body.isEmpty {
+                    Button {
+                        UIPasteboard.general.string = body
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
                 Button {
                     Task { await viewModel.saveMessage(id: message.id) }
                 } label: {
