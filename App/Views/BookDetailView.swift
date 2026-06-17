@@ -17,6 +17,10 @@ struct BookDetailView: View {
     @State private var visibleMessageIds: Set<UUID> = []
     @State private var hasUnseenMessage: Bool = false
     @State private var lastSeenNewestId: UUID? = nil
+    // The message a tapped notification was for. Set on chat open; cleared once
+    // we've scrolled to it. Lets us jump straight to the tapped message (and warm
+    // its audio) instead of parking on "newest cached" and showing the pill.
+    @State private var targetMessageId: UUID? = nil
     var onDeleted: (() -> Void)?
     var onStatusChanged: ((BookStatus) -> Void)?
 
@@ -113,10 +117,23 @@ struct BookDetailView: View {
                     // Always scroll to newest on entry. Multiple attempts handle the
                     // cache→fresh-fetch transition and the LazyVStack layout-pass timing.
                     .task(id: viewModel.book.id) {
+                        // Arrived via a notification tap? Capture (and consume) the
+                        // targeted message so we can jump straight to it.
+                        if let target = deepLink.pendingMessageId {
+                            targetMessageId = target
+                            deepLink.pendingMessageId = nil
+                        }
                         let delaysMs: [UInt64] = [0, 50, 150, 400, 1000]
                         for delay in delaysMs {
                             if delay > 0 { try? await Task.sleep(for: .milliseconds(Int(delay))) }
-                            if let newest = viewModel.visibleMessages.first {
+                            // Prefer the tapped message once it's loaded; until then keep
+                            // newest in view (the new message often isn't cached yet).
+                            if let target = targetMessageId,
+                               viewModel.visibleMessages.contains(where: { $0.id == target }) {
+                                focusMessage(target, proxy: proxy)
+                                targetMessageId = nil
+                                hasUnseenMessage = false
+                            } else if let newest = viewModel.visibleMessages.first {
                                 proxy.scrollTo(newest.id, anchor: .bottom)
                             }
                         }
@@ -131,6 +148,16 @@ struct BookDetailView: View {
                         guard let newId else { return }
                         if lastSeenNewestId == nil { lastSeenNewestId = newId; return }
                         if lastSeenNewestId == newId { return }
+                        // Still chasing the notification's message and it just loaded?
+                        // Go straight to it — no pill.
+                        if let target = targetMessageId,
+                           viewModel.visibleMessages.contains(where: { $0.id == target }) {
+                            focusMessage(target, proxy: proxy)
+                            targetMessageId = nil
+                            hasUnseenMessage = false
+                            lastSeenNewestId = newId
+                            return
+                        }
                         let newest = viewModel.visibleMessages.first
                         let isMine = newest?.senderId == TokenStore.shared.userId
                         if isMine {
@@ -157,9 +184,20 @@ struct BookDetailView: View {
                     // Notification tap on a still-alive chat view: .task doesn't re-fire,
                     // so explicitly scroll to newest and consume the pending deep link.
                     .onChange(of: deepLink.pendingBookId) { pending in
-                        guard pending == viewModel.book.id, let newest = viewModel.visibleMessages.first else { return }
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo(newest.id, anchor: .bottom)
+                        guard pending == viewModel.book.id else { return }
+                        if let target = deepLink.pendingMessageId {
+                            targetMessageId = target
+                            deepLink.pendingMessageId = nil
+                        }
+                        if let target = targetMessageId,
+                           viewModel.visibleMessages.contains(where: { $0.id == target }) {
+                            focusMessage(target, proxy: proxy)
+                            targetMessageId = nil
+                            hasUnseenMessage = false
+                        } else if let newest = viewModel.visibleMessages.first {
+                            withAnimation(.easeOut(duration: 0.25)) {
+                                proxy.scrollTo(newest.id, anchor: .bottom)
+                            }
                         }
                         deepLink.pendingBookId = nil
                     }
@@ -303,6 +341,17 @@ struct BookDetailView: View {
         }
         Divider()
         Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
+    }
+
+    // Scroll to a specific message (the one a notification was tapped for) and, if it's
+    // a voice message, warm its audio into AudioCache so the first tap plays instantly.
+    private func focusMessage(_ id: UUID, proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            proxy.scrollTo(id, anchor: .bottom)
+        }
+        guard let msg = viewModel.visibleMessages.first(where: { $0.id == id }),
+              msg.type == .voice, let urlStr = msg.mediaUrl, let url = URL(string: urlStr) else { return }
+        AudioCache.shared.prefetch(url)
     }
 }
 
@@ -569,6 +618,9 @@ struct VoiceMessageBubble: View {
     private var isSending: Bool { message.sendState == .sending }
     private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
+    // Fully listened: the play circle goes green once the audio has reached the end.
+    // Clears on replay (AudioPlayerService clears the completed flag when it restarts).
+    private var isFullyPlayed: Bool { store.isCompleted(message.id) }
     // The "my message" blue — softer/muted vs the vivid system blue. Shared by the
     // bubble and the play icon so they read as one color family.
     private var myBlue: Color { .myMessageBlue }
@@ -690,7 +742,7 @@ struct VoiceMessageBubble: View {
                         // Draggable position indicator — shows the live position while
                         // playing and the persisted resume point on idle bubbles.
                         Circle()
-                            .fill(barColor)
+                            .fill(isFullyPlayed ? .green : barColor)   // green once fully listened to
                             .frame(width: thumb, height: thumb)
                             .overlay(Circle().stroke(Color.black.opacity(0.12), lineWidth: 0.5))
                             .shadow(color: .black.opacity(0.25), radius: 1.5, y: 1)

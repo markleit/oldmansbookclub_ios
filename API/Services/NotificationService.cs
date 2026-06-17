@@ -134,7 +134,8 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
                 badge = 1
             },
             clubId = message.ClubId.ToString(),
-            bookId = bookId.ToString()
+            bookId = bookId.ToString(),
+            messageId = message.Id.ToString()
         });
 
         await SendToAllAsync(deviceTokens, payload);

@@ -114,6 +114,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #25 — Single `DeviceToken` per user → `UserDevices` table (H6; root cause of the self-notification bug)
 - #28 — Transactional gaps in multi-step writes (`SignInWithApple`, account deletion)
 - #35 — `pendingByBody` text dedup race on identical consecutive sends (M1)
+- #39 — Voice playback counter overruns actual audio (wall-clock `durationSeconds` vs inflated `item.duration`)
 
 **Perf**
 - #9 — Voice-bubble rendering: re-render storm + per-bubble `GeometryReader` + `visibleMessages` recompute
