@@ -117,11 +117,13 @@ struct BookDetailView: View {
                     // Always scroll to newest on entry. Multiple attempts handle the
                     // cache→fresh-fetch transition and the LazyVStack layout-pass timing.
                     .task(id: viewModel.book.id) {
-                        // Arrived via a notification tap? Capture (and consume) the
-                        // targeted message so we can jump straight to it.
-                        if let target = deepLink.pendingMessageId {
+                        // Arrived via a notification tap (fresh open)? Capture (and
+                        // consume) the targeted message so we can jump straight to it.
+                        if let target = deepLink.pendingMessageId,
+                           deepLink.pendingMessageBookId == viewModel.book.id {
                             targetMessageId = target
                             deepLink.pendingMessageId = nil
+                            deepLink.pendingMessageBookId = nil
                         }
                         let delaysMs: [UInt64] = [0, 50, 150, 400, 1000]
                         for delay in delaysMs {
@@ -181,25 +183,32 @@ struct BookDetailView: View {
                             }
                         }
                     }
-                    // Notification tap on a still-alive chat view: .task doesn't re-fire,
-                    // so explicitly scroll to newest and consume the pending deep link.
-                    .onChange(of: deepLink.pendingBookId) { pending in
-                        guard pending == viewModel.book.id else { return }
-                        if let target = deepLink.pendingMessageId {
-                            targetMessageId = target
-                            deepLink.pendingMessageId = nil
-                        }
-                        if let target = targetMessageId,
-                           viewModel.visibleMessages.contains(where: { $0.id == target }) {
-                            focusMessage(target, proxy: proxy)
+                    // Notification tap while this chat is ALREADY on screen: .task(id:)
+                    // doesn't re-fire, so react to the published target directly. The
+                    // tapped message usually hasn't loaded yet (sent while backgrounded);
+                    // we adopt it as the target and the visibleMessages observer below
+                    // focuses it the moment it arrives (foreground refresh / SignalR).
+                    .onChange(of: deepLink.pendingMessageId) { mid in
+                        guard let mid, deepLink.pendingMessageBookId == viewModel.book.id else { return }
+                        targetMessageId = mid
+                        deepLink.pendingMessageId = nil
+                        deepLink.pendingMessageBookId = nil
+                        if viewModel.visibleMessages.contains(where: { $0.id == mid }) {
+                            focusMessage(mid, proxy: proxy)
                             targetMessageId = nil
                             hasUnseenMessage = false
-                        } else if let newest = viewModel.visibleMessages.first {
-                            withAnimation(.easeOut(duration: 0.25)) {
-                                proxy.scrollTo(newest.id, anchor: .bottom)
-                            }
                         }
+                    }
+                    // Fallback for a tap whose push carried no messageId (e.g. older
+                    // notifications): just bring newest into view, no targeting.
+                    .onChange(of: deepLink.pendingBookId) { pending in
+                        guard pending == viewModel.book.id else { return }
                         deepLink.pendingBookId = nil
+                        guard targetMessageId == nil, deepLink.pendingMessageId == nil,
+                              let newest = viewModel.visibleMessages.first else { return }
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            proxy.scrollTo(newest.id, anchor: .bottom)
+                        }
                     }
                     // Keep the currently-playing voice message in focus. Autoplay
                     // advances through voice messages chronologically; if the next one is
@@ -361,6 +370,7 @@ struct MessageRow: View {
     @State private var showFullScreen = false
     @State private var showSenderProfile = false
     @State private var profileReader: APIClient.ChatReadDto?
+    @State private var safariItem: SafariItem?
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
@@ -404,6 +414,7 @@ struct MessageRow: View {
             }
             if !isMe { Spacer() }
         }
+        .sheet(item: $safariItem) { SafariView(url: $0.url) }
         .contextMenu {
             if message.sendState == .failed {
                 Button {
@@ -548,16 +559,48 @@ struct MessageRow: View {
         }
     }
 
+    // Detect URLs in a plain message body and mark them as tappable links. Uses
+    // NSDataDetector (not LocalizedStringKey markdown, which would misread stray
+    // */_ in messages). The .link attribute makes SwiftUI render + tap them; the
+    // openURL override on the bubble decides where they open.
+    private func linkified(_ string: String) -> AttributedString {
+        var attributed = AttributedString(string)
+        guard !string.isEmpty,
+              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        else { return attributed }
+        let nsRange = NSRange(string.startIndex..<string.endIndex, in: string)
+        for match in detector.matches(in: string, options: [], range: nsRange) {
+            guard let url = match.url,
+                  let strRange = Range(match.range, in: string),
+                  let lower = AttributedString.Index(strRange.lowerBound, within: attributed),
+                  let upper = AttributedString.Index(strRange.upperBound, within: attributed)
+            else { continue }
+            attributed[lower..<upper].link = url
+            attributed[lower..<upper].underlineStyle = .single
+        }
+        return attributed
+    }
+
     @ViewBuilder
     private var messageBubble: some View {
         switch message.type {
         case .text:
-            Text(message.body ?? "")
+            Text(linkified(message.body ?? ""))
+                .tint(isMe ? .white : .blue)   // link color on blue vs grey bubbles
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
                 .foregroundColor(isMe ? .white : .primary)
                 .cornerRadius(16)
+                // Tapping a detected link opens web URLs in an in-app Safari sheet;
+                // mailto:/tel:/etc. fall through to the system handler.
+                .environment(\.openURL, OpenURLAction { url in
+                    if url.scheme == "http" || url.scheme == "https" {
+                        safariItem = SafariItem(url: url)
+                        return .handled
+                    }
+                    return .systemAction
+                })
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {

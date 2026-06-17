@@ -5,10 +5,12 @@ final class DeepLinkCoordinator: ObservableObject {
     static let shared = DeepLinkCoordinator()
     private init() {}
     @Published var pendingBookId: UUID?
-    // The specific message the tapped notification was for. Survives the
-    // pendingBookId hand-off in LibraryView so BookDetailView can scroll
-    // straight to it (and prefetch its audio) instead of guessing "newest".
-    var pendingMessageId: UUID?
+    // The specific message the tapped notification was for. Published so an
+    // already-open chat view (where .task(id:) won't re-fire) still reacts.
+    // pendingMessageBookId records which book it belongs to, so a chat only
+    // adopts a target meant for it.
+    @Published var pendingMessageId: UUID?
+    var pendingMessageBookId: UUID?
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
@@ -21,8 +23,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         if let notification = launchOptions?[.remoteNotification] as? [String: Any],
            let bookIdStr = notification["bookId"] as? String,
            let bookId = UUID(uuidString: bookIdStr) {
-            DeepLinkCoordinator.shared.pendingMessageId =
-                (notification["messageId"] as? String).flatMap(UUID.init)
+            let mid = (notification["messageId"] as? String).flatMap(UUID.init)
+            DeepLinkCoordinator.shared.pendingMessageBookId = mid != nil ? bookId : nil
+            DeepLinkCoordinator.shared.pendingMessageId = mid
             DeepLinkCoordinator.shared.pendingBookId = bookId
         }
         return true
@@ -57,8 +60,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) {
         let userInfo = response.notification.request.content.userInfo
         if let bookIdStr = userInfo["bookId"] as? String, let bookId = UUID(uuidString: bookIdStr) {
-            DeepLinkCoordinator.shared.pendingMessageId =
-                (userInfo["messageId"] as? String).flatMap(UUID.init)
+            let mid = (userInfo["messageId"] as? String).flatMap(UUID.init)
+            DeepLinkCoordinator.shared.pendingMessageBookId = mid != nil ? bookId : nil
+            DeepLinkCoordinator.shared.pendingMessageId = mid
             DeepLinkCoordinator.shared.pendingBookId = bookId
         }
         completionHandler()
