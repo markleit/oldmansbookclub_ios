@@ -101,11 +101,11 @@ final class AudioPlayerService: ObservableObject {
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
 
         // Resume from the saved position. Replaying a fully-played message starts over
-        // and clears its green/completed state.
+        // from the beginning but stays "heard" (green is sticky).
         let store = PlaybackProgressStore.shared
         var resume = store.position(for: message.id)
         if store.isCompleted(message.id) {
-            store.clear(message.id)
+            store.resetPosition(message.id)
             resume = 0
         }
 

@@ -318,6 +318,9 @@ struct BookDetailView: View {
             try? await UNUserNotificationCenter.current().setBadgeCount(0)
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
+                // Report the voice message as heard (sticky, server-side) for receipts
+                // + unread counts; then autoplay the next one if there is one.
+                Task { try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId) }
                 let voices = vm.visibleMessages.filter { $0.type == .voice && !$0.isDeleted }
                 guard let idx = voices.firstIndex(where: { $0.id == completedId }),
                       idx > 0 else { return }
@@ -369,6 +372,7 @@ struct BookDetailView: View {
                 PlaybackProgressStore.shared.markHeard(
                     unheardVoiceMessages.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
                 )
+                Task { try? await APIClient.shared.markAllHeard(bookId: viewModel.book.id) }
             } label: {
                 Label("Mark all as heard", systemImage: "checkmark.circle")
             }
@@ -484,6 +488,7 @@ struct MessageRow: View {
                 if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
                     Button {
                         PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
+                        Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
                     } label: {
                         Label("Mark as Heard", systemImage: "checkmark.circle")
                     }

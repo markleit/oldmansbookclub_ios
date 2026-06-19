@@ -127,6 +127,18 @@ public class ChatRead
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
+// A voice message a user has heard (fully played or "marked as heard"). Sticky:
+// once recorded it's never removed by replays. Drives voice read receipts, the
+// unread counter, and the app badge.
+public class MessageHeard
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public DateTime HeardAt { get; set; } = DateTime.UtcNow;
+}
+
 public class RefreshToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();

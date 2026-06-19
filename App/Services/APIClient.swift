@@ -437,6 +437,17 @@ final class APIClient {
         }
     }
 
+    // Mark a voice message heard (sticky, server-side). Fired on full playback or a
+    // per-message "Mark as Heard".
+    func markHeard(bookId: UUID, messageId: UUID) async throws {
+        try await postEmpty(path: "/books/\(bookId)/messages/\(messageId)/heard")
+    }
+
+    // Mark every voice message in a book heard ("Mark all as heard").
+    func markAllHeard(bookId: UUID) async throws {
+        try await postEmpty(path: "/books/\(bookId)/heard/all")
+    }
+
     func getSavedMessages() async throws -> [SavedMessage] {
         try await get(path: "/messages/saved")
     }

@@ -31,17 +31,21 @@ final class PlaybackProgressStore: ObservableObject {
     func position(for id: UUID) -> Double { states[id.uuidString]?.position ?? 0 }
     func isCompleted(_ id: UUID) -> Bool { states[id.uuidString]?.completed ?? false }
 
+    // `completed` is the sticky HEARD flag: once true it stays true (set on full
+    // playback or "mark as heard"). Replays and re-scrubs never clear it — only an
+    // explicit un-mark would.
     func set(id: UUID, position: Double, completed: Bool) {
-        states[id.uuidString] = State(position: max(0, position), completed: completed)
+        let heard = (states[id.uuidString]?.completed ?? false) || completed
+        states[id.uuidString] = State(position: max(0, position), completed: heard)
         persist()
     }
 
-    // Move the resume point by dragging the thumb on an idle bubble; clears the
-    // completed/green state since the user has repositioned within the message.
+    // Move the resume point by dragging the thumb on an idle bubble. Keeps the
+    // heard/green state (sticky).
     func setPosition(id: UUID, fraction: Double, duration: Int) {
         guard duration > 0 else { return }
         let pos = max(0, min(1, fraction)) * Double(duration)
-        states[id.uuidString] = State(position: pos, completed: false)
+        states[id.uuidString] = State(position: pos, completed: states[id.uuidString]?.completed ?? false)
         persist()
     }
 
@@ -57,9 +61,10 @@ final class PlaybackProgressStore: ObservableObject {
         persist()
     }
 
-    // Reset to the start (used when replaying a completed message — green clears).
-    func clear(_ id: UUID) {
-        states[id.uuidString] = State(position: 0, completed: false)
+    // Reset the resume position to the start (on replay) WITHOUT un-hearing — the
+    // green/heard state is sticky and survives replays.
+    func resetPosition(_ id: UUID) {
+        states[id.uuidString] = State(position: 0, completed: states[id.uuidString]?.completed ?? false)
         persist()
     }
 
