@@ -32,6 +32,8 @@ actor ChatService {
     // connection rebuild without losing the active handler.
     private var onMessageReceived: ((Message) -> Void)?
     private var onMessageDeleted: ((UUID) -> Void)?
+    private var onReadReceipt: ((ReadReceiptPayload) -> Void)?
+    private var onHeardReceipt: ((HeardReceiptPayload) -> Void)?
 
     private init() {}
 
@@ -44,6 +46,14 @@ actor ChatService {
 
     func setOnMessageDeleted(_ handler: @escaping (UUID) -> Void) {
         onMessageDeleted = handler
+    }
+
+    func setOnReadReceipt(_ handler: @escaping (ReadReceiptPayload) -> Void) {
+        onReadReceipt = handler
+    }
+
+    func setOnHeardReceipt(_ handler: @escaping (HeardReceiptPayload) -> Void) {
+        onHeardReceipt = handler
     }
 
     // Called from the iOS foreground transition. Marks the existing connection as
@@ -120,6 +130,16 @@ actor ChatService {
         await conn.on("MessageDeleted") { [weak self] (payload: DeletedPayload) async in
             guard let handler = await self?.onMessageDeleted else { return }
             await MainActor.run { handler(payload.messageId) }
+        }
+
+        await conn.on("ReadReceipt") { [weak self] (payload: ReadReceiptPayload) async in
+            guard let handler = await self?.onReadReceipt else { return }
+            await MainActor.run { handler(payload) }
+        }
+
+        await conn.on("HeardReceipt") { [weak self] (payload: HeardReceiptPayload) async in
+            guard let handler = await self?.onHeardReceipt else { return }
+            await MainActor.run { handler(payload) }
         }
 
         await conn.onReconnected { [weak self] in
@@ -238,4 +258,21 @@ private struct MessageDto: Decodable {
 
 private struct DeletedPayload: Decodable {
     let messageId: UUID
+}
+
+// SignalR receipt events (camelCase payload). Live read/heard receipt updates.
+struct ReadReceiptPayload: Decodable {
+    let bookId: UUID
+    let userId: UUID
+    let displayName: String
+    let avatarUrl: String?
+    let lastSeenMessageId: UUID
+}
+
+struct HeardReceiptPayload: Decodable {
+    let bookId: UUID
+    let userId: UUID
+    let displayName: String
+    let avatarUrl: String?
+    let messageIds: [UUID]
 }

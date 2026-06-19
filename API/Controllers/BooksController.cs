@@ -1,8 +1,10 @@
 using BookClubApi.Data;
+using BookClubApi.Hubs;
 using BookClubApi.Models;
 using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
 namespace BookClubApi.Controllers;
@@ -10,9 +12,33 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class BooksController(AppDbContext db, BlobService blob, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger) : ControllerBase
+public class BooksController(AppDbContext db, BlobService blob, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger, IHubContext<ChatHub> hub) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
+
+    // Broadcast a read/heard receipt to everyone viewing the book so receipts update
+    // live (no chat reload). Includes the reader's name/avatar so a client that hasn't
+    // seen this reader yet can render them.
+    private async Task BroadcastReadAsync(Guid bookId, Guid lastSeenMessageId)
+    {
+        var u = await db.Users.Where(x => x.Id == UserId)
+            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl }).FirstOrDefaultAsync();
+        await hub.Clients.Group(bookId.ToString()).SendAsync("ReadReceipt", new
+        {
+            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl = u?.AvatarUrl, lastSeenMessageId
+        });
+    }
+
+    private async Task BroadcastHeardAsync(Guid bookId, List<Guid> messageIds)
+    {
+        if (messageIds.Count == 0) return;
+        var u = await db.Users.Where(x => x.Id == UserId)
+            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl }).FirstOrDefaultAsync();
+        await hub.Clients.Group(bookId.ToString()).SendAsync("HeardReceipt", new
+        {
+            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl = u?.AvatarUrl, messageIds
+        });
+    }
 
     [HttpGet]
     public async Task<IEnumerable<BookDto>> GetMyBooks()
@@ -51,6 +77,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             try { await db.SaveChangesAsync(); }
             catch (DbUpdateException) { /* raced another mark — already heard, fine */ }
         }
+        await BroadcastHeardAsync(bookId, [messageId]);
         return Ok();
     }
 
@@ -71,6 +98,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
 
         foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
         if (toMark.Count > 0) await db.SaveChangesAsync();
+        await BroadcastHeardAsync(bookId, toMark);
         return Ok();
     }
 
@@ -308,6 +336,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }
 
         await db.SaveChangesAsync();
+        await BroadcastReadAsync(bookId, messageId);
         return Ok();
     }
 

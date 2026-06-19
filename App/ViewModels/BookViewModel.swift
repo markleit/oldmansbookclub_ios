@@ -62,6 +62,26 @@ final class BookViewModel: ObservableObject {
         return reads.filter { (readFrontierByUser[$0.userId] ?? .distantPast) >= message.sentAt }
     }
 
+    // Live read receipt: upsert the reader's last-seen marker (keeping their heard set).
+    private func applyReadReceipt(_ p: ReadReceiptPayload) {
+        let heard = reads.first(where: { $0.userId == p.userId })?.heardMessageIds ?? []
+        reads.removeAll { $0.userId == p.userId }
+        reads.append(APIClient.ChatReadDto(userId: p.userId, displayName: p.displayName,
+            avatarUrl: p.avatarUrl, lastSeenMessageId: p.lastSeenMessageId, heardMessageIds: heard))
+    }
+
+    // Live heard receipt: union the newly-heard voice ids into the reader's heard set
+    // (keeping their last-seen marker).
+    private func applyHeardReceipt(_ p: HeardReceiptPayload) {
+        let existing = reads.first(where: { $0.userId == p.userId })
+        var heard = Set(existing?.heardMessageIds ?? [])
+        heard.formUnion(p.messageIds)
+        let lastSeen = existing?.lastSeenMessageId ?? p.messageIds.first ?? p.userId
+        reads.removeAll { $0.userId == p.userId }
+        reads.append(APIClient.ChatReadDto(userId: p.userId, displayName: p.displayName,
+            avatarUrl: p.avatarUrl, lastSeenMessageId: lastSeen, heardMessageIds: Array(heard)))
+    }
+
     private var cacheKey: String { "messages_\(book.id)" }
 
     private var pendingByBody: [String: UUID] = [:]
@@ -205,6 +225,18 @@ final class BookViewModel: ObservableObject {
                 self.messages[idx].durationSeconds = nil
                 self.saveMessagesCache()
             }
+        }
+
+        await ChatService.shared.setOnReadReceipt { [weak self] payload in
+            guard let self, payload.bookId == self.book.id,
+                  payload.userId != TokenStore.shared.userId else { return }
+            self.applyReadReceipt(payload)
+        }
+
+        await ChatService.shared.setOnHeardReceipt { [weak self] payload in
+            guard let self, payload.bookId == self.book.id,
+                  payload.userId != TokenStore.shared.userId else { return }
+            self.applyHeardReceipt(payload)
         }
 
         await ChatService.shared.connect(bookId: book.id)
