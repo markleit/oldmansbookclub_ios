@@ -26,7 +26,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .Where(b => myClubIds.Contains(b.ClubId))
             .OrderBy(b => b.Status == "current" ? 0 : b.Status == "future" ? 1 : 2)
             .ThenByDescending(b => b.AddedAt)
-            .Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status))
+            .Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount))
             .ToListAsync();
     }
 
@@ -34,10 +34,18 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     public async Task<IEnumerable<BookSearchResult>> SearchBooks([FromQuery] string q)
     {
         if (string.IsNullOrWhiteSpace(q)) return [];
+        var volumes = await FetchGoogleBooksAsync(q);
+        return volumes.Select(v => new BookSearchResult(v.Title, v.Author, v.CoverUrl)).ToList();
+    }
 
+    // A parsed Google Books volume with the fields we care about.
+    private record GoogleVolume(string Title, string Author, string? CoverUrl, string? Description, int? PublishedYear, int? PageCount);
+
+    // Shared Google Books fetch + parse, used by both search and the lazy metadata
+    // enrichment. Returns [] on any failure (caller degrades gracefully).
+    private async Task<List<GoogleVolume>> FetchGoogleBooksAsync(string q)
+    {
         var apiKey = config["GoogleBooks:ApiKey"];
-        logger.LogInformation("Book search: q={Q} hasApiKey={HasKey}", q, !string.IsNullOrEmpty(apiKey));
-
         var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=5&printType=books";
         if (!string.IsNullOrEmpty(apiKey)) url += $"&key={apiKey}";
 
@@ -58,12 +66,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }
 
         var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-
-        if (!json.TryGetProperty("items", out var items))
-        {
-            logger.LogInformation("Google Books returned no items for q={Q}", q);
-            return [];
-        }
+        if (!json.TryGetProperty("items", out var items)) return [];
 
         return items.EnumerateArray().Select(item =>
         {
@@ -74,9 +77,30 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             string? coverUrl = null;
             if (info.TryGetProperty("imageLinks", out var links) &&
                 links.TryGetProperty("thumbnail", out var thumb))
-                coverUrl = thumb.GetString()?.Replace("http://", "https://");
-            return new BookSearchResult(title, author, coverUrl);
+                coverUrl = EnlargeCover(thumb.GetString());
+            var description = info.TryGetProperty("description", out var d) ? d.GetString() : null;
+            int? year = info.TryGetProperty("publishedDate", out var pd) ? ParseYear(pd.GetString()) : null;
+            int? pages = info.TryGetProperty("pageCount", out var pc) && pc.TryGetInt32(out var p) ? p : null;
+            return new GoogleVolume(title, author, coverUrl, description, year, pages);
         }).ToList();
+    }
+
+    // Upgrade a Google Books thumbnail URL to a larger, cleaner cover: https, drop the
+    // page-curl effect, and request a bigger zoom level. Falls back gracefully if the
+    // URL isn't the expected shape.
+    private static string? EnlargeCover(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        return url.Replace("http://", "https://")
+                  .Replace("&edge=curl", "")
+                  .Replace("zoom=1", "zoom=2");
+    }
+
+    // Google publishedDate is "2005", "2005-03", or "2005-03-01" — take the year.
+    private static int? ParseYear(string? date)
+    {
+        if (date is { Length: >= 4 } && int.TryParse(date[..4], out var y)) return y;
+        return null;
     }
 
     [HttpPost]
@@ -99,7 +123,36 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         await db.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetMyBooks),
-            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status));
+            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount));
+    }
+
+    // Book details. Lazily backfills metadata (description / published year / page
+    // count, and upgrades the cover) from Google Books the first time a book without
+    // it is viewed, so existing books fill in on demand with no user action.
+    [HttpGet("{bookId}")]
+    public async Task<ActionResult<BookDto>> GetBook(Guid bookId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+
+        var isMember = await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
+        if (!isMember) return Forbid();
+
+        if (book.MetadataFetchedAt is null)
+        {
+            var match = (await FetchGoogleBooksAsync(book.Title)).FirstOrDefault();
+            if (match is not null)
+            {
+                book.Description ??= match.Description;
+                book.PublishedYear ??= match.PublishedYear;
+                book.PageCount ??= match.PageCount;
+                if (!string.IsNullOrEmpty(match.CoverUrl)) book.CoverBlobUrl = match.CoverUrl;
+            }
+            book.MetadataFetchedAt = DateTime.UtcNow;   // mark attempted, even if no match
+            await db.SaveChangesAsync();
+        }
+
+        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
     }
 
     [HttpDelete("{bookId}")]

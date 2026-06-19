@@ -34,6 +34,10 @@ struct Book: Identifiable, Codable, Hashable {
     var addedAt: Date
     var finishedAt: Date?
     var status: BookStatus
+    // Google Books metadata, backfilled server-side on first Details view.
+    var description: String?
+    var publishedYear: Int?
+    var pageCount: Int?
 }
 
 struct User: Identifiable, Codable {

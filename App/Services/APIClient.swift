@@ -277,6 +277,12 @@ final class APIClient {
         return (try? await get(path: "/books/search?q=\(encoded)")) ?? []
     }
 
+    // Fetches a single book's details; the server lazily backfills Google Books
+    // metadata (description / year / pages / cover) on the first call for a book.
+    func bookDetails(id: UUID) async throws -> Book {
+        try await get(path: "/books/\(id.uuidString)")
+    }
+
     struct SetStatusRequest: Encodable { let status: String }
 
     func setBookStatus(bookId: UUID, status: BookStatus) async throws {

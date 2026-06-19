@@ -36,6 +36,7 @@
 		A4DFDAB4010F3A518EBD1A3E /* AudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2ABB613BFB149719A00A493 /* AudioCache.swift */; };
 		A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88754FFD53578C83DEC2294D /* LibraryView.swift */; };
 		B085151687156DA2AC994199 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E0F879AC20F63014F28CB5 /* BookDetailView.swift */; };
+		B0B10269CDEB389F303816AC /* BookDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */; };
 		BC028A1177F026A4999F388C /* AdminView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69018BA34CF925339F43265 /* AdminView.swift */; };
 		BCA5F7DF4BA711C8459C0438 /* MediaSendQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */; };
 		C1446459207EFE368581046D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36B897A6BA8DF56597F8CFEF /* SettingsView.swift */; };
@@ -77,6 +78,7 @@
 		A518484880F73D42F012B0EA /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		B561ED5FA32D5FF7BE41DA80 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailsView.swift; sourceTree = "<group>"; };
 		BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberProfileView.swift; sourceTree = "<group>"; };
 		BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.entitlements; sourceTree = "<group>"; };
 		C5BDC572FF6DDD04153861DF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 			children = (
 				5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */,
 				D69018BA34CF925339F43265 /* AdminView.swift */,
+				B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */,
 				59E0F879AC20F63014F28CB5 /* BookDetailView.swift */,
 				62112635C861D78687D704A9 /* BrowseClubsView.swift */,
 				3797FC65323C0493452D32B2 /* CachedBookCover.swift */,
@@ -286,6 +289,7 @@
 				238255509291CD03907584E8 /* AudioRecorder.swift in Sources */,
 				F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */,
 				B085151687156DA2AC994199 /* BookDetailView.swift in Sources */,
+				B0B10269CDEB389F303816AC /* BookDetailsView.swift in Sources */,
 				79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */,
 				2C2EF1F408CB370E728F6C62 /* BrowseClubsView.swift in Sources */,
 				301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */,

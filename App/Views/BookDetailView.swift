@@ -10,6 +10,7 @@ struct BookDetailView: View {
     @StateObject private var viewModel: BookViewModel
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingDeleteConfirm = false
+    @State private var showingDetails = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
     // Tracks rows currently rendered by LazyVStack (slight superset of the visible
     // viewport since LazyVStack keeps a small buffer). Used only to auto-dismiss
@@ -296,6 +297,9 @@ struct BookDetailView: View {
         .sheet(isPresented: $viewModel.showSavedMessages) {
             SavedMessagesSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $showingDetails) {
+            BookDetailsView(book: viewModel.book)
+        }
         .overlay(alignment: .top) {
             if viewModel.messageSaved {
                 Label("Message saved", systemImage: "bookmark.fill")
@@ -356,6 +360,10 @@ struct BookDetailView: View {
 
     @ViewBuilder
     private var bookMenuItems: some View {
+        Button { showingDetails = true } label: {
+            Label("Details", systemImage: "info.circle")
+        }
+        Divider()
         if !unheardVoiceMessages.isEmpty {
             Button {
                 PlaybackProgressStore.shared.markHeard(

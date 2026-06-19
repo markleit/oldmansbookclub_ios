@@ -148,6 +148,13 @@ public class Book
     [Required, MaxLength(500)] public string Title { get; set; } = "";
     [Required, MaxLength(300)] public string Author { get; set; } = "";
     [MaxLength(2048)] public string? CoverBlobUrl { get; set; }
+    // Metadata from Google Books, populated lazily on first Details view (null = not
+    // yet fetched). MetadataFetchedAt prevents re-fetching when a book genuinely has
+    // no description/pages on Google.
+    [MaxLength(4000)] public string? Description { get; set; }
+    public int? PublishedYear { get; set; }
+    public int? PageCount { get; set; }
+    public DateTime? MetadataFetchedAt { get; set; }
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
     [Required] public string Status { get; set; } = "future"; // "future", "current", "past"
