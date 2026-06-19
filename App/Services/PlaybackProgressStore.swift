@@ -45,6 +45,18 @@ final class PlaybackProgressStore: ObservableObject {
         persist()
     }
 
+    // Mark voice messages fully heard without playing them ("mark all as heard").
+    // Positions the thumb at the end + sets the green/completed state. One persist
+    // for the whole batch. Items: (message id, duration in seconds).
+    func markHeard(_ items: [(id: UUID, duration: Int)]) {
+        guard !items.isEmpty else { return }
+        for item in items {
+            let pos = item.duration > 0 ? Double(item.duration) : max(states[item.id.uuidString]?.position ?? 1, 1)
+            states[item.id.uuidString] = State(position: pos, completed: true)
+        }
+        persist()
+    }
+
     // Reset to the start (used when replaying a completed message — green clears).
     func clear(_ id: UUID) {
         states[id.uuidString] = State(position: 0, completed: false)

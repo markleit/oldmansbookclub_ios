@@ -326,8 +326,25 @@ struct BookDetailView: View {
         }
     }
 
+    // Loaded voice messages not yet marked played (drives "Mark all as heard").
+    private var unheardVoiceMessages: [Message] {
+        viewModel.visibleMessages.filter {
+            $0.type == .voice && !$0.isDeleted && !PlaybackProgressStore.shared.isCompleted($0.id)
+        }
+    }
+
     @ViewBuilder
     private var bookMenuItems: some View {
+        if !unheardVoiceMessages.isEmpty {
+            Button {
+                PlaybackProgressStore.shared.markHeard(
+                    unheardVoiceMessages.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
+                )
+            } label: {
+                Label("Mark all as heard", systemImage: "checkmark.circle")
+            }
+            Divider()
+        }
         switch viewModel.book.status {
         case .future:
             Button("Start Reading") {
@@ -433,6 +450,13 @@ struct MessageRow: View {
                         UIPasteboard.general.string = body
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
+                    }
+                }
+                if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
+                    Button {
+                        PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
+                    } label: {
+                        Label("Mark as Heard", systemImage: "checkmark.circle")
                     }
                 }
                 Button {
