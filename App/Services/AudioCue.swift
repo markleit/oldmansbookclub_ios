@@ -24,8 +24,19 @@ final class AudioCue {
         guard AudioCue.isEnabled else { return }
         // Ensure the beep is audible regardless of the silent switch by routing it
         // through the playAndRecord session (the recorder reuses this category next).
+        // Match the recorder's Bluetooth options so the beep and capture share one
+        // route (no flip between them). Only force the built-in speaker when there's
+        // NO external route — on CarPlay / Bluetooth / headphones the beep must follow
+        // that route, otherwise it plays on the phone speaker (wrong output, and
+        // inaudible over road noise in the car).
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+        #if compiler(>=6.2)
+        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
+        #else
+        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        #endif
+        if !AudioCue.hasExternalOutputRoute() { options.insert(.defaultToSpeaker) }
+        try? session.setCategory(.playAndRecord, mode: .default, options: options)
         try? session.setActive(true)
 
         guard let player = try? AVAudioPlayer(data: recordStartData) else { return }
@@ -52,6 +63,17 @@ final class AudioCue {
             try? await Task.sleep(for: .milliseconds(180))
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
         }
+    }
+
+    // True when audio is routed somewhere other than the phone's own speaker/receiver
+    // (CarPlay, Bluetooth, AirPlay, wired). On those routes we must NOT force the
+    // built-in speaker, or the cue plays on the phone instead of the active route.
+    private static func hasExternalOutputRoute() -> Bool {
+        let external: Set<AVAudioSession.Port> = [
+            .carAudio, .bluetoothA2DP, .bluetoothHFP, .bluetoothLE,
+            .airPlay, .headphones, .usbAudio, .lineOut
+        ]
+        return AVAudioSession.sharedInstance().currentRoute.outputs.contains { external.contains($0.portType) }
     }
 
     // Two quick tones with short fades to avoid clicks.
