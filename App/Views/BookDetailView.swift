@@ -356,10 +356,14 @@ struct BookDetailView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
-    // Loaded voice messages not yet marked played (drives "Mark all as heard").
+    // Loaded voice messages from OTHERS not yet marked played (drives the chat-title
+    // unread count + "Mark all as heard"). Excludes your own — you can't have an
+    // "unheard" message you sent — matching the server's unread definition.
     private var unheardVoiceMessages: [Message] {
         viewModel.visibleMessages.filter {
-            $0.type == .voice && !$0.isDeleted && !PlaybackProgressStore.shared.isCompleted($0.id)
+            $0.type == .voice && !$0.isDeleted
+                && $0.senderId != TokenStore.shared.userId
+                && !PlaybackProgressStore.shared.isCompleted($0.id)
         }
     }
 
