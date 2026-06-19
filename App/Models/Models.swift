@@ -38,6 +38,8 @@ struct Book: Identifiable, Codable, Hashable {
     var description: String?
     var publishedYear: Int?
     var pageCount: Int?
+    // Unread messages for the current user (non-voice after last-seen + unheard voice).
+    var unreadCount: Int = 0
 }
 
 struct User: Identifiable, Codable {

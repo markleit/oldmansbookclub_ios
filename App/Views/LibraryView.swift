@@ -7,6 +7,7 @@ struct LibraryView: View {
     @State private var bookListExpanded = true
     @State private var pastReadsExpanded = true
     @State private var navigationPath = NavigationPath()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -102,6 +103,11 @@ struct LibraryView: View {
                 await viewModel.load()
                 navigateToPendingBook()
             }
+            .onChange(of: scenePhase) { phase in
+                // Refresh on foreground so unread counts + the app badge reflect
+                // anything read elsewhere / arrived while backgrounded.
+                if phase == .active { Task { await viewModel.load() } }
+            }
             .onChange(of: deepLink.pendingBookId) { _ in
                 navigateToPendingBook()
             }
@@ -185,6 +191,23 @@ struct CollapsibleSectionHeader: View {
     }
 }
 
+// Red unread-count pill, overlaid on a book cover. Hidden when zero.
+struct UnreadBadge: View {
+    let count: Int
+    var body: some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : "\(count)")
+                .font(.caption2.weight(.bold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.red, in: Capsule())
+                .overlay(Capsule().stroke(Color(.systemBackground), lineWidth: 1.5))
+                .offset(x: 8, y: -6)
+        }
+    }
+}
+
 struct CurrentBookCard: View {
     let book: Book
     var refreshToken: UUID = UUID()
@@ -192,6 +215,7 @@ struct CurrentBookCard: View {
     var body: some View {
         HStack(spacing: 16) {
             CachedBookCover(urlString: book.coverBlobUrl, width: 80, height: 120, cornerRadius: 8, refreshToken: refreshToken)
+                .overlay(alignment: .topTrailing) { UnreadBadge(count: book.unreadCount) }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(book.title)
@@ -221,6 +245,7 @@ struct PastBookRow: View {
     var body: some View {
         HStack(spacing: 12) {
             CachedBookCover(urlString: book.coverBlobUrl, width: 36, height: 52, cornerRadius: 4, refreshToken: refreshToken)
+                .overlay(alignment: .topTrailing) { UnreadBadge(count: book.unreadCount) }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(book.title).font(.headline).foregroundColor(.primary)

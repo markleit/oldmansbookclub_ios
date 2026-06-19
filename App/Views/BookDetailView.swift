@@ -9,6 +9,9 @@ struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
+    // Observed so the title's unread (unheard-voice) count updates live as messages
+    // are played / marked heard.
+    @ObservedObject private var playbackStore = PlaybackProgressStore.shared
     @State private var showingDeleteConfirm = false
     @State private var showingDetails = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
@@ -254,7 +257,7 @@ struct BookDetailView: View {
                 onShowSaved: { viewModel.showSavedMessages = true }
             )
         }
-        .navigationTitle(viewModel.book.title)
+        .navigationTitle(unheardVoiceMessages.isEmpty ? viewModel.book.title : "\(viewModel.book.title) (\(unheardVoiceMessages.count))")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -315,7 +318,6 @@ struct BookDetailView: View {
         }
         .task {
             await viewModel.load()
-            try? await UNUserNotificationCenter.current().setBadgeCount(0)
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
                 // Report the voice message as heard (sticky, server-side) for receipts

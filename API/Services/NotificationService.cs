@@ -114,7 +114,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         await SendToAllAsync([deviceToken], payload);
     }
 
-    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default)
+    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default, int badge = 1)
     {
         var alertBody = message.Type switch
         {
@@ -131,7 +131,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             {
                 alert = new { title = bookTitle, body = alertBody },
                 sound = "default",
-                badge = 1
+                badge
             },
             clubId = message.ClubId.ToString(),
             bookId = bookId.ToString(),

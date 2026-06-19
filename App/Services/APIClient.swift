@@ -390,6 +390,7 @@ final class APIClient {
         let displayName: String
         let avatarUrl: String?
         let lastSeenMessageId: UUID
+        var heardMessageIds: [UUID] = []
         var id: UUID { userId }
     }
 

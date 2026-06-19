@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import UserNotifications
 
 @MainActor
 final class LibraryViewModel: ObservableObject {
@@ -60,6 +61,9 @@ final class LibraryViewModel: ObservableObject {
             books = fetched
             saveCache(fetched)
             imageRefreshToken = UUID()
+            // Keep the app icon badge in sync with total unread on every load
+            // (initial, pull-to-refresh, foreground). Pushes set it while backgrounded.
+            try? await UNUserNotificationCenter.current().setBadgeCount(fetched.reduce(0) { $0 + $1.unreadCount })
         } catch is CancellationError {
             isLoading = false
             return

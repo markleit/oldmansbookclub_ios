@@ -33,40 +33,8 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return books.Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount, unread.GetValueOrDefault(b.Id)));
     }
 
-    // Unread per book for the current user: non-voice messages from others after the
-    // last-seen marker, plus voice messages from others not yet heard (independent of
-    // last-seen — an unplayed voice msg stays unread). Excludes own + blocked + deleted.
-    private async Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
-    {
-        var result = new Dictionary<Guid, int>();
-        if (bookIds.Count == 0) return result;
-
-        var lastSeen = await db.ChatReads
-            .Where(cr => cr.UserId == UserId && bookIds.Contains(cr.BookId) && cr.LastSeenMessageId != null)
-            .Join(db.Messages, cr => cr.LastSeenMessageId, m => m.Id, (cr, m) => new { cr.BookId, m.SentAt })
-            .ToDictionaryAsync(x => x.BookId, x => x.SentAt);
-
-        var blocked = await db.BlockedUsers.Where(b => b.BlockerId == UserId).Select(b => b.BlockedId).ToListAsync();
-        var blockedSet = blocked.ToHashSet();
-        var heardSet = (await db.MessageHeards.Where(h => h.UserId == UserId).Select(h => h.MessageId).ToListAsync()).ToHashSet();
-
-        foreach (var bookId in bookIds)
-        {
-            var seenAt = lastSeen.TryGetValue(bookId, out var s) ? s : DateTime.MinValue;
-            // Candidates: all voice from others (unread depends on heard, not last-seen)
-            // + non-voice from others after the last-seen marker.
-            var msgs = await db.Messages
-                .Where(m => m.BookId == bookId && m.SenderId != UserId && m.DeletedAt == null
-                    && (m.Type == MessageType.Voice || m.SentAt > seenAt))
-                .Select(m => new { m.Id, m.Type, m.SenderId, m.SentAt })
-                .ToListAsync();
-
-            result[bookId] = msgs.Count(m =>
-                !blockedSet.Contains(m.SenderId)
-                && (m.Type != MessageType.Voice || !heardSet.Contains(m.Id)));
-        }
-        return result;
-    }
+    private Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
+        => UnreadCalculator.PerBookAsync(db, UserId, bookIds);
 
     // Mark a single voice message heard (on full playback or per-message "mark as heard").
     // Sticky/idempotent — replays never remove it.
@@ -358,11 +326,26 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
-        var reads = await db.ChatReads
+        var readers = await db.ChatReads
             .Where(cr => cr.BookId == bookId && cr.UserId != UserId && cr.LastSeenMessageId != null)
-            .Select(cr => new ChatReadDto(cr.UserId, cr.User.Nickname ?? cr.User.DisplayName, cr.User.AvatarUrl, cr.LastSeenMessageId!.Value))
+            .Select(cr => new { cr.UserId, Name = cr.User.Nickname ?? cr.User.DisplayName, cr.User.AvatarUrl, LastSeen = cr.LastSeenMessageId!.Value })
             .ToListAsync();
 
-        return reads;
+        // Each reader's heard voice messages in this book — voice receipts reflect
+        // actual listening, not just opening the chat.
+        var readerIds = readers.Select(r => r.UserId).ToList();
+        var voiceIds = await db.Messages
+            .Where(m => m.BookId == bookId && m.Type == MessageType.Voice)
+            .Select(m => m.Id).ToListAsync();
+        var heardByUser = (await db.MessageHeards
+                .Where(h => readerIds.Contains(h.UserId) && voiceIds.Contains(h.MessageId))
+                .Select(h => new { h.UserId, h.MessageId })
+                .ToListAsync())
+            .GroupBy(h => h.UserId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.MessageId).ToList());
+
+        return readers
+            .Select(r => new ChatReadDto(r.UserId, r.Name, r.AvatarUrl, r.LastSeen, heardByUser.GetValueOrDefault(r.UserId, [])))
+            .ToList();
     }
 }

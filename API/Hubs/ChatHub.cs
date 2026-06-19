@@ -197,18 +197,22 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             .Select(u => u.DeviceToken!)
             .ToListAsync();
 
-        var tokens = await db.Memberships
-            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId)
-            .Select(m => m.User.DeviceToken)
-            .Where(t => t != null)
-            .Cast<string>()
+        // Per recipient (not just per token) so each push carries that user's own total
+        // unread count for the app icon badge. Distinct device tokens, sender's device
+        // excluded.
+        var recipients = await db.Memberships
+            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId && m.User.DeviceToken != null)
+            .Select(m => new { m.UserId, Token = m.User.DeviceToken! })
             .Distinct()
             .ToListAsync();
 
-        tokens = tokens.Where(t => !senderTokens.Contains(t)).ToList();
-
-        if (tokens.Count > 0)
-            await notifications.SendNewMessageAsync(tokens, dto, bookTitle, bookId);
+        var seenTokens = new HashSet<string>(senderTokens);
+        foreach (var r in recipients)
+        {
+            if (!seenTokens.Add(r.Token)) continue;   // skip sender's device + dupes
+            var badge = await UnreadCalculator.TotalAsync(db, r.UserId);
+            await notifications.SendNewMessageAsync([r.Token], dto, bookTitle, bookId, badge);
+        }
     }
 
     private Guid GetUserId() =>

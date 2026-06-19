@@ -52,11 +52,14 @@ final class BookViewModel: ObservableObject {
         readFrontierByUser = map
     }
 
-    // Members who have read the given message — i.e. their last-seen message is this
-    // one or a newer one. Drives the per-message read receipt (each read message shows
-    // its readers, not just the single message that is someone's exact last-seen point).
+    // Members who have "read" the given message. Voice messages count only when the
+    // member has actually heard them (server heard-set); text/photo/video use the
+    // last-seen frontier (their last-seen is this message or newer).
     func readers(of message: Message) -> [APIClient.ChatReadDto] {
-        reads.filter { (readFrontierByUser[$0.userId] ?? .distantPast) >= message.sentAt }
+        if message.type == .voice {
+            return reads.filter { $0.heardMessageIds.contains(message.id) }
+        }
+        return reads.filter { (readFrontierByUser[$0.userId] ?? .distantPast) >= message.sentAt }
     }
 
     private var cacheKey: String { "messages_\(book.id)" }
