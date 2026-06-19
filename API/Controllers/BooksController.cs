@@ -129,16 +129,11 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }).ToList();
     }
 
-    // Upgrade a Google Books thumbnail URL to a larger, cleaner cover: https, drop the
-    // page-curl effect, and request a bigger zoom level. Falls back gracefully if the
-    // URL isn't the expected shape.
+    // Normalize a Google Books thumbnail URL to https (required by ATS). NOTE: do not
+    // rewrite zoom/edge here — Google doesn't reliably serve the rewritten variants,
+    // which blanks the preview image. A genuinely larger cover needs a per-volume fetch.
     private static string? EnlargeCover(string? url)
-    {
-        if (string.IsNullOrEmpty(url)) return null;
-        return url.Replace("http://", "https://")
-                  .Replace("&edge=curl", "")
-                  .Replace("zoom=1", "zoom=2");
-    }
+        => string.IsNullOrEmpty(url) ? null : url.Replace("http://", "https://");
 
     // Google publishedDate is "2005", "2005-03", or "2005-03-01" — take the year.
     private static int? ParseYear(string? date)
