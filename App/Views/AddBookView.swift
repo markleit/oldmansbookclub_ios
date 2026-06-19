@@ -14,13 +14,19 @@ struct AddBookView: View {
     @State private var searchResults: [APIClient.BookSearchResult] = []
     @State private var showingPicker = false
     @State private var searchTask: Task<Void, Never>?
+    // Set true right before we fill the title from a picked result, so its
+    // .onChange doesn't kick off another search and clobber the selection.
+    @State private var suppressSearch = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("e.g. Dune", text: $title)
-                        .onChange(of: title) { _ in scheduleSearch() }
+                        .onChange(of: title) { _ in
+                            if suppressSearch { suppressSearch = false; return }
+                            scheduleSearch()
+                        }
                 } header: {
                     Text("Title")
                 } footer: {
@@ -57,9 +63,11 @@ struct AddBookView: View {
                     HStack {
                         Text("Author")
                         Spacer()
-                        if searchResults.count > 1 {
-                            Button("Choose edition") { showingPicker = true }
-                                .font(.caption)
+                        if !searchResults.isEmpty {
+                            Button(searchResults.count > 1 ? "Choose edition" : "Use match") {
+                                showingPicker = true
+                            }
+                            .font(.caption)
                         }
                     }
                 }
@@ -116,12 +124,21 @@ struct AddBookView: View {
         let results = await APIClient.shared.searchBooks(title: title)
         guard !Task.isCancelled else { return }
         searchResults = results
+        // Preview author/cover from the top match as you type, but DON'T touch the
+        // title — that only changes when you explicitly pick a result below.
         if let first = results.first {
-            apply(first)
+            author = first.author
+            coverUrl = first.coverUrl
         }
     }
 
+    // Explicit selection from the picker: pull the full metadata, including the
+    // title (overwriting/completing whatever partial text was typed).
     private func apply(_ result: APIClient.BookSearchResult) {
+        if title != result.title {
+            suppressSearch = true
+            title = result.title
+        }
         author = result.author
         coverUrl = result.coverUrl
     }
