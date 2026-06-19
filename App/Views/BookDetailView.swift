@@ -15,6 +15,7 @@ struct BookDetailView: View {
     // viewport since LazyVStack keeps a small buffer). Used only to auto-dismiss
     // the "New message" pill once the user can see the newest message.
     @State private var visibleMessageIds: Set<UUID> = []
+    @State private var keyboardVisible: Bool = false
     @State private var hasUnseenMessage: Bool = false
     @State private var lastSeenNewestId: UUID? = nil
     // The message a tapped notification was for. Set on chat open; cleared once
@@ -84,6 +85,16 @@ struct BookDetailView: View {
                         }
                         .padding(.horizontal)
                         .padding(.top, 8)
+                    }
+                    // While the keyboard is up, a tap anywhere in the message list
+                    // dismisses it (and is consumed, so it doesn't also play a message
+                    // or open a link — the industry-standard "first tap dismisses").
+                    .overlay {
+                        if keyboardVisible {
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onTapGesture { dismissKeyboard() }
+                        }
                     }
                     .overlay(alignment: .bottom) {
                         // "New message" pill: surfaces when somebody else's message
@@ -309,6 +320,12 @@ struct BookDetailView: View {
                 AudioPlayerService.shared.toggle(message: voices[idx - 1])
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisible = false
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             Task {
                 // Mark stale immediately so any in-flight send waits for a rebuild,
@@ -324,6 +341,10 @@ struct BookDetailView: View {
             // navigation pop, not when a bubble merely scrolls out of view).
             AudioPlayerService.shared.stopAll()
         }
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     // Loaded voice messages not yet marked played (drives "Mark all as heard").

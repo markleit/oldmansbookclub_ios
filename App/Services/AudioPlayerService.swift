@@ -23,6 +23,11 @@ final class AudioPlayerService: ObservableObject {
     private var proximityCancellable: AnyCancellable?
     private var isNearEar = false
     private var isUserInitiatedPause = false
+    // The message's recorded length. AVPlayer's item.duration for AAC/m4a can run
+    // longer than the audible content, making the counter overshoot the displayed
+    // total. We keep playing to the real file end but clamp the published
+    // progress/currentSeconds to this so the UI never shows more than the total.
+    private var playingDurationSeconds: Int = 0
 
     private init() {
         routeCancellable = NotificationCenter.default
@@ -117,6 +122,7 @@ final class AudioPlayerService: ObservableObject {
         player = newPlayer
         playingMessageId = message.id
         isUserInitiatedPause = false
+        playingDurationSeconds = message.durationSeconds ?? 0
         let dur = Double(message.durationSeconds ?? 0)
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
@@ -174,8 +180,11 @@ final class AudioPlayerService: ObservableObject {
         let duration = item.duration.seconds
         let current = player.currentTime().seconds
         guard duration.isFinite, duration > 0 else { return }
-        progress = min(current / duration, 1.0)
-        currentSeconds = Int(current)
+        // Display against the recorded total (if known) so the bar/counter never
+        // overrun it; playback still completes at the real file end below.
+        let displayTotal = playingDurationSeconds > 0 ? Double(playingDurationSeconds) : duration
+        progress = min(current / displayTotal, 1.0)
+        currentSeconds = min(Int(current), playingDurationSeconds > 0 ? playingDurationSeconds : Int(duration))
         if current >= duration - 0.05 {
             let completedId = playingMessageId
             saveCurrentPosition(completed: true)   // mark fully played (green)
