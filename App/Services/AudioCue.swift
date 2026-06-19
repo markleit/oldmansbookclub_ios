@@ -31,13 +31,21 @@ final class AudioCue {
         // inaudible over road noise in the car).
         let session = AVAudioSession.sharedInstance()
         #if compiler(>=6.2)
-        var options: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
         #else
-        var options: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
         #endif
-        if !AudioCue.hasExternalOutputRoute() { options.insert(.defaultToSpeaker) }
-        try? session.setCategory(.playAndRecord, mode: .default, options: options)
+        // Configure for recording WITHOUT forcing the speaker, then activate so the
+        // real output route resolves — AirPods / CarPlay / other Bluetooth take over
+        // here (checking the route before activation can miss a not-yet-active one).
+        // Only when we land on the phone's own built-in output do we override to the
+        // speaker, so the cue still beats the silent switch on a bare phone without
+        // hijacking an external route.
+        try? session.setCategory(.playAndRecord, mode: .default, options: btOptions)
         try? session.setActive(true)
+        if !AudioCue.hasExternalOutputRoute() {
+            try? session.overrideOutputAudioPort(.speaker)
+        }
 
         guard let player = try? AVAudioPlayer(data: recordStartData) else { return }
         self.player = player
