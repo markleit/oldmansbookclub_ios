@@ -12,6 +12,12 @@ final class BookViewModel: ObservableObject {
     @Published var reachedBeginning = false
     @Published var isOffline = false
     @Published var messageText = ""
+    // "<First> is typing…" / "<First> is recording audio…" while someone else is
+    // composing; auto-clears on a timeout so a dropped event can't leave it stuck.
+    @Published var typingIndicator: String?
+    private var typingClearWork: DispatchWorkItem?
+    private var lastTypingSentAt: Date?
+    private var recordingTypingTimer: Timer?
     @Published var errorMessage: String?
     @Published var showMicDeniedAlert = false
     @Published var blockedUserIds: Set<UUID> = []
@@ -60,6 +66,44 @@ final class BookViewModel: ObservableObject {
             return reads.filter { $0.heardMessageIds.contains(message.id) }
         }
         return reads.filter { (readFrontierByUser[$0.userId] ?? .distantPast) >= message.sentAt }
+    }
+
+    // MARK: - Typing indicator
+
+    // Incoming: show "<First> is typing/recording…" and (re)arm the auto-clear.
+    private func handleUserTyping(_ p: UserTypingPayload) {
+        guard p.bookId == book.id, p.userId != TokenStore.shared.userId else { return }
+        let first = p.displayName.split(separator: " ").first.map(String.init) ?? p.displayName
+        typingIndicator = p.isRecording ? "\(first) is recording audio…" : "\(first) is typing…"
+        typingClearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.typingIndicator = nil }
+        typingClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
+    }
+
+    // Outgoing (text): throttle to ~once per 2s so we don't ping per keystroke.
+    func notifyTyping() {
+        guard !messageText.isEmpty else { return }
+        let now = Date()
+        if let last = lastTypingSentAt, now.timeIntervalSince(last) < 2 { return }
+        lastTypingSentAt = now
+        ChatService.shared.sendTyping(bookId: book.id, isRecording: false)
+    }
+
+    // Outgoing (recording): ping now + repeat every 2s so the indicator doesn't time
+    // out during a long recording. Stopped in stopRecordingTypingPings().
+    private func startRecordingTypingPings() {
+        ChatService.shared.sendTyping(bookId: book.id, isRecording: true)
+        recordingTypingTimer?.invalidate()
+        recordingTypingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in ChatService.shared.sendTyping(bookId: self.book.id, isRecording: true) }
+        }
+    }
+
+    private func stopRecordingTypingPings() {
+        recordingTypingTimer?.invalidate()
+        recordingTypingTimer = nil
     }
 
     // Live read receipt: upsert the reader's last-seen marker (keeping their heard set).
@@ -237,6 +281,10 @@ final class BookViewModel: ObservableObject {
             guard let self, payload.bookId == self.book.id,
                   payload.userId != TokenStore.shared.userId else { return }
             self.applyHeardReceipt(payload)
+        }
+
+        await ChatService.shared.setOnUserTyping { [weak self] payload in
+            self?.handleUserTyping(payload)
         }
 
         await ChatService.shared.connect(bookId: book.id)
@@ -431,6 +479,7 @@ final class BookViewModel: ObservableObject {
         do {
             try audioRecorder.start()
             recordingStartTime = Date()
+            startRecordingTypingPings()   // broadcast "is recording audio…"
         } catch {
             isRecording = false
             errorMessage = "Could not start recording."
@@ -440,6 +489,7 @@ final class BookViewModel: ObservableObject {
     func stopRecording() async {
         guard isRecording else { return }
         isRecording = false
+        stopRecordingTypingPings()
         let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartTime = nil
         let recording = audioRecorder.stop()

@@ -24,6 +24,19 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await Groups.AddToGroupAsync(Context.ConnectionId, bookId.ToString());
     }
 
+    // Lightweight "is typing / recording" ping. Throttled client-side; broadcast to
+    // others in the book group (not persisted, no notification). The client auto-clears
+    // the indicator on a timeout, so a dropped event can't leave it stuck.
+    public async Task Typing(Guid bookId, bool isRecording)
+    {
+        var userId = GetUserId();
+        var name = await db.Users.Where(u => u.Id == userId)
+            .Select(u => u.Nickname ?? u.DisplayName).FirstOrDefaultAsync();
+        if (name is null) return;
+        await Clients.OthersInGroup(bookId.ToString())
+            .SendAsync("UserTyping", new { bookId, userId, displayName = name, isRecording });
+    }
+
     public async Task SendTextMessage(Guid bookId, string body)
     {
         EnforceRateLimit();

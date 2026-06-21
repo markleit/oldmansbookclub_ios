@@ -34,6 +34,7 @@ actor ChatService {
     private var onMessageDeleted: ((UUID) -> Void)?
     private var onReadReceipt: ((ReadReceiptPayload) -> Void)?
     private var onHeardReceipt: ((HeardReceiptPayload) -> Void)?
+    private var onUserTyping: ((UserTypingPayload) -> Void)?
 
     private init() {}
 
@@ -54,6 +55,17 @@ actor ChatService {
 
     func setOnHeardReceipt(_ handler: @escaping (HeardReceiptPayload) -> Void) {
         onHeardReceipt = handler
+    }
+
+    func setOnUserTyping(_ handler: @escaping (UserTypingPayload) -> Void) {
+        onUserTyping = handler
+    }
+
+    // Fire-and-forget typing/recording ping (best-effort; never throws into the UI).
+    // nonisolated so @MainActor callers can fire it synchronously; the actual send
+    // hops onto the actor inside the Task.
+    nonisolated func sendTyping(bookId: UUID, isRecording: Bool) {
+        Task { try? await readyConnection().invoke(method: "Typing", arguments: bookId.uuidString, isRecording) }
     }
 
     // Called from the iOS foreground transition. Marks the existing connection as
@@ -139,6 +151,11 @@ actor ChatService {
 
         await conn.on("HeardReceipt") { [weak self] (payload: HeardReceiptPayload) async in
             guard let handler = await self?.onHeardReceipt else { return }
+            await MainActor.run { handler(payload) }
+        }
+
+        await conn.on("UserTyping") { [weak self] (payload: UserTypingPayload) async in
+            guard let handler = await self?.onUserTyping else { return }
             await MainActor.run { handler(payload) }
         }
 
@@ -275,4 +292,11 @@ struct HeardReceiptPayload: Decodable {
     let displayName: String
     let avatarUrl: String?
     let messageIds: [UUID]
+}
+
+struct UserTypingPayload: Decodable {
+    let bookId: UUID
+    let userId: UUID
+    let displayName: String
+    let isRecording: Bool
 }

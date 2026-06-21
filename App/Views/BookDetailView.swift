@@ -240,6 +240,17 @@ struct BookDetailView: View {
                 }
             }
 
+            if let typing = viewModel.typingIndicator {
+                Text(typing)
+                    .font(.caption)
+                    .italic()
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 4)
+                    .transition(.opacity)
+            }
+
             MessageInputView(
                 text: $viewModel.messageText,
                 pendingImage: $viewModel.pendingImage,
@@ -257,6 +268,8 @@ struct BookDetailView: View {
                 onShowSaved: { viewModel.showSavedMessages = true }
             )
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.typingIndicator)
+        .onChange(of: viewModel.messageText) { _ in viewModel.notifyTyping() }
         .navigationTitle(unheardVoiceMessages.isEmpty ? viewModel.book.title : "\(viewModel.book.title) (\(unheardVoiceMessages.count))")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
