@@ -105,7 +105,6 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #20 — Offline / no-service UX
 - #21 — Threaded messages
 - #22 — Saved Messages indexing & auto title/label
-- #23 — Chat scroll position preservation
 
 **Bugs**
 - #11 — Recording mic open/close tone misbehaves on CarPlay (`AudioCue`)
