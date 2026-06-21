@@ -22,31 +22,7 @@ final class AudioCue {
     // the recorder after this so the beep precedes capture, walkie-talkie style.
     func playRecordStart() async {
         guard AudioCue.isEnabled else { return }
-        // Ensure the beep is audible regardless of the silent switch by routing it
-        // through the playAndRecord session (the recorder reuses this category next).
-        // Match the recorder's Bluetooth options so the beep and capture share one
-        // route (no flip between them). Only force the built-in speaker when there's
-        // NO external route — on CarPlay / Bluetooth / headphones the beep must follow
-        // that route, otherwise it plays on the phone speaker (wrong output, and
-        // inaudible over road noise in the car).
-        let session = AVAudioSession.sharedInstance()
-        #if compiler(>=6.2)
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
-        #else
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        #endif
-        // Configure for recording WITHOUT forcing the speaker, then activate so the
-        // real output route resolves — AirPods / CarPlay / other Bluetooth take over
-        // here (checking the route before activation can miss a not-yet-active one).
-        // Only when we land on the phone's own built-in output do we override to the
-        // speaker, so the cue still beats the silent switch on a bare phone without
-        // hijacking an external route.
-        try? session.setCategory(.playAndRecord, mode: .default, options: btOptions)
-        try? session.setActive(true)
-        if !AudioCue.hasExternalOutputRoute() {
-            try? session.overrideOutputAudioPort(.speaker)
-        }
-
+        configureSessionForCue()
         guard let player = try? AVAudioPlayer(data: recordStartData) else { return }
         self.player = player
         player.prepareToPlay()
@@ -61,15 +37,39 @@ final class AudioCue {
         guard AudioCue.isEnabled else { return }
         Task { [weak self] in
             guard let self else { return }
-            let session = AVAudioSession.sharedInstance()
-            try? session.setCategory(.playback, mode: .default, options: [])
-            try? session.setActive(true)
+            // Use the SAME session config as the start chirp / recording (playAndRecord
+            // + Bluetooth). The recorder just deactivated the session; on CarPlay the
+            // HFP route is still warm, so reusing it plays the chirp immediately. The
+            // old code switched to .playback (no BT options), which forced an HFP→A2DP
+            // profile switch — ~1-2s on car head units — and the 180ms chirp was lost
+            // in the gap (worked on AirPods, silent on CarPlay).
+            self.configureSessionForCue()
             guard let player = try? AVAudioPlayer(data: self.recordStopData) else { return }
             self.player = player
             player.prepareToPlay()
             player.play()
             try? await Task.sleep(for: .milliseconds(180))
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    // Shared session setup for both chirps so start + stop take the identical route
+    // (no category flip between them). Configure playAndRecord + Bluetooth WITHOUT
+    // forcing the speaker, activate so the real output resolves (AirPods/CarPlay/BT
+    // take over — checking the route before activation can miss a not-yet-active one),
+    // then override to the built-in speaker ONLY when there's no external route (so the
+    // cue still beats the silent switch on a bare phone without hijacking a car/BT route).
+    private func configureSessionForCue() {
+        let session = AVAudioSession.sharedInstance()
+        #if compiler(>=6.2)
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
+        #else
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
+        #endif
+        try? session.setCategory(.playAndRecord, mode: .default, options: btOptions)
+        try? session.setActive(true)
+        if !AudioCue.hasExternalOutputRoute() {
+            try? session.overrideOutputAudioPort(.speaker)
         }
     }
 
