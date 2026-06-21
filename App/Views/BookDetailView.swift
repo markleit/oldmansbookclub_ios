@@ -105,7 +105,6 @@ struct BookDetailView: View {
                             if keyboardVisible { dismissKeyboard() }
                         }
                     )
-                    .scrollDismissesKeyboard(.interactively)
                     .overlay(alignment: .bottom) {
                         // "New message" pill: surfaces when somebody else's message
                         // arrives while the user is in the chat (possibly mid-playback
