@@ -242,7 +242,7 @@ struct BookDetailView: View {
 
             if let typing = viewModel.typingIndicator {
                 Text(typing)
-                    .font(.caption)
+                    .font(.body)
                     .italic()
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
