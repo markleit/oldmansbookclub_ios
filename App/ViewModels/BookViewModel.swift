@@ -74,7 +74,7 @@ final class BookViewModel: ObservableObject {
     private func handleUserTyping(_ p: UserTypingPayload) {
         guard p.bookId == book.id, p.userId != TokenStore.shared.userId else { return }
         let first = p.displayName.split(separator: " ").first.map(String.init) ?? p.displayName
-        typingIndicator = p.isRecording ? "\(first) is recording audio…" : "\(first) is typing…"
+        typingIndicator = p.isRecording ? "\(first) is talking…" : "\(first) is typing…"
         typingClearWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.typingIndicator = nil }
         typingClearWork = work
