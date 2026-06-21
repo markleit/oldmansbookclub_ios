@@ -39,7 +39,17 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             .SendAsync("UserTyping", new { bookId, userId, displayName = name, isRecording });
     }
 
-    public async Task SendTextMessage(Guid bookId, string body, Guid? clientId = null, Guid? parentMessageId = null)
+    // NOTE: SignalR matches hub methods by EXACT argument count (it does NOT apply C#
+    // default values). So the parameter count of each public method is part of its wire
+    // contract — adding a param breaks older clients. Replies therefore go through
+    // SEPARATE *Reply methods rather than an optional param on the originals, so the
+    // live App Store client keeps working unchanged.
+    public Task SendTextMessage(Guid bookId, string body, Guid? clientId = null)
+        => SendTextCore(bookId, body, clientId, null);
+    public Task SendTextReply(Guid bookId, string body, Guid clientId, Guid parentMessageId)
+        => SendTextCore(bookId, body, clientId, parentMessageId);
+
+    private async Task SendTextCore(Guid bookId, string body, Guid? clientId, Guid? parentMessageId)
     {
         EnforceRateLimit();
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
@@ -67,7 +77,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             throw new HubException($"{label} is too large (max {maxBytes / (1024 * 1024)} MB).");
     }
 
-    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null, Guid? parentMessageId = null)
+    public Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
+        => SendVoiceCore(bookId, mediaUrl, durationSeconds, clientId, null);
+    public Task SendVoiceReply(Guid bookId, string mediaUrl, int durationSeconds, Guid clientId, Guid parentMessageId)
+        => SendVoiceCore(bookId, mediaUrl, durationSeconds, clientId, parentMessageId);
+
+    private async Task SendVoiceCore(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId, Guid? parentMessageId)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
@@ -79,7 +94,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    public async Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null, Guid? parentMessageId = null)
+    public Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
+        => SendPhotoCore(bookId, mediaUrl, clientId, null);
+    public Task SendPhotoReply(Guid bookId, string mediaUrl, Guid clientId, Guid parentMessageId)
+        => SendPhotoCore(bookId, mediaUrl, clientId, parentMessageId);
+
+    private async Task SendPhotoCore(Guid bookId, string mediaUrl, Guid? clientId, Guid? parentMessageId)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
@@ -91,7 +111,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    public async Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null, Guid? parentMessageId = null)
+    public Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
+        => SendVideoCore(bookId, mediaUrl, clientId, null);
+    public Task SendVideoReply(Guid bookId, string mediaUrl, Guid clientId, Guid parentMessageId)
+        => SendVideoCore(bookId, mediaUrl, clientId, parentMessageId);
+
+    private async Task SendVideoCore(Guid bookId, string mediaUrl, Guid? clientId, Guid? parentMessageId)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");

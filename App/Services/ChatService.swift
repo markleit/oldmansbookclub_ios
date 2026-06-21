@@ -225,14 +225,14 @@ actor ChatService {
         return conn
     }
 
-    // The optional parentMessageId (inline reply) is appended as an extra arg only when
-    // present — SignalR matches the hub method's optional trailing param by arity, so we
-    // never have to encode a nil argument.
+    // Replies go through dedicated *Reply hub methods (SignalR matches by exact argument
+    // count, so we can't add an optional trailing arg to the originals without breaking
+    // older clients). The non-reply path keeps the original method + arity unchanged.
     func sendText(bookId: UUID, body: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
         do {
             let conn = try await readyConnection()
             if let pid = parentMessageId {
-                try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString, pid.uuidString)
+                try await conn.invoke(method: "SendTextReply", arguments: bookId.uuidString, body, clientId.uuidString, pid.uuidString)
             } else {
                 try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString)
             }
@@ -243,7 +243,7 @@ actor ChatService {
         do {
             let conn = try await readyConnection()
             if let pid = parentMessageId {
-                try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
+                try await conn.invoke(method: "SendPhotoReply", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
             } else {
                 try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
             }
@@ -254,7 +254,7 @@ actor ChatService {
         do {
             let conn = try await readyConnection()
             if let pid = parentMessageId {
-                try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
+                try await conn.invoke(method: "SendVideoReply", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
             } else {
                 try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
             }
@@ -265,7 +265,7 @@ actor ChatService {
         do {
             let conn = try await readyConnection()
             if let pid = parentMessageId {
-                try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString, pid.uuidString)
+                try await conn.invoke(method: "SendVoiceReply", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString, pid.uuidString)
             } else {
                 try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString)
             }
