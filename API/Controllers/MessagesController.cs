@@ -54,6 +54,24 @@ public class MessagesController(AppDbContext db, BlobService blob, ILogger<Messa
         return saved;
     }
 
+    // Store an on-device transcript for a voice message so replies quoting it can show
+    // its first words to everyone. Set-once (first transcription wins) to avoid churn.
+    [HttpPost("{messageId}/transcript")]
+    public async Task<IActionResult> SetTranscript(Guid messageId, [FromBody] SetTranscriptRequest request)
+    {
+        var message = await db.Messages.FindAsync(messageId);
+        if (message is null) return NotFound();
+        if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == message.ClubId)) return Forbid();
+        if (message.Type != MessageType.Voice) return BadRequest("Only voice messages have transcripts.");
+
+        if (string.IsNullOrWhiteSpace(message.Transcript) && !string.IsNullOrWhiteSpace(request.Transcript))
+        {
+            message.Transcript = request.Transcript.Length > 4000 ? request.Transcript[..4000] : request.Transcript;
+            await db.SaveChangesAsync();
+        }
+        return Ok();
+    }
+
     [HttpPost("{messageId}/save")]
     public async Task<IActionResult> SaveMessage(Guid messageId)
     {

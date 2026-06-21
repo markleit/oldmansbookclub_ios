@@ -24,9 +24,15 @@ final class TranscriptStore: ObservableObject {
 
     func store(_ text: String, for id: UUID) {
         guard !text.isEmpty else { return }
+        let isNew = transcripts[id.uuidString] == nil
         transcripts[id.uuidString] = text
         if let data = try? JSONEncoder().encode(transcripts) {
             UserDefaults.standard.set(data, forKey: key)
+        }
+        // Share it server-side (set-once there) so replies quoting this voice message
+        // show the transcript to everyone, not just devices that transcribed locally.
+        if isNew {
+            Task { try? await APIClient.shared.uploadTranscript(messageId: id, text: text) }
         }
     }
 

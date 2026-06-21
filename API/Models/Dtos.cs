@@ -46,7 +46,8 @@ public record MessageDto(
     Guid? ClientId = null,
     Guid? ParentMessageId = null,
     string? ParentSenderName = null,
-    string? ParentPreview = null
+    string? ParentPreview = null,
+    DateTime? ParentSentAt = null
 );
 
 public record SavedMessageDto(
@@ -71,6 +72,7 @@ public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, 
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status, string? Description, int? PublishedYear, int? PageCount, int UnreadCount = 0);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl);
 public record SetBookStatusRequest(string Status);
+public record SetTranscriptRequest(string Transcript);
 public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);
 public record ChatReadDto(Guid UserId, string DisplayName, string? AvatarUrl, Guid LastSeenMessageId, List<Guid> HeardMessageIds);
 public record CreateFeedbackRequest(string Title, string Body, string? AppVersion = null);

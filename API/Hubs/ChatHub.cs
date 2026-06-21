@@ -267,32 +267,42 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
         // Build the quoted-reply preview from the parent, if this is a reply.
         string? parentSenderName = null, parentPreview = null;
+        DateTime? parentSentAt = null;
         if (parentMessageId is Guid pid)
         {
             var p = await db.Messages.Where(x => x.Id == pid)
-                .Select(x => new { x.Type, x.Body, Deleted = x.DeletedAt != null, Name = x.Sender.Nickname ?? x.Sender.DisplayName })
+                .Select(x => new { x.Type, x.Body, x.Transcript, x.SentAt, Deleted = x.DeletedAt != null, Name = x.Sender.Nickname ?? x.Sender.DisplayName })
                 .FirstOrDefaultAsync();
             if (p is not null)
             {
                 parentSenderName = p.Deleted ? null : p.Name;
-                parentPreview = ParentPreviewText(p.Type, p.Body, p.Deleted);
+                parentPreview = ParentPreviewText(p.Type, p.Body, p.Transcript, p.Deleted);
+                parentSentAt = p.Deleted ? null : p.SentAt;
             }
         }
 
         return (ToDto(message, conn.EffectiveName, conn.AvatarUrl, broadcastMediaUrl,
-            parentMessageId, parentSenderName, parentPreview), book.Title);
+            parentMessageId, parentSenderName, parentPreview, parentSentAt), book.Title);
     }
 
-    // Short text shown in a quoted-reply chip for the parent message.
-    private static string? ParentPreviewText(MessageType type, string? body, bool deleted) =>
+    // Short text shown in a quoted-reply chip for the parent message. For voice, prefer
+    // the uploaded transcript ("🎤 first words…") over the generic label.
+    private const int ParentPreviewMaxChars = 120;
+    private static string? ParentPreviewText(MessageType type, string? body, string? transcript, bool deleted) =>
         deleted ? "Deleted message" : type switch
         {
-            MessageType.Text => body,
-            MessageType.Voice => "🎤 Voice message",
+            MessageType.Text => Snippet(body),
+            MessageType.Voice => string.IsNullOrWhiteSpace(transcript) ? "🎤 Voice message" : "🎤 " + Snippet(transcript),
             MessageType.Photo => "📷 Photo",
             MessageType.Video => "🎬 Video",
             _ => null
         };
+
+    private static string? Snippet(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        return s.Length <= ParentPreviewMaxChars ? s : s[..ParentPreviewMaxChars].TrimEnd() + "…";
+    }
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
     {
@@ -368,7 +378,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         uri.Host == AllowedBlobHost;
 
     private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null,
-        Guid? parentMessageId = null, string? parentSenderName = null, string? parentPreview = null)
+        Guid? parentMessageId = null, string? parentSenderName = null, string? parentPreview = null, DateTime? parentSentAt = null)
     {
         var deleted = m.DeletedAt != null;
         return new MessageDto(
@@ -384,6 +394,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             deleted, m.IsForwarded, m.ClientId,
             deleted ? null : parentMessageId,
             deleted ? null : parentSenderName,
-            deleted ? null : parentPreview);
+            deleted ? null : parentPreview,
+            deleted ? null : parentSentAt);
     }
 }

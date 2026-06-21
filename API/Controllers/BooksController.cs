@@ -295,10 +295,11 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                     : (m.Parent.DeletedAt != null ? null : (m.Parent.Sender.Nickname ?? m.Parent.Sender.DisplayName)),
                 m.DeletedAt != null || m.Parent == null ? null
                     : (m.Parent.DeletedAt != null ? "Deleted message"
-                        : m.Parent.Type == MessageType.Text ? m.Parent.Body
-                        : m.Parent.Type == MessageType.Voice ? "🎤 Voice message"
+                        : m.Parent.Type == MessageType.Text ? (m.Parent.Body!.Length <= 120 ? m.Parent.Body : m.Parent.Body!.Substring(0, 120) + "…")
+                        : m.Parent.Type == MessageType.Voice ? (m.Parent.Transcript == null ? "🎤 Voice message" : "🎤 " + (m.Parent.Transcript.Length <= 120 ? m.Parent.Transcript : m.Parent.Transcript.Substring(0, 120) + "…"))
                         : m.Parent.Type == MessageType.Photo ? "📷 Photo"
-                        : "🎬 Video")))
+                        : "🎬 Video"),
+                m.DeletedAt != null || m.Parent == null || m.Parent.DeletedAt != null ? (DateTime?)null : m.Parent.SentAt))
             .ToListAsync();
 
         if (messages.Any(m => m.MediaUrl != null))

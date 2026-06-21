@@ -262,7 +262,7 @@ struct BookDetailView: View {
                 HStack(spacing: 8) {
                     Rectangle().fill(Color.accentColor).frame(width: 3, height: 32)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("Replying to \(reply.senderName)")
+                        Text("Replying to \(reply.senderName) · \(formatMessageDate(reply.sentAt))")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.accentColor)
                         Text(replyBannerPreview(reply))
@@ -634,9 +634,16 @@ struct MessageRow: View {
             HStack(spacing: 6) {
                 Rectangle().fill(Color.accentColor).frame(width: 3)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(message.parentSenderName ?? "Reply")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundColor(.accentColor)
+                    HStack(spacing: 4) {
+                        Text(message.parentSenderName ?? "Reply")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.accentColor)
+                        if let ts = message.parentSentAt {
+                            Text(formatMessageDate(ts))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
                     Text(preview)
                         .font(.caption2)
                         .foregroundColor(.secondary)

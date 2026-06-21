@@ -141,7 +141,8 @@ actor ChatService {
                 clientId: dto.clientId,
                 parentMessageId: dto.parentMessageId,
                 parentSenderName: dto.parentSenderName,
-                parentPreview: dto.parentPreview
+                parentPreview: dto.parentPreview,
+                parentSentAt: dto.parentSentAtDate
             )
             guard let handler = await self?.onMessageReceived else { return }
             await MainActor.run { handler(message) }
@@ -313,11 +314,19 @@ private struct MessageDto: Decodable {
     let parentMessageId: UUID?
     let parentSenderName: String?
     let parentPreview: String?
+    let parentSentAt: String?
 
     var sentAtDate: Date {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: sentAt) ?? Date()
+    }
+
+    var parentSentAtDate: Date? {
+        guard let parentSentAt else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: parentSentAt)
     }
 }
 

@@ -73,6 +73,10 @@ public class Message
     // Inline quoted reply: the message this one is replying to (null = not a reply).
     public Guid? ParentMessageId { get; set; }
     public Message? Parent { get; set; }
+    // On-device transcript of a voice message, uploaded by whoever transcribed it, so a
+    // reply quoting this message can show its first words to everyone (not just devices
+    // that ran transcription locally).
+    [MaxLength(4000)] public string? Transcript { get; set; }
 }
 
 public enum MessageType { Text, Voice, Photo, Video }

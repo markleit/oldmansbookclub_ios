@@ -72,9 +72,10 @@ struct Message: Identifiable, Codable {
     var parentMessageId: UUID? = nil
     var parentSenderName: String? = nil
     var parentPreview: String? = nil
+    var parentSentAt: Date? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt
     }
 }
 
@@ -100,6 +101,7 @@ extension Message {
         parentMessageId = try c.decodeIfPresent(UUID.self, forKey: .parentMessageId)
         parentSenderName = try c.decodeIfPresent(String.self, forKey: .parentSenderName)
         parentPreview = try c.decodeIfPresent(String.self, forKey: .parentPreview)
+        parentSentAt = try c.decodeIfPresent(Date.self, forKey: .parentSentAt)
     }
 }
 

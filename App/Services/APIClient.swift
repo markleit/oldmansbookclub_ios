@@ -449,6 +449,23 @@ final class APIClient {
         try await postEmpty(path: "/books/\(bookId)/heard/all")
     }
 
+    // Upload an on-device voice transcript so a reply quoting this message can show its
+    // first words to everyone (server bakes it into the reply's parentPreview).
+    func uploadTranscript(messageId: UUID, text: String) async throws {
+        struct Body: Encodable { let transcript: String }
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/transcript")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = TokenStore.shared.token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = try? JSONEncoder().encode(Body(transcript: text))
+        let (_, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+
     func getSavedMessages() async throws -> [SavedMessage] {
         try await get(path: "/messages/saved")
     }
