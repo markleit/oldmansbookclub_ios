@@ -267,6 +267,14 @@ final class BookViewModel: ObservableObject {
             }
         }
 
+        await ChatService.shared.setOnMessageEdited { [weak self] payload in
+            guard let self, payload.bookId == self.book.id else { return }
+            if let idx = self.messages.firstIndex(where: { $0.id == payload.messageId }), !self.messages[idx].isDeleted {
+                self.messages[idx].body = payload.body
+                self.saveMessagesCache()
+            }
+        }
+
         await ChatService.shared.setOnReadReceipt { [weak self] payload in
             guard let self, payload.bookId == self.book.id,
                   payload.userId != TokenStore.shared.userId else { return }
@@ -719,6 +727,24 @@ final class BookViewModel: ObservableObject {
             try await ChatService.shared.deleteMessage(messageId: id)
         } catch {
             errorMessage = "Failed to delete message."
+        }
+    }
+
+    // Edit an own text message. Optimistically update the bubble, then send; revert if
+    // the server rejects. The server broadcast confirms it for everyone (incl. us).
+    func editMessage(id: UUID, newBody: String) async {
+        let trimmed = newBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let idx = messages.firstIndex(where: { $0.id == id }),
+              !trimmed.isEmpty, trimmed != messages[idx].body else { return }
+        let previous = messages[idx].body
+        messages[idx].body = trimmed
+        do {
+            try await ChatService.shared.editMessage(messageId: id, body: trimmed)
+            saveMessagesCache()
+        } catch {
+            if let i = messages.firstIndex(where: { $0.id == id }) { messages[i].body = previous }
+            if case ChatError.serverError(let msg) = error { errorMessage = msg }
+            else { errorMessage = "Failed to edit message." }
         }
     }
 

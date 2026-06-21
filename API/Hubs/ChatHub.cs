@@ -110,6 +110,33 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         return true;
     }
 
+    public async Task EditTextMessage(Guid messageId, string newBody)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(newBody) || newBody.Length > 4000)
+            throw new HubException("Message must be 1–4000 characters.");
+
+        var message = await db.Messages.FindAsync(messageId)
+            ?? throw new HubException("Message not found.");
+
+        if (message.SenderId != userId)
+            throw new HubException("You can only edit your own messages.");
+        if (message.Type != MessageType.Text)
+            throw new HubException("Only text messages can be edited.");
+        if (message.DeletedAt != null)
+            throw new HubException("Cannot edit a deleted message.");
+
+        message.Body = newBody;
+        await db.SaveChangesAsync();
+
+        await Clients.Group(message.BookId.ToString()!).SendAsync("MessageEdited", new
+        {
+            messageId,
+            bookId = message.BookId,
+            body = newBody
+        });
+    }
+
     public async Task DeleteMessage(Guid messageId)
     {
         var userId = GetUserId();

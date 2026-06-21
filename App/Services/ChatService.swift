@@ -32,6 +32,7 @@ actor ChatService {
     // connection rebuild without losing the active handler.
     private var onMessageReceived: ((Message) -> Void)?
     private var onMessageDeleted: ((UUID) -> Void)?
+    private var onMessageEdited: ((EditedPayload) -> Void)?
     private var onReadReceipt: ((ReadReceiptPayload) -> Void)?
     private var onHeardReceipt: ((HeardReceiptPayload) -> Void)?
     private var onUserTyping: ((UserTypingPayload) -> Void)?
@@ -47,6 +48,10 @@ actor ChatService {
 
     func setOnMessageDeleted(_ handler: @escaping (UUID) -> Void) {
         onMessageDeleted = handler
+    }
+
+    func setOnMessageEdited(_ handler: @escaping (EditedPayload) -> Void) {
+        onMessageEdited = handler
     }
 
     func setOnReadReceipt(_ handler: @escaping (ReadReceiptPayload) -> Void) {
@@ -142,6 +147,11 @@ actor ChatService {
         await conn.on("MessageDeleted") { [weak self] (payload: DeletedPayload) async in
             guard let handler = await self?.onMessageDeleted else { return }
             await MainActor.run { handler(payload.messageId) }
+        }
+
+        await conn.on("MessageEdited") { [weak self] (payload: EditedPayload) async in
+            guard let handler = await self?.onMessageEdited else { return }
+            await MainActor.run { handler(payload) }
         }
 
         await conn.on("ReadReceipt") { [weak self] (payload: ReadReceiptPayload) async in
@@ -240,6 +250,11 @@ actor ChatService {
         catch { throw translateInvokeError(error) }
     }
 
+    func editMessage(messageId: UUID, body: String) async throws {
+        do { try await readyConnection().invoke(method: "EditTextMessage", arguments: messageId.uuidString, body) }
+        catch { throw translateInvokeError(error) }
+    }
+
     func forwardMessage(bookId: UUID, messageId: UUID) async throws {
         do { try await readyConnection().invoke(method: "ForwardMessage", arguments: bookId.uuidString, messageId.uuidString) }
         catch { throw translateInvokeError(error) }
@@ -275,6 +290,12 @@ private struct MessageDto: Decodable {
 
 private struct DeletedPayload: Decodable {
     let messageId: UUID
+}
+
+struct EditedPayload: Decodable {
+    let messageId: UUID
+    let bookId: UUID
+    let body: String
 }
 
 // SignalR receipt events (camelCase payload). Live read/heard receipt updates.

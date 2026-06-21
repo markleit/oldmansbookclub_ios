@@ -440,6 +440,8 @@ struct MessageRow: View {
     @State private var showSenderProfile = false
     @State private var profileReader: APIClient.ChatReadDto?
     @State private var safariItem: SafariItem?
+    @State private var showEditSheet = false
+    @State private var editText = ""
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     var body: some View {
@@ -484,6 +486,11 @@ struct MessageRow: View {
             if !isMe { Spacer() }
         }
         .sheet(item: $safariItem) { SafariView(url: $0.url) }
+        .sheet(isPresented: $showEditSheet) {
+            EditMessageSheet(text: $editText) { newBody in
+                Task { await viewModel.editMessage(id: message.id, newBody: newBody) }
+            }
+        }
         .contextMenu {
             if message.sendState == .failed {
                 Button {
@@ -502,6 +509,14 @@ struct MessageRow: View {
                         UIPasteboard.general.string = body
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    if isMe {
+                        Button {
+                            editText = body
+                            showEditSheet = true
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
                     }
                 }
                 if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
@@ -727,6 +742,35 @@ extension Color {
     // Slightly dimmed white for the "my" play chip + progress bar/dot, so they don't
     // irradiate against the blue bubble and read as oversized.
     static let softWhite = Color(white: 0.90)
+}
+
+// Simple multiline editor for editing a sent text message.
+struct EditMessageSheet: View {
+    @Binding var text: String
+    var onSave: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            TextEditor(text: $text)
+                .focused($focused)
+                .padding(12)
+                .navigationTitle("Edit Message")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Save") { onSave(text); dismiss() }
+                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .onAppear { focused = true }
+        }
+        .presentationDetents([.medium])
+    }
 }
 
 struct VoiceMessageBubble: View {
