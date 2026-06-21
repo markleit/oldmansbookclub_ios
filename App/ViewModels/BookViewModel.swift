@@ -389,10 +389,24 @@ final class BookViewModel: ObservableObject {
     }
 
     func sendVideo() async {
-        guard let videoUrl = pendingVideo,
-              let userId = TokenStore.shared.userId,
-              let persistentUrl = MediaSendQueue.shared.moveToQueue(from: videoUrl, extension: "mp4")
-        else { return }
+        guard let videoUrl = pendingVideo, let userId = TokenStore.shared.userId else { return }
+
+        // Enforce limits before queueing: max 5 min duration, max 100 MB file.
+        let duration = (try? await AVURLAsset(url: videoUrl).load(.duration))?.seconds ?? 0
+        if duration > 300 {
+            pendingVideo = nil
+            errorMessage = "Video is too long (max 5 minutes). Please trim it and try again."
+            return
+        }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: videoUrl.path)
+        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        if fileSize > 100 * 1024 * 1024 {
+            pendingVideo = nil
+            errorMessage = "Video is too large (max 100 MB)."
+            return
+        }
+
+        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: videoUrl, extension: "mp4") else { return }
         pendingVideo = nil
         await enqueueAndSendMedia(
             kind: .video, contentType: "video/mp4", durationSeconds: nil,

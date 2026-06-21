@@ -49,7 +49,7 @@ struct MessageInputView: View {
                                 .foregroundColor(.red)
                         }
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(formatElapsed(elapsedSeconds))
+                            Text(recordingDisplay)
                                 .font(.system(size: 20, weight: .semibold).monospacedDigit())
                                 .foregroundColor(.red)
                             Text("Release to send")
@@ -244,7 +244,7 @@ struct MessageInputView: View {
             }
             .overlay(alignment: .bottom) {
                 if isRecording {
-                    Text(formatElapsed(elapsedSeconds))
+                    Text(recordingDisplay)
                         .font(.system(size: 10, weight: .semibold))
                         .monospacedDigit()
                         .foregroundColor(.red)
@@ -284,11 +284,25 @@ struct MessageInputView: View {
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled else { break }
             elapsedSeconds += 1
+            // Hard 15-min cap: auto-stop (which sends) so a voice message can't grow
+            // unbounded. A countdown appears in the final 30s via recordingDisplay.
+            if elapsedSeconds >= Self.maxRecordingSeconds {
+                onStopRecording()
+                break
+            }
         }
     }
 
+    static let maxRecordingSeconds = 900   // 15 minutes
+
     private func formatElapsed(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    // Elapsed time normally; switches to a "Ns left" countdown in the final 30s.
+    private var recordingDisplay: String {
+        let remaining = Self.maxRecordingSeconds - elapsedSeconds
+        return remaining <= 30 ? "\(max(remaining, 0))s left" : formatElapsed(elapsedSeconds)
     }
 }
 

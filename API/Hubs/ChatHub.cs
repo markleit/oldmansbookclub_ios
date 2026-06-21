@@ -54,11 +54,28 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
+    // Per-type upload caps, enforced server-side so a misbehaving client can't bypass
+    // the client-side checks. Generous headroom over the expected encoded sizes.
+    private const long MaxVoiceBytes = 25L * 1024 * 1024;   // ~15 min voice is a few MB
+    private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to ~<1 MB
+    private const long MaxVideoBytes = 100L * 1024 * 1024;  // 100 MB cap (matches client)
+
+    // Reject if the already-uploaded blob exceeds the type's cap. (A rejected upload
+    // orphans its blob — only hit by a misbehaving client past the client check; the
+    // lifecycle GC in #31 will reap it.)
+    private async Task EnforceBlobSizeAsync(string mediaUrl, long maxBytes, string label)
+    {
+        var size = await blob.GetBlobSizeAsync(mediaUrl);
+        if (size is > 0 && size > maxBytes)
+            throw new HubException($"{label} is too large (max {maxBytes / (1024 * 1024)} MB).");
+    }
+
     public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
+        await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Voice,
             mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId);
@@ -70,6 +87,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
+        await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo,
             mediaUrl: mediaUrl, clientId: clientId);
@@ -81,6 +99,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
+        await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Video,
             mediaUrl: mediaUrl, clientId: clientId);

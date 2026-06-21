@@ -95,6 +95,27 @@ public class BlobService
 
     // Synchronous — strips any existing SAS query params, generates a fresh read SAS.
     // Handles both old DB rows (SAS URL) and new rows (plain URL).
+    // Actual stored size of an uploaded blob, in bytes — used to enforce per-type size
+    // limits server-side (a client can't bypass the limit by uploading a larger file).
+    // Returns null if the blob can't be found / read.
+    public async Task<long?> GetBlobSizeAsync(string storedUrl)
+    {
+        var plainUrl = storedUrl.Split('?')[0];
+        if (!Uri.TryCreate(plainUrl, UriKind.Absolute, out var uri)) return null;
+        var segments = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+        if (segments.Length < 2) return null;
+        try
+        {
+            var blobClient = _client.GetBlobContainerClient(segments[0]).GetBlobClient(segments[1]);
+            var props = await blobClient.GetPropertiesAsync();
+            return props.Value.ContentLength;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public string? GenerateFreshReadUrl(string? storedUrl, UserDelegationKey key, DateTimeOffset keyExpiresOn)
     {
         if (storedUrl is null) return null;
