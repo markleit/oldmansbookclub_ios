@@ -12,14 +12,11 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 {
     public async Task JoinBook(Guid bookId)
     {
-        var userId = GetUserId();
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return;
 
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
-
-        if (!isMember) return;
+        var conn = await GetConnUserAsync();
+        if (!conn.ClubIds.Contains(book.ClubId)) return;
 
         await Groups.AddToGroupAsync(Context.ConnectionId, bookId.ToString());
     }
@@ -194,9 +191,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         var book = await db.Books.FindAsync(bookId)
             ?? throw new HubException("Book not found.");
 
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
-        if (!isMember) throw new HubException("Not a member of this club.");
+        var conn = await GetConnUserAsync();
+        if (!conn.ClubIds.Contains(book.ClubId)) throw new HubException("Not a member of this club.");
 
         // Strip any stale SAS from the stored URL — SaveMessageAsync stores plain URL and generates fresh SAS for broadcast
         var plainMediaUrl = original.MediaUrl?.Split('?')[0];
@@ -211,17 +207,13 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false, Guid? clientId = null)
     {
         var userId = GetUserId();
-        var user = await db.Users.FindAsync(userId)
-            ?? throw new HubException("User not found");
-
-        if (!user.IsApproved) throw new HubException("Account not approved.");
+        var conn = await GetConnUserAsync();
+        if (!conn.IsApproved) throw new HubException("Account not approved.");
 
         var book = await db.Books.FindAsync(bookId)
             ?? throw new HubException("Book not found");
 
-        var isMember = await db.Memberships
-            .AnyAsync(m => m.UserId == userId && m.ClubId == book.ClubId);
-        if (!isMember) throw new HubException("Not a member of this club.");
+        if (!conn.ClubIds.Contains(book.ClubId)) throw new HubException("Not a member of this club.");
 
         var message = new Message
         {
@@ -246,7 +238,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
         }
 
-        return (ToDto(message, user.EffectiveName, user.AvatarUrl, broadcastMediaUrl), book.Title);
+        return (ToDto(message, conn.EffectiveName, conn.AvatarUrl, broadcastMediaUrl), book.Title);
     }
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
@@ -285,6 +277,29 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     private Guid GetUserId() =>
         Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
+
+    // Per-connection cache of the sender's identity + club memberships, so each send
+    // doesn't re-query Users + Memberships (H10). Loaded on connect; refreshed on
+    // reconnect, so a membership/approval change mid-connection is picked up next
+    // connection (acceptable for this app).
+    private sealed record ConnUser(bool IsApproved, string EffectiveName, string? AvatarUrl, HashSet<Guid> ClubIds);
+
+    private async Task<ConnUser> GetConnUserAsync()
+    {
+        if (Context.Items["connUser"] is ConnUser cached) return cached;
+        var userId = GetUserId();
+        var user = await db.Users.FindAsync(userId) ?? throw new HubException("User not found");
+        var clubIds = await db.Memberships.Where(m => m.UserId == userId).Select(m => m.ClubId).ToListAsync();
+        var conn = new ConnUser(user.IsApproved, user.EffectiveName, user.AvatarUrl, clubIds.ToHashSet());
+        Context.Items["connUser"] = conn;
+        return conn;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        await GetConnUserAsync();   // warm the cache up front
+        await base.OnConnectedAsync();
+    }
 
     private void EnforceRateLimit()
     {
