@@ -12,6 +12,8 @@ struct BookDetailView: View {
     // Observed so the title's unread (unheard-voice) count updates live as messages
     // are played / marked heard.
     @ObservedObject private var playbackStore = PlaybackProgressStore.shared
+    // Observed so the reply banner's voice transcript appears when it finishes.
+    @ObservedObject private var transcripts = TranscriptStore.shared
     @State private var showingDeleteConfirm = false
     @State private var showingDetails = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
@@ -400,7 +402,9 @@ struct BookDetailView: View {
     private func replyBannerPreview(_ m: Message) -> String {
         switch m.type {
         case .text: return m.body ?? ""
-        case .voice: return "🎤 Voice message"
+        case .voice:
+            if let t = transcripts.text(for: m.id), !t.isEmpty { return "🎤 \(t)" }
+            return "🎤 Voice message"
         case .photo: return "📷 Photo"
         case .video: return "🎬 Video"
         case .unknown: return ""
@@ -474,6 +478,7 @@ struct BookDetailView: View {
 struct MessageRow: View {
     let message: Message
     @ObservedObject var viewModel: BookViewModel
+    @ObservedObject private var transcripts = TranscriptStore.shared
     var onJumpToParent: (UUID) -> Void = { _ in }
     @State private var showFullScreen = false
     @State private var showSenderProfile = false
@@ -548,6 +553,9 @@ struct MessageRow: View {
             } else if !message.isDeleted && message.sendState == nil {
                 Button {
                     viewModel.replyingTo = message
+                    if message.type == .voice {
+                        TranscriptStore.shared.transcribeIfNeeded(messageId: message.id, mediaUrlString: message.mediaUrl)
+                    }
                 } label: {
                     Label("Reply", systemImage: "arrowshape.turn.up.left")
                 }
@@ -614,16 +622,22 @@ struct MessageRow: View {
         .foregroundColor(.secondary)
     }
 
-    // Quoted preview of the message this one is replying to. Tap to jump to it.
+    // Quoted preview of the message this one is replying to. Tap to jump to it. For a
+    // voice parent, show the on-device transcript ("🎤 first words…") once available;
+    // until then the server's "🎤 Voice message" label.
     private func replyChip(parentId: UUID) -> some View {
-        Button { onJumpToParent(parentId) } label: {
+        let preview: String = {
+            if let t = transcripts.text(for: parentId), !t.isEmpty { return "🎤 \(t)" }
+            return message.parentPreview ?? ""
+        }()
+        return Button { onJumpToParent(parentId) } label: {
             HStack(spacing: 6) {
                 Rectangle().fill(Color.accentColor).frame(width: 3)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(message.parentSenderName ?? "Reply")
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.accentColor)
-                    Text(message.parentPreview ?? "")
+                    Text(preview)
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
@@ -636,6 +650,12 @@ struct MessageRow: View {
             .frame(maxWidth: 240, alignment: .leading)
         }
         .buttonStyle(.plain)
+        .onAppear {
+            // Best-effort: if the parent is a loaded voice message, transcribe it.
+            if let parent = viewModel.messages.first(where: { $0.id == parentId }), parent.type == .voice {
+                TranscriptStore.shared.transcribeIfNeeded(messageId: parentId, mediaUrlString: parent.mediaUrl)
+            }
+        }
     }
 
     private var deletedBubble: some View {
@@ -1103,6 +1123,10 @@ struct VoiceMessageBubble: View {
         }
 
         transcription = result?.bestTranscription.formattedString
+        // Cache it so a reply quoting this voice message can show the transcript too.
+        if let t = transcription, !t.isEmpty {
+            TranscriptStore.shared.store(t, for: message.id)
+        }
     }
 }
 

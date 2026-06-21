@@ -39,6 +39,7 @@
 		B0B10269CDEB389F303816AC /* BookDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */; };
 		BC028A1177F026A4999F388C /* AdminView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D69018BA34CF925339F43265 /* AdminView.swift */; };
 		BCA5F7DF4BA711C8459C0438 /* MediaSendQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */; };
+		BE17F4E08A9013771FDE6A47 /* TranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05DE224CB1318D203D6469B /* TranscriptStore.swift */; };
 		C1446459207EFE368581046D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36B897A6BA8DF56597F8CFEF /* SettingsView.swift */; };
 		CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BDC572FF6DDD04153861DF /* ContentView.swift */; };
 		D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */; };
@@ -81,6 +82,7 @@
 		B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailsView.swift; sourceTree = "<group>"; };
 		BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberProfileView.swift; sourceTree = "<group>"; };
 		BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.entitlements; sourceTree = "<group>"; };
+		C05DE224CB1318D203D6469B /* TranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptStore.swift; sourceTree = "<group>"; };
 		C5BDC572FF6DDD04153861DF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CD42813D21DFB8362B19ACCF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D395542233ADC1273F05370D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
+				C05DE224CB1318D203D6469B /* TranscriptStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -316,6 +319,7 @@
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
 				C1446459207EFE368581046D /* SettingsView.swift in Sources */,
 				D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */,
+				BE17F4E08A9013771FDE6A47 /* TranscriptStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
