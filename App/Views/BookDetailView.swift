@@ -96,17 +96,16 @@ struct BookDetailView: View {
                         .padding(.horizontal)
                         .padding(.top, 8)
                     }
-                    // While the keyboard is up, tapping EMPTY space dismisses it. The
-                    // catcher sits BEHIND the messages (.background), so taps/long-presses
-                    // on a bubble still reach it (play / Reply menu) without dismissing
-                    // first; only taps that fall on empty area dismiss the keyboard.
-                    .background {
-                        if keyboardVisible {
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onTapGesture { dismissKeyboard() }
+                    // Tap anywhere in the chat dismisses the keyboard. simultaneousGesture
+                    // fires ALONGSIDE child gestures (not on top of them), so it catches
+                    // taps on empty space yet still lets a long-press open the Reply menu
+                    // and a tap on a bubble play it — and it never blocks scrolling.
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            if keyboardVisible { dismissKeyboard() }
                         }
-                    }
+                    )
+                    .scrollDismissesKeyboard(.interactively)
                     .overlay(alignment: .bottom) {
                         // "New message" pill: surfaces when somebody else's message
                         // arrives while the user is in the chat (possibly mid-playback
