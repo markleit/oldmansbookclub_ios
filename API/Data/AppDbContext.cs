@@ -34,6 +34,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(m => m.ClientId)
             .HasFilter("[ClientId] IS NOT NULL");
 
+        // Self-reference for inline quoted replies. NoAction: parents are soft-deleted,
+        // never hard-deleted, so no cascade is needed (and it avoids a cascade cycle).
+        modelBuilder.Entity<Message>()
+            .HasOne(m => m.Parent)
+            .WithMany()
+            .HasForeignKey(m => m.ParentMessageId)
+            .OnDelete(DeleteBehavior.NoAction);
+
         modelBuilder.Entity<Message>()
             .HasOne(m => m.Book)
             .WithMany(b => b.Messages)

@@ -68,9 +68,13 @@ struct Message: Identifiable, Codable {
     var isForwarded: Bool = false
     var sendState: MessageSendState? = nil  // local only — never sent to or received from server
     var clientId: UUID? = nil               // local only — set on SignalR echo for dedup, nil elsewhere
+    // Inline quoted reply: the message this one replies to + a denormalized preview.
+    var parentMessageId: UUID? = nil
+    var parentSenderName: String? = nil
+    var parentPreview: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview
     }
 }
 
@@ -93,6 +97,9 @@ extension Message {
         // reconcile a confirmed server message with its optimistic copy when the
         // live SignalR echo was missed (e.g. app backgrounded mid-send).
         clientId = try c.decodeIfPresent(UUID.self, forKey: .clientId)
+        parentMessageId = try c.decodeIfPresent(UUID.self, forKey: .parentMessageId)
+        parentSenderName = try c.decodeIfPresent(String.self, forKey: .parentSenderName)
+        parentPreview = try c.decodeIfPresent(String.self, forKey: .parentPreview)
     }
 }
 

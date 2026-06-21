@@ -43,7 +43,10 @@ public record MessageDto(
     DateTime SentAt,
     bool IsDeleted,
     bool IsForwarded,
-    Guid? ClientId = null
+    Guid? ClientId = null,
+    Guid? ParentMessageId = null,
+    string? ParentSenderName = null,
+    string? ParentPreview = null
 );
 
 public record SavedMessageDto(

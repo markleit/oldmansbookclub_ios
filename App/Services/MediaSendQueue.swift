@@ -12,6 +12,7 @@ struct MediaQueueItem: Codable, Identifiable {
     let durationSeconds: Int?     // voice only
     var uploadedMediaUrl: String? // set after blob upload; only SignalR remaining on retry
     var retryCount: Int
+    var parentMessageId: UUID? = nil  // inline reply target, if any
 
     var localFileUrl: URL {
         MediaSendQueue.pendingDirectory.appendingPathComponent(fileName)

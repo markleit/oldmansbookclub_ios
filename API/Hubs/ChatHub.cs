@@ -39,7 +39,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             .SendAsync("UserTyping", new { bookId, userId, displayName = name, isRecording });
     }
 
-    public async Task SendTextMessage(Guid bookId, string body, Guid? clientId = null)
+    public async Task SendTextMessage(Guid bookId, string body, Guid? clientId = null, Guid? parentMessageId = null)
     {
         EnforceRateLimit();
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
@@ -47,7 +47,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         // Idempotent re-send + echo the clientId back so the client matches the optimistic
         // bubble by id (not by body — identical consecutive sends raced the body key).
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId);
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId, parentMessageId: parentMessageId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
@@ -67,7 +67,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             throw new HubException($"{label} is too large (max {maxBytes / (1024 * 1024)} MB).");
     }
 
-    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
+    public async Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null, Guid? parentMessageId = null)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
@@ -75,11 +75,11 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Voice,
-            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId);
+            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId, parentMessageId: parentMessageId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    public async Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
+    public async Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null, Guid? parentMessageId = null)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
@@ -87,11 +87,11 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo,
-            mediaUrl: mediaUrl, clientId: clientId);
+            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
-    public async Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
+    public async Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null, Guid? parentMessageId = null)
     {
         EnforceRateLimit();
         if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
@@ -99,7 +99,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
         var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Video,
-            mediaUrl: mediaUrl, clientId: clientId);
+            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 
@@ -204,7 +204,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     }
 
     private async Task<(MessageDto dto, string bookTitle)> SaveMessageAsync(Guid bookId, MessageType type,
-        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false, Guid? clientId = null)
+        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false,
+        Guid? clientId = null, Guid? parentMessageId = null)
     {
         var userId = GetUserId();
         var conn = await GetConnUserAsync();
@@ -225,7 +226,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             MediaUrl = mediaUrl,
             DurationSeconds = durationSeconds,
             IsForwarded = isForwarded,
-            ClientId = clientId
+            ClientId = clientId,
+            ParentMessageId = parentMessageId
         };
 
         db.Messages.Add(message);
@@ -238,8 +240,34 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
         }
 
-        return (ToDto(message, conn.EffectiveName, conn.AvatarUrl, broadcastMediaUrl), book.Title);
+        // Build the quoted-reply preview from the parent, if this is a reply.
+        string? parentSenderName = null, parentPreview = null;
+        if (parentMessageId is Guid pid)
+        {
+            var p = await db.Messages.Where(x => x.Id == pid)
+                .Select(x => new { x.Type, x.Body, Deleted = x.DeletedAt != null, Name = x.Sender.Nickname ?? x.Sender.DisplayName })
+                .FirstOrDefaultAsync();
+            if (p is not null)
+            {
+                parentSenderName = p.Deleted ? null : p.Name;
+                parentPreview = ParentPreviewText(p.Type, p.Body, p.Deleted);
+            }
+        }
+
+        return (ToDto(message, conn.EffectiveName, conn.AvatarUrl, broadcastMediaUrl,
+            parentMessageId, parentSenderName, parentPreview), book.Title);
     }
+
+    // Short text shown in a quoted-reply chip for the parent message.
+    private static string? ParentPreviewText(MessageType type, string? body, bool deleted) =>
+        deleted ? "Deleted message" : type switch
+        {
+            MessageType.Text => body,
+            MessageType.Voice => "🎤 Voice message",
+            MessageType.Photo => "📷 Photo",
+            MessageType.Video => "🎬 Video",
+            _ => null
+        };
 
     private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
     {
@@ -314,7 +342,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         uri.Scheme == "https" &&
         uri.Host == AllowedBlobHost;
 
-    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null)
+    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null,
+        Guid? parentMessageId = null, string? parentSenderName = null, string? parentPreview = null)
     {
         var deleted = m.DeletedAt != null;
         return new MessageDto(
@@ -327,6 +356,9 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             deleted ? null : (broadcastMediaUrl ?? m.MediaUrl),
             deleted ? null : m.DurationSeconds,
             m.SentAt,
-            deleted, m.IsForwarded, m.ClientId);
+            deleted, m.IsForwarded, m.ClientId,
+            deleted ? null : parentMessageId,
+            deleted ? null : parentSenderName,
+            deleted ? null : parentPreview);
     }
 }

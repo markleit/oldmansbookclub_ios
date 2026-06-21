@@ -81,7 +81,11 @@ struct BookDetailView: View {
                                 .onAppear { Task { await viewModel.loadOlderMessages() } }
                             }
                             ForEach(viewModel.visibleMessages.reversed()) { message in
-                                MessageRow(message: message, viewModel: viewModel)
+                                MessageRow(message: message, viewModel: viewModel, onJumpToParent: { parentId in
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        proxy.scrollTo(parentId, anchor: .center)
+                                    }
+                                })
                                     .id(message.id)
                                     .onAppear { visibleMessageIds.insert(message.id) }
                                     .onDisappear { visibleMessageIds.remove(message.id) }
@@ -251,6 +255,29 @@ struct BookDetailView: View {
                     .transition(.opacity)
             }
 
+            if let reply = viewModel.replyingTo {
+                HStack(spacing: 8) {
+                    Rectangle().fill(Color.accentColor).frame(width: 3, height: 32)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Replying to \(reply.senderName)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.accentColor)
+                        Text(replyBannerPreview(reply))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button { viewModel.replyingTo = nil } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(Color(.systemGray6))
+            }
+
             MessageInputView(
                 text: $viewModel.messageText,
                 pendingImage: $viewModel.pendingImage,
@@ -369,6 +396,16 @@ struct BookDetailView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
+    private func replyBannerPreview(_ m: Message) -> String {
+        switch m.type {
+        case .text: return m.body ?? ""
+        case .voice: return "🎤 Voice message"
+        case .photo: return "📷 Photo"
+        case .video: return "🎬 Video"
+        case .unknown: return ""
+        }
+    }
+
     // Loaded voice messages from OTHERS not yet marked played (drives the chat-title
     // unread count + "Mark all as heard"). Excludes your own — you can't have an
     // "unheard" message you sent — matching the server's unread definition.
@@ -436,6 +473,7 @@ struct BookDetailView: View {
 struct MessageRow: View {
     let message: Message
     @ObservedObject var viewModel: BookViewModel
+    var onJumpToParent: (UUID) -> Void = { _ in }
     @State private var showFullScreen = false
     @State private var showSenderProfile = false
     @State private var profileReader: APIClient.ChatReadDto?
@@ -469,6 +507,9 @@ struct MessageRow: View {
                     deletedBubble
                 } else {
                     nameLabel
+                    if let parentId = message.parentMessageId {
+                        replyChip(parentId: parentId)
+                    }
                     messageBubble
                     Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
@@ -504,6 +545,11 @@ struct MessageRow: View {
                     Label("Cancel", systemImage: "xmark")
                 }
             } else if !message.isDeleted && message.sendState == nil {
+                Button {
+                    viewModel.replyingTo = message
+                } label: {
+                    Label("Reply", systemImage: "arrowshape.turn.up.left")
+                }
                 if message.type == .text, let body = message.body, !body.isEmpty {
                     Button {
                         UIPasteboard.general.string = body
@@ -565,6 +611,30 @@ struct MessageRow: View {
         }
         .font(.caption)
         .foregroundColor(.secondary)
+    }
+
+    // Quoted preview of the message this one is replying to. Tap to jump to it.
+    private func replyChip(parentId: UUID) -> some View {
+        Button { onJumpToParent(parentId) } label: {
+            HStack(spacing: 6) {
+                Rectangle().fill(Color.accentColor).frame(width: 3)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(message.parentSenderName ?? "Reply")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundColor(.accentColor)
+                    Text(message.parentPreview ?? "")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxWidth: 240, alignment: .leading)
+        }
+        .buttonStyle(.plain)
     }
 
     private var deletedBubble: some View {

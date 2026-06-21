@@ -70,6 +70,9 @@ public class Message
     public DateTime? DeletedAt { get; set; }
     public bool IsForwarded { get; set; } = false;
     public Guid? ClientId { get; set; }
+    // Inline quoted reply: the message this one is replying to (null = not a reply).
+    public Guid? ParentMessageId { get; set; }
+    public Message? Parent { get; set; }
 }
 
 public enum MessageType { Text, Voice, Photo, Video }

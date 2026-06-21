@@ -12,6 +12,8 @@ final class BookViewModel: ObservableObject {
     @Published var reachedBeginning = false
     @Published var isOffline = false
     @Published var messageText = ""
+    // The message being replied to (inline quoted reply), if any.
+    @Published var replyingTo: Message?
     // "<First> is typing…" / "<First> is recording audio…" while someone else is
     // composing; auto-clears on a timeout so a dropped event can't leave it stuck.
     @Published var typingIndicator: String?
@@ -331,6 +333,8 @@ final class BookViewModel: ObservableObject {
             return
         }
         messageText = ""
+        let reply = replyingTo
+        replyingTo = nil
 
         let clientId = UUID()
         let optimistic = Message(
@@ -342,13 +346,16 @@ final class BookViewModel: ObservableObject {
             body: text,
             mediaUrl: nil,
             durationSeconds: nil,
-            sentAt: Date()
+            sentAt: Date(),
+            parentMessageId: reply?.id,
+            parentSenderName: reply?.senderName,
+            parentPreview: reply.map(replyPreview)
         )
         messages.insert(optimistic, at: 0)
         pendingTextIds.insert(clientId)
 
         do {
-            try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId)
+            try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId, parentMessageId: reply?.id)
             markOnline()
         } catch let outer {
             // Server-side rejection (rate limit, validation) — don't retry, just surface it.
@@ -423,6 +430,8 @@ final class BookViewModel: ObservableObject {
         userId: UUID
     ) async {
         let localId = UUID()
+        let reply = replyingTo
+        replyingTo = nil
         let messageType: MessageType
         switch kind {
         case .voice: messageType = .voice
@@ -439,7 +448,10 @@ final class BookViewModel: ObservableObject {
             durationSeconds: durationSeconds,
             sentAt: Date(),
             sendState: .sending,
-            clientId: localId
+            clientId: localId,
+            parentMessageId: reply?.id,
+            parentSenderName: reply?.senderName,
+            parentPreview: reply.map(replyPreview)
         )
         messages.insert(optimistic, at: 0)
 
@@ -452,7 +464,8 @@ final class BookViewModel: ObservableObject {
             contentType: contentType,
             durationSeconds: durationSeconds,
             uploadedMediaUrl: nil,
-            retryCount: 0
+            retryCount: 0,
+            parentMessageId: reply?.id
         )
         MediaSendQueue.shared.enqueue(item)
         await sendMediaItem(item)
@@ -629,13 +642,25 @@ final class BookViewModel: ObservableObject {
         case .voice:
             try await ChatService.shared.sendVoice(
                 bookId: item.bookId, mediaUrl: mediaUrl,
-                durationSeconds: item.durationSeconds ?? 0, clientId: item.id)
+                durationSeconds: item.durationSeconds ?? 0, clientId: item.id, parentMessageId: item.parentMessageId)
         case .photo:
             try await ChatService.shared.sendPhoto(
-                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
+                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id, parentMessageId: item.parentMessageId)
         case .video:
             try await ChatService.shared.sendVideo(
-                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id)
+                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id, parentMessageId: item.parentMessageId)
+        }
+    }
+
+    // Preview text for the quoted-reply chip (mirrors the server's ParentPreviewText).
+    private func replyPreview(for m: Message) -> String {
+        if m.isDeleted { return "Deleted message" }
+        switch m.type {
+        case .text: return m.body ?? ""
+        case .voice: return "🎤 Voice message"
+        case .photo: return "📷 Photo"
+        case .video: return "🎬 Video"
+        case .unknown: return ""
         }
     }
 

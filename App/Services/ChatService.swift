@@ -225,24 +225,51 @@ actor ChatService {
         return conn
     }
 
-    func sendText(bookId: UUID, body: String, clientId: UUID) async throws {
-        do { try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString) }
-        catch { throw translateInvokeError(error) }
+    // The optional parentMessageId (inline reply) is appended as an extra arg only when
+    // present — SignalR matches the hub method's optional trailing param by arity, so we
+    // never have to encode a nil argument.
+    func sendText(bookId: UUID, body: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
+        do {
+            let conn = try await readyConnection()
+            if let pid = parentMessageId {
+                try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString, pid.uuidString)
+            } else {
+                try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString)
+            }
+        } catch { throw translateInvokeError(error) }
     }
 
-    func sendPhoto(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
-        do { try await readyConnection().invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString) }
-        catch { throw translateInvokeError(error) }
+    func sendPhoto(bookId: UUID, mediaUrl: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
+        do {
+            let conn = try await readyConnection()
+            if let pid = parentMessageId {
+                try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
+            } else {
+                try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
+            }
+        } catch { throw translateInvokeError(error) }
     }
 
-    func sendVideo(bookId: UUID, mediaUrl: String, clientId: UUID) async throws {
-        do { try await readyConnection().invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString) }
-        catch { throw translateInvokeError(error) }
+    func sendVideo(bookId: UUID, mediaUrl: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
+        do {
+            let conn = try await readyConnection()
+            if let pid = parentMessageId {
+                try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
+            } else {
+                try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
+            }
+        } catch { throw translateInvokeError(error) }
     }
 
-    func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID) async throws {
-        do { try await readyConnection().invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString) }
-        catch { throw translateInvokeError(error) }
+    func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID, parentMessageId: UUID? = nil) async throws {
+        do {
+            let conn = try await readyConnection()
+            if let pid = parentMessageId {
+                try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString, pid.uuidString)
+            } else {
+                try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString)
+            }
+        } catch { throw translateInvokeError(error) }
     }
 
     func deleteMessage(messageId: UUID) async throws {
