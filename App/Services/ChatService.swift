@@ -138,7 +138,10 @@ actor ChatService {
                 sentAt: dto.sentAtDate,
                 isDeleted: dto.isDeleted,
                 isForwarded: dto.isForwarded,
-                clientId: dto.clientId
+                clientId: dto.clientId,
+                parentMessageId: dto.parentMessageId,
+                parentSenderName: dto.parentSenderName,
+                parentPreview: dto.parentPreview
             )
             guard let handler = await self?.onMessageReceived else { return }
             await MainActor.run { handler(message) }
@@ -307,6 +310,9 @@ private struct MessageDto: Decodable {
     let isDeleted: Bool
     let isForwarded: Bool
     let clientId: UUID?
+    let parentMessageId: UUID?
+    let parentSenderName: String?
+    let parentPreview: String?
 
     var sentAtDate: Date {
         let f = ISO8601DateFormatter()
