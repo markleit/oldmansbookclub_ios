@@ -73,8 +73,10 @@ final class BookViewModel: ObservableObject {
     // Incoming: show "<First> is typing/recording…" and (re)arm the auto-clear.
     private func handleUserTyping(_ p: UserTypingPayload) {
         guard p.bookId == book.id, p.userId != TokenStore.shared.userId else { return }
-        let first = p.displayName.split(separator: " ").first.map(String.init) ?? p.displayName
-        typingIndicator = p.isRecording ? "\(first) is talking…" : "\(first) is typing…"
+        // Server already supplies the display name (full nickname, or first name of a
+        // real name) — show as-is.
+        let name = p.displayName
+        typingIndicator = p.isRecording ? "\(name) is talking…" : "\(name) is typing…"
         typingClearWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.typingIndicator = nil }
         typingClearWork = work

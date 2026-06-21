@@ -30,9 +30,14 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     public async Task Typing(Guid bookId, bool isRecording)
     {
         var userId = GetUserId();
-        var name = await db.Users.Where(u => u.Id == userId)
-            .Select(u => u.Nickname ?? u.DisplayName).FirstOrDefaultAsync();
-        if (name is null) return;
+        var u = await db.Users.Where(x => x.Id == userId)
+            .Select(x => new { x.Nickname, x.DisplayName }).FirstOrDefaultAsync();
+        if (u is null) return;
+        // Use the full Nickname when set (a nickname isn't "first last", so don't chop
+        // it); otherwise trim a real DisplayName to its first name.
+        var name = !string.IsNullOrWhiteSpace(u.Nickname)
+            ? u.Nickname
+            : (u.DisplayName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? u.DisplayName);
         await Clients.OthersInGroup(bookId.ToString())
             .SendAsync("UserTyping", new { bookId, userId, displayName = name, isRecording });
     }
