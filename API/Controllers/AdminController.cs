@@ -206,6 +206,9 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
             .Where(m => m.SenderId == id)
             .Select(m => m.Id)
             .ToListAsync();
+
+        // All-or-nothing: a crash mid-way must not leave a half-deleted account.
+        await using var transaction = await db.Database.BeginTransactionAsync();
         if (messageIds.Count > 0)
         {
             await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
@@ -220,6 +223,7 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         db.Memberships.RemoveRange(user.Memberships);
         db.Users.Remove(user);
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
         return NoContent();
     }
 

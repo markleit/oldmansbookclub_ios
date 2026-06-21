@@ -129,6 +129,12 @@ public class AuthController(
             return Unauthorized("Invalid Apple identity token");
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == appleSubject);
+
+        // Wrap the create-user / email / token / club / membership / join-request writes
+        // in one transaction so a mid-request failure can't orphan a user (created but
+        // with no membership or join request). Each persisting path commits; an error
+        // return (NotFound) rolls back so the user can retry cleanly.
+        await using var transaction = await db.Database.BeginTransactionAsync();
         if (user is null)
         {
             user = new User { AppleSubject = appleSubject, DisplayName = request.DisplayName, Email = request.Email };
@@ -176,6 +182,7 @@ public class AuthController(
                 {
                     db.JoinRequests.Add(new JoinRequest { UserId = user.Id, ClubId = request.JoinClubId.Value });
                     await db.SaveChangesAsync();
+                    await transaction.CommitAsync();
 
                     var adminTokens = await db.Memberships
                         .Where(m => m.ClubId == club.Id && m.IsClubAdmin && m.User.DeviceToken != null)
@@ -187,6 +194,7 @@ public class AuthController(
 
                     return StatusCode(202, new { status = "pending_approval", club_name = club.Name });
                 }
+                await transaction.CommitAsync();
                 return jr.Status switch
                 {
                     JoinRequestStatus.Declined => StatusCode(202, new { status = "request_declined", club_name = club.Name }),
@@ -203,6 +211,7 @@ public class AuthController(
                     .OrderByDescending(jr => jr.CreatedAt)
                     .FirstOrDefaultAsync();
 
+                await transaction.CommitAsync();
                 if (existingRequest is not null)
                 {
                     return existingRequest.Status switch
@@ -217,6 +226,7 @@ public class AuthController(
             }
         }
 
+        await transaction.CommitAsync();
         return Ok(await BuildAuthResponse(user));
     }
 
@@ -240,6 +250,9 @@ public class AuthController(
             .Where(m => m.SenderId == userId)
             .Select(m => m.Id)
             .ToListAsync();
+
+        // All-or-nothing: a crash mid-way must not leave a half-deleted account.
+        await using var transaction = await db.Database.BeginTransactionAsync();
         if (messageIds.Count > 0)
         {
             await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
@@ -254,6 +267,7 @@ public class AuthController(
         db.Memberships.RemoveRange(user.Memberships);
         db.Users.Remove(user);
         await db.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return NoContent();
     }
