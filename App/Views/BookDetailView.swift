@@ -94,10 +94,11 @@ struct BookDetailView: View {
                         .padding(.horizontal)
                         .padding(.top, 8)
                     }
-                    // While the keyboard is up, a tap anywhere in the message list
-                    // dismisses it (and is consumed, so it doesn't also play a message
-                    // or open a link — the industry-standard "first tap dismisses").
-                    .overlay {
+                    // While the keyboard is up, tapping EMPTY space dismisses it. The
+                    // catcher sits BEHIND the messages (.background), so taps/long-presses
+                    // on a bubble still reach it (play / Reply menu) without dismissing
+                    // first; only taps that fall on empty area dismiss the keyboard.
+                    .background {
                         if keyboardVisible {
                             Color.clear
                                 .contentShape(Rectangle())
