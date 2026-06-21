@@ -130,7 +130,10 @@ final class BookViewModel: ObservableObject {
 
     private var cacheKey: String { "messages_\(book.id)" }
 
-    private var pendingByBody: [String: UUID] = [:]
+    // Optimistic text messages awaiting their server echo, tracked by clientId (the
+    // server echoes it back). Keyed by id — not body — so identical consecutive sends
+    // don't clobber each other (#35).
+    private var pendingTextIds: Set<UUID> = []
     private var currentlySendingMedia: Set<UUID> = []
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
@@ -226,32 +229,23 @@ final class BookViewModel: ObservableObject {
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
             guard !self.messages.contains(where: { $0.id == message.id }) else { return }
 
-            // Text deduplication: match outgoing optimistic message by body
-            if let body = message.body,
-               message.senderId == TokenStore.shared.userId,
-               let clientId = self.pendingByBody[body] {
-                self.pendingByBody.removeValue(forKey: body)
-                if let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
-                    self.messages[idx] = message
-                }
-                self.saveMessagesCache()
-                return
-            }
-
-            // Media deduplication (voice/photo/video): server echoes back clientId = optimistic Message.id.
-            // Echo is the confirmed-delivery signal — remove the queue entry, replace the
-            // optimistic bubble, and schedule cleanup of the local file.
-            if (message.type == .voice || message.type == .photo || message.type == .video),
-               message.senderId == TokenStore.shared.userId,
+            // Optimistic echo match by clientId — the server echoes back the clientId we
+            // sent for both text and media. Replace the optimistic bubble in place. Using
+            // the id (not the body) fixes identical consecutive text sends racing (#35).
+            if message.senderId == TokenStore.shared.userId,
                let clientId = message.clientId,
                let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
                 let oldUrlString = self.messages[idx].mediaUrl
                 self.messages[idx] = message
-                MediaSendQueue.shared.remove(id: clientId)
-                if let oldUrlString,
-                   let oldUrl = URL(string: oldUrlString),
-                   oldUrl.scheme == "file" {
-                    MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
+                self.pendingTextIds.remove(clientId)
+                if message.type != .text {
+                    // Media: confirmed delivery — clear the send queue + local file.
+                    MediaSendQueue.shared.remove(id: clientId)
+                    if let oldUrlString,
+                       let oldUrl = URL(string: oldUrlString),
+                       oldUrl.scheme == "file" {
+                        MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
+                    }
                 }
                 self.saveMessagesCache()
                 return
@@ -343,27 +337,27 @@ final class BookViewModel: ObservableObject {
             sentAt: Date()
         )
         messages.insert(optimistic, at: 0)
-        pendingByBody[text] = clientId
+        pendingTextIds.insert(clientId)
 
         do {
-            try await ChatService.shared.sendText(bookId: book.id, body: text)
+            try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId)
             markOnline()
         } catch let outer {
             // Server-side rejection (rate limit, validation) — don't retry, just surface it.
             if case ChatError.serverError(let msg) = outer {
                 messages.removeAll { $0.id == clientId }
-                pendingByBody.removeValue(forKey: text)
+                pendingTextIds.remove(clientId)
                 errorMessage = msg
                 return
             }
             await ChatService.shared.disconnect()
             await ChatService.shared.connect(bookId: book.id)
             do {
-                try await ChatService.shared.sendText(bookId: book.id, body: text)
+                try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId)
                 markOnline()
             } catch let inner {
                 messages.removeAll { $0.id == clientId }
-                pendingByBody.removeValue(forKey: text)
+                pendingTextIds.remove(clientId)
                 if case ChatError.serverError(let msg) = inner {
                     errorMessage = msg
                 } else {
@@ -540,7 +534,7 @@ final class BookViewModel: ObservableObject {
             MediaSendQueue.shared.remove(id: clientId)
             MediaSendQueue.shared.scheduleCleanup(fileName: item.fileName)
         }
-        pendingByBody = pendingByBody.filter { $0.value != clientId }
+        pendingTextIds.remove(clientId)
     }
 
     func cancelMediaMessage(id: UUID) {
@@ -636,7 +630,6 @@ final class BookViewModel: ObservableObject {
         guard !isLoadingOlderMessages, !reachedBeginning else { return }
         // Find the oldest confirmed message — skip optimistic entries whose sentAt
         // is "now" and would yield a useless query.
-        let pendingTextIds = Set(pendingByBody.values)
         let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
         let oldestConfirmed = messages.last(where: {
             !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)
@@ -667,7 +660,6 @@ final class BookViewModel: ObservableObject {
     // waiting on echo, media still in the send queue) are excluded so a kill +
     // relaunch doesn't show ghost messages that never actually got delivered.
     private func saveMessagesCache() {
-        let pendingTextIds = Set(pendingByBody.values)
         let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
         let confirmed = messages.filter {
             !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)

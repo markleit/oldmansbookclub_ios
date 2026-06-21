@@ -42,12 +42,15 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             .SendAsync("UserTyping", new { bookId, userId, displayName = name, isRecording });
     }
 
-    public async Task SendTextMessage(Guid bookId, string body)
+    public async Task SendTextMessage(Guid bookId, string body, Guid? clientId = null)
     {
         EnforceRateLimit();
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
             throw new HubException("Message must be 1–4000 characters.");
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body);
+        // Idempotent re-send + echo the clientId back so the client matches the optimistic
+        // bubble by id (not by body — identical consecutive sends raced the body key).
+        if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
+        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId);
         await BroadcastAndNotify(bookId, message, bookTitle);
     }
 

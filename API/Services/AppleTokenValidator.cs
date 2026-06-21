@@ -12,12 +12,19 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
     private const string AppleKeysUrl = "https://appleid.apple.com/auth/keys";
     private const string AppleIssuer = "https://appleid.apple.com";
 
+    // Apple's JWKs rotate rarely; cache them process-wide (this service is scoped, so a
+    // per-instance cache wouldn't survive across logins). TTL bounds staleness; an
+    // unknown key id (rotation mid-TTL) forces a one-off refresh below.
+    private static readonly TimeSpan KeysTtl = TimeSpan.FromHours(12);
+    private static readonly SemaphoreSlim KeysGate = new(1, 1);
+    private static List<SecurityKey>? _cachedKeys;
+    private static DateTimeOffset _cachedAt;
+
     public async Task<string?> ValidateAsync(string identityToken, string bundleId)
     {
-        var keys = await FetchApplePublicKeysAsync();
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
 
-        var validationParams = new TokenValidationParameters
+        TokenValidationParameters Params(IEnumerable<SecurityKey> keys) => new()
         {
             ValidIssuer = AppleIssuer,
             ValidAudience = bundleId,
@@ -27,8 +34,19 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
 
         try
         {
-            var principal = handler.ValidateToken(identityToken, validationParams, out _);
-            return principal.FindFirst("sub")?.Value;
+            var keys = await GetApplePublicKeysAsync(forceRefresh: false);
+            try
+            {
+                var principal = handler.ValidateToken(identityToken, Params(keys), out _);
+                return principal.FindFirst("sub")?.Value;
+            }
+            catch (SecurityTokenSignatureKeyNotFoundException)
+            {
+                // Keys likely rotated since we cached — refresh once and retry.
+                var fresh = await GetApplePublicKeysAsync(forceRefresh: true);
+                var principal = handler.ValidateToken(identityToken, Params(fresh), out _);
+                return principal.FindFirst("sub")?.Value;
+            }
         }
         catch (Exception ex)
         {
@@ -37,20 +55,41 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
         }
     }
 
-    private async Task<IEnumerable<SecurityKey>> FetchApplePublicKeysAsync()
+    private async Task<List<SecurityKey>> GetApplePublicKeysAsync(bool forceRefresh)
     {
-        var client = httpClientFactory.CreateClient();
-        var response = await client.GetFromJsonAsync<AppleKeysResponse>(AppleKeysUrl);
-        return response?.Keys.Select(k =>
+        if (!forceRefresh && _cachedKeys is { Count: > 0 } && DateTimeOffset.UtcNow - _cachedAt < KeysTtl)
+            return _cachedKeys;
+
+        await KeysGate.WaitAsync();
+        try
         {
-            var rsa = RSA.Create();
-            rsa.ImportParameters(new RSAParameters
+            if (!forceRefresh && _cachedKeys is { Count: > 0 } && DateTimeOffset.UtcNow - _cachedAt < KeysTtl)
+                return _cachedKeys;
+
+            var client = httpClientFactory.CreateClient();
+            var response = await client.GetFromJsonAsync<AppleKeysResponse>(AppleKeysUrl);
+            var keys = response?.Keys.Select(k =>
             {
-                Modulus = Base64UrlEncoder.DecodeBytes(k.N),
-                Exponent = Base64UrlEncoder.DecodeBytes(k.E)
-            });
-            return (SecurityKey)new RsaSecurityKey(rsa) { KeyId = k.Kid };
-        }) ?? [];
+                var rsa = RSA.Create();
+                rsa.ImportParameters(new RSAParameters
+                {
+                    Modulus = Base64UrlEncoder.DecodeBytes(k.N),
+                    Exponent = Base64UrlEncoder.DecodeBytes(k.E)
+                });
+                return (SecurityKey)new RsaSecurityKey(rsa) { KeyId = k.Kid };
+            }).ToList() ?? [];
+
+            if (keys.Count > 0)
+            {
+                _cachedKeys = keys;
+                _cachedAt = DateTimeOffset.UtcNow;
+            }
+            return keys;
+        }
+        finally
+        {
+            KeysGate.Release();
+        }
     }
 
     public async Task<string?> ExchangeCodeForRefreshTokenAsync(string authorizationCode, string bundleId)

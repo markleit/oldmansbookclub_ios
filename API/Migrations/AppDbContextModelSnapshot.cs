@@ -44,7 +44,7 @@ namespace BookClubApi.Migrations
                     b.HasIndex("BlockerId", "BlockedId")
                         .IsUnique();
 
-                    b.ToTable("BlockedUsers");
+                    b.ToTable("BlockedUsers", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.Book", b =>
@@ -97,7 +97,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("ClubId");
 
-                    b.ToTable("Books");
+                    b.ToTable("Books", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.ChatRead", b =>
@@ -118,7 +118,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("BookId");
 
-                    b.ToTable("ChatReads");
+                    b.ToTable("ChatReads", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.Club", b =>
@@ -145,7 +145,7 @@ namespace BookClubApi.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Clubs");
+                    b.ToTable("Clubs", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.JoinRequest", b =>
@@ -173,7 +173,7 @@ namespace BookClubApi.Migrations
                     b.HasIndex("UserId", "ClubId")
                         .IsUnique();
 
-                    b.ToTable("JoinRequests");
+                    b.ToTable("JoinRequests", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.Membership", b =>
@@ -201,7 +201,7 @@ namespace BookClubApi.Migrations
                     b.HasIndex("UserId", "ClubId")
                         .IsUnique();
 
-                    b.ToTable("Memberships");
+                    b.ToTable("Memberships", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.Message", b =>
@@ -256,7 +256,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("ClubId", "SentAt");
 
-                    b.ToTable("Messages");
+                    b.ToTable("Messages", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.MessageHeard", b =>
@@ -274,7 +274,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("MessageId");
 
-                    b.ToTable("MessageHeards");
+                    b.ToTable("MessageHeards", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.RefreshToken", b =>
@@ -307,7 +307,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("RefreshTokens");
+                    b.ToTable("RefreshTokens", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.Report", b =>
@@ -331,7 +331,7 @@ namespace BookClubApi.Migrations
 
                     b.HasIndex("ReporterId");
 
-                    b.ToTable("Reports");
+                    b.ToTable("Reports", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.SavedMessage", b =>
@@ -356,7 +356,7 @@ namespace BookClubApi.Migrations
                     b.HasIndex("UserId", "MessageId")
                         .IsUnique();
 
-                    b.ToTable("SavedMessages");
+                    b.ToTable("SavedMessages", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.User", b =>
@@ -412,7 +412,7 @@ namespace BookClubApi.Migrations
                     b.HasIndex("AppleSubject")
                         .IsUnique();
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("BookClubApi.Models.BlockedUser", b =>
@@ -606,7 +606,7 @@ namespace BookClubApi.Migrations
 
                             b1.HasKey("UserId");
 
-                            b1.ToTable("Users");
+                            b1.ToTable("Users", (string)null);
 
                             b1.ToJson("Preferences");
 

@@ -215,8 +215,8 @@ actor ChatService {
         return conn
     }
 
-    func sendText(bookId: UUID, body: String) async throws {
-        do { try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body) }
+    func sendText(bookId: UUID, body: String, clientId: UUID) async throws {
+        do { try await readyConnection().invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString) }
         catch { throw translateInvokeError(error) }
     }
 
