@@ -100,7 +100,8 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #15 — Smarter local message caching (image SAS expiry; audio half done in 1.4.1)
 - #16 — Auto-import + chapter structure in book chat
 - #17 — Discussion-subject labels
-- #18 — Apple Watch companion + CarPlay
+- #18 — Apple Watch companion
+- #46 — CarPlay support — browse & play voice messages (design: `docs/CARPLAY_DESIGN.md`)
 - #19 — Max message size limits (voice/video/photo; size half pairs with the upload-SAS security item)
 - #20 — Offline / no-service UX
 - #21 — Threaded messages
