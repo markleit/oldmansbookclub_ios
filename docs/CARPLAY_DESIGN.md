@@ -43,6 +43,14 @@ With only `UISceneDelegateClassName`, the system never creates a `CPTemplateAppl
 for the role, so the delegate is never connected. (This cost hours 2026-06-22.) After a fresh
 build, you may need to close + reopen the Simulator's CarPlay window once for it to populate.
 
+### ⚠️ Only ONE simulator may be booted when testing CarPlay
+Multiple booted simulators **fight over the CarPlay external display** → it's created with zero
+physical size + an off-screen window (`carkitd: "Physical size is zero"`), so icons render but
+**taps do nothing / images drop**. Shut down ALL other sims (`xcrun simctl shutdown all`, keep
+one), then enable CarPlay. With a single booted sim it works and is fully interactive. (This was
+THE cause of the "icons show but nothing's tappable" dead-end — not the runtime, app, or
+entitlement. Cost hours 2026-06-22.)
+
 ## Architecture
 The CarPlay scene runs in the **same app process** as the phone UI, so it shares all existing
 singletons — no new backend:
