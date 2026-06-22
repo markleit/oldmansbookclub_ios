@@ -359,15 +359,17 @@ struct BookDetailView: View {
         }
         .task {
             await viewModel.load()
+            // Report the voice message as heard (sticky, server-side) for receipts + unread.
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
-                // Report the voice message as heard (sticky, server-side) for receipts
-                // + unread counts; then autoplay the next one if there is one.
                 Task { try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId) }
+            }
+            // Auto-advance to the next (newer) voice message in the chat, if any.
+            AudioPlayerService.shared.nextToPlay = { [weak viewModel] completedId in
+                guard let vm = viewModel else { return nil }
                 let voices = vm.visibleMessages.filter { $0.type == .voice && !$0.isDeleted }
-                guard let idx = voices.firstIndex(where: { $0.id == completedId }),
-                      idx > 0 else { return }
-                AudioPlayerService.shared.toggle(message: voices[idx - 1])
+                guard let idx = voices.firstIndex(where: { $0.id == completedId }), idx > 0 else { return nil }
+                return voices[idx - 1]
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in

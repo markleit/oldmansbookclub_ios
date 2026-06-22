@@ -13,7 +13,14 @@ final class AudioPlayerService: ObservableObject {
     @Published var playbackRate: Float = 1.0
     private var isExternalRouteActive: Bool = false
 
+    // Fired when a message finishes — for side effects (mark-heard, UI). Distinct from
+    // auto-advance below.
     var onPlaybackCompleted: ((UUID) -> Void)?
+    // Auto-advance provider: given the just-finished message id, return the next message
+    // to play (or nil to stop). Lets different surfaces own their own play queue without
+    // fighting over a single completion callback — the chat advances through visible
+    // messages; CarPlay advances through its "play all unheard" queue.
+    var nextToPlay: ((UUID) -> Message?)?
 
     private let availableRates: [Float] = [1.0, 1.5, 2.0, 3.0, 4.0]
     private var player: AVPlayer?
@@ -190,7 +197,10 @@ final class AudioPlayerService: ObservableObject {
             saveCurrentPosition(completed: true)   // mark fully played (green)
             stopCurrentPlayer()
             if let id = completedId {
-                onPlaybackCompleted?(id)
+                onPlaybackCompleted?(id)        // side effects (mark-heard, UI)
+                if let next = nextToPlay?(id) { // continuous playback / "play all"
+                    play(message: next)
+                }
             }
         }
     }
