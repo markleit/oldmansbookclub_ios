@@ -31,6 +31,18 @@ easier than `carplay-communication`. Must be requested from Apple.
   greys out **I/O → External Displays → CarPlay**. (Wasted a lot of time 2026-06-22 — the disabled
   menu was purely iPad-vs-iPhone, nothing to do with entitlements/signing.)
 
+### ⚠️ Info.plist CarPlay scene MUST include `UISceneClassName`
+The scene config needs BOTH keys or `templateApplicationScene(_:didConnect:)` never fires
+(CarPlay launches the app but shows a blank screen — no error):
+```
+UISceneClassName        = CPTemplateApplicationScene
+UISceneDelegateClassName = $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+UISceneConfigurationName = CarPlay
+```
+With only `UISceneDelegateClassName`, the system never creates a `CPTemplateApplicationScene`
+for the role, so the delegate is never connected. (This cost hours 2026-06-22.) After a fresh
+build, you may need to close + reopen the Simulator's CarPlay window once for it to populate.
+
 ## Architecture
 The CarPlay scene runs in the **same app process** as the phone UI, so it shares all existing
 singletons — no new backend:
