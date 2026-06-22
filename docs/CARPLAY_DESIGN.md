@@ -15,9 +15,16 @@ distraction risk — deferred to a later phase. See "Deferred: recording" below.
 ## Entitlement
 Browse + play (no recording) = an **audio** CarPlay app → `com.apple.developer.carplay-audio`.
 This is the common, readily-granted CarPlay category (every podcast/music app has it), far
-easier than `carplay-communication`. Must still be requested from Apple; nothing custom shows
-on the CarPlay screen until granted. (Confirm exact entitlement string + template availability
-against current Apple docs before building.)
+easier than `carplay-communication`. Must be requested from Apple.
+
+⚠️ **You CANNOT test CarPlay (sim OR car) until Apple grants the entitlement.** It's a MANAGED
+entitlement: Xcode's automatic signing strips it from builds until the App ID has it enabled,
+and the iOS Simulator's SpringBoard **refuses to launch** an app carrying it if it isn't
+legitimately provisioned ("denied by service delegate (SBMainWorkspace)"). Ad-hoc re-signing
+the .app to embed it gets past signing but still fails launch. So: with the entitlement the app
+won't launch un-provisioned; without it the CarPlay scene doesn't register. Net — CarPlay dev is
+gated on the entitlement grant (request submitted 2026-06-22), full stop. (Verified the hard way
+this session; earlier assumption that the sim works while pending was wrong.)
 
 ## Architecture
 The CarPlay scene runs in the **same app process** as the phone UI, so it shares all existing
