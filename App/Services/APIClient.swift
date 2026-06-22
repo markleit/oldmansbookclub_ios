@@ -58,7 +58,14 @@ final class APIClient {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
+        // On a real device, wait for connectivity (wifi/cell) rather than failing
+        // instantly. In the simulator this can wedge requests to localhost when the
+        // sim's path assessment is briefly unsatisfied — so fail fast there instead.
+        #if targetEnvironment(simulator)
+        config.waitsForConnectivity = false
+        #else
         config.waitsForConnectivity = true
+        #endif
         return URLSession(configuration: config)
     }()
 
