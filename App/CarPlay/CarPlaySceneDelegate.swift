@@ -19,6 +19,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var playIndex = 0
     private var currentBookId: UUID?
     private var remoteCommandsConfigured = false
+    // Per-template refresh closures, run when a list reappears (e.g. after backing out of
+    // playback) so unread counts / unheard dots reflect what was just played.
+    private var refreshers: [ObjectIdentifier: () async -> Void] = [:]
 
     // MARK: - Scene lifecycle
 
@@ -45,6 +48,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }
 
+    // A list reappeared (e.g. backed out of playback) → refresh its counts.
+    nonisolated func templateWillAppear(_ aTemplate: CPTemplate, animated: Bool) {
+        Task { @MainActor in
+            await self.refreshers[ObjectIdentifier(aTemplate)]?()
+        }
+    }
+
     // MARK: - Clubs → Books
 
     private func loadClubs(into template: CPListTemplate) async {
@@ -54,18 +64,30 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             template.emptyViewSubtitleVariants = ["Sign in on your phone to see your clubs."]
             template.updateSections([]); return
         }
-        // Single club → skip the chooser, go straight to its books.
+        // Single club → skip the chooser, go straight to its books (refresh on reappear).
         if clubs.count == 1 {
-            template.updateSections(bookSections(books.filter { $0.clubId == clubs[0].id }))
+            let cid = clubs[0].id
+            template.updateSections(bookSections(books.filter { $0.clubId == cid }))
+            refreshers[ObjectIdentifier(template)] = { [weak self, weak template] in
+                guard let self, let template else { return }
+                let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
+                template.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
+            }
             return
         }
         let items = clubs.map { club -> CPListItem in
             let count = books.filter { $0.clubId == club.id }.reduce(0) { $0 + $1.unreadCount }
             let item = CPListItem(text: club.name, detailText: count > 0 ? "\(count) new" : nil)
             item.handler = { [weak self] _, completion in
-                let t = CPListTemplate(title: club.name,
-                                       sections: self?.bookSections(books.filter { $0.clubId == club.id }) ?? [])
-                self?.interfaceController?.pushTemplate(t, animated: true, completion: nil)
+                guard let self else { completion(); return }
+                let cid = club.id
+                let t = CPListTemplate(title: club.name, sections: self.bookSections(books.filter { $0.clubId == cid }))
+                self.refreshers[ObjectIdentifier(t)] = { [weak self, weak t] in
+                    guard let self, let t else { return }
+                    let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
+                    t.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
+                }
+                self.interfaceController?.pushTemplate(t, animated: true, completion: nil)
                 completion()
             }
             return item
@@ -87,7 +109,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // MARK: - Messages
 
     private func openBook(_ book: Book) async {
-        let messages = (try? await APIClient.shared.getMessages(bookId: book.id)) ?? []
+        let template = CPListTemplate(title: book.title, sections: [])
+        template.emptyViewTitleVariants = ["Loading…"]
+        let refresh: () async -> Void = { [weak self, weak template] in
+            guard let self, let template else { return }
+            let messages = (try? await APIClient.shared.getMessages(bookId: book.id)) ?? []
+            template.updateSections(self.messageSections(book: book, messages: messages))
+        }
+        refreshers[ObjectIdentifier(template)] = refresh
+        interfaceController?.pushTemplate(template, animated: true, completion: nil)
+        await refresh()   // initial populate; templateWillAppear refreshes on re-entry
+    }
+
+    private func messageSections(book: Book, messages: [Message]) -> [CPListSection] {
         for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
         let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }   // chronological
 
@@ -133,9 +167,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return item
         }
         sections.append(CPListSection(items: rows))
-
-        let template = CPListTemplate(title: book.title, sections: sections)
-        interfaceController?.pushTemplate(template, animated: true, completion: nil)
+        return sections
     }
 
     // MARK: - Continuous playback (voice audio + text TTS, skipping photo/video)
