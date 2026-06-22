@@ -4,29 +4,33 @@ import MediaPlayer
 import Combine
 import AVFoundation
 
-// CarPlay browse + play scene (issue #46). Separate scene in the same app process, so it
-// reuses APIClient, AudioPlayerService, PlaybackProgressStore, etc. Browse books → recent
-// voice messages, play, auto-advance through unheard, with Now Playing metadata + transport
-// controls (play/pause/next/prev) and stop-on-back.
+// CarPlay browse + play scene (issue #46). Reuses the app's singletons (APIClient,
+// AudioPlayerService, TranscriptStore, PlaybackProgressStore). Browse clubs → books →
+// messages, and play continuously: selecting any message plays it then auto-advances —
+// voice → audio, text → read aloud (TTS), photo/video skipped.
 @MainActor
-final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPInterfaceControllerDelegate {
+final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
+                                  CPInterfaceControllerDelegate, AVSpeechSynthesizerDelegate {
     private var interfaceController: CPInterfaceController?
-    private var currentQueue: [Message] = []
-    private var currentBookId: UUID?
-    private var lastPlayedId: UUID?
-    private var playingCancellable: AnyCancellable?
-    private var remoteCommandsConfigured = false
     private let synthesizer = AVSpeechSynthesizer()
+
+    // Continuous playback queue (mixed types, chronological).
+    private var playQueue: [Message] = []
+    private var playIndex = 0
+    private var currentBookId: UUID?
+    private var remoteCommandsConfigured = false
+
+    // MARK: - Scene lifecycle
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
         interfaceController.delegate = self
+        synthesizer.delegate = self
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
-        root.emptyViewTitleVariants = ["Books"]
-        root.emptyViewSubtitleVariants = ["Loading…"]
+        root.emptyViewTitleVariants = ["Loading…"]
         interfaceController.setRootTemplate(root, animated: false, completion: nil)
-        Task { await loadBooks(into: root) }
+        Task { await loadClubs(into: root) }
     }
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
@@ -34,90 +38,99 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.interfaceController = nil
     }
 
-    // Back out of Now Playing → stop playback (and clear the Now Playing info).
+    // Back out of Now Playing → stop playback.
     nonisolated func templateDidDisappear(_ aTemplate: CPTemplate, animated: Bool) {
         Task { @MainActor in
-            if aTemplate === CPNowPlayingTemplate.shared {
-                AudioPlayerService.shared.stopAll()
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
-            }
+            if aTemplate === CPNowPlayingTemplate.shared { self.stopPlayback() }
         }
     }
 
-    // MARK: - Books
+    // MARK: - Clubs → Books
 
-    private func loadBooks(into template: CPListTemplate) async {
+    private func loadClubs(into template: CPListTemplate) async {
+        let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
         let books = (try? await APIClient.shared.getMyBooks()) ?? []
-        guard !books.isEmpty else {
-            template.emptyViewSubtitleVariants = ["Sign in on your phone to see your books."]
-            template.updateSections([])
+        guard !clubs.isEmpty else {
+            template.emptyViewSubtitleVariants = ["Sign in on your phone to see your clubs."]
+            template.updateSections([]); return
+        }
+        // Single club → skip the chooser, go straight to its books.
+        if clubs.count == 1 {
+            template.updateSections(bookSections(books.filter { $0.clubId == clubs[0].id }))
             return
         }
-        let items: [CPListItem] = books.map { book in
-            let item = CPListItem(text: book.title,
-                                  detailText: book.unreadCount > 0 ? "\(book.unreadCount) new" : nil)
+        let items = clubs.map { club -> CPListItem in
+            let count = books.filter { $0.clubId == club.id }.reduce(0) { $0 + $1.unreadCount }
+            let item = CPListItem(text: club.name, detailText: count > 0 ? "\(count) new" : nil)
             item.handler = { [weak self] _, completion in
-                Task { await self?.openBook(book); completion() }
+                let t = CPListTemplate(title: club.name,
+                                       sections: self?.bookSections(books.filter { $0.clubId == club.id }) ?? [])
+                self?.interfaceController?.pushTemplate(t, animated: true, completion: nil)
+                completion()
             }
             return item
         }
         template.updateSections([CPListSection(items: items)])
     }
 
+    private func bookSections(_ books: [Book]) -> [CPListSection] {
+        let items = books.map { book -> CPListItem in
+            let item = CPListItem(text: book.title, detailText: book.unreadCount > 0 ? "\(book.unreadCount) new" : nil)
+            item.handler = { [weak self] _, completion in
+                Task { await self?.openBook(book); completion() }
+            }
+            return item
+        }
+        return [CPListSection(items: items)]
+    }
+
     // MARK: - Messages
 
     private func openBook(_ book: Book) async {
         let messages = (try? await APIClient.shared.getMessages(bookId: book.id)) ?? []
-        // Seed transcripts the server already has so rows read them immediately.
-        for m in messages where m.transcript != nil {
-            TranscriptStore.shared.cache(m.transcript!, for: m.id)
-        }
-        let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt > $1.sentAt }   // newest first
-        let voices = messages.filter { $0.type == .voice && !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }
-        let unheard = voices.filter { !PlaybackProgressStore.shared.isCompleted($0.id) }
+        for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
+        let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }   // chronological
 
         var sections: [CPListSection] = []
-        if !unheard.isEmpty {
-            let playAll = CPListItem(text: "Play all unheard voice (\(unheard.count))", detailText: nil)
+        // "Play all unheard" — start continuous playback from the oldest unheard voice.
+        let unheard = active.filter { $0.type == .voice && !PlaybackProgressStore.shared.isCompleted($0.id) }
+        if let first = unheard.first {
+            let playAll = CPListItem(text: "Play all unheard (\(unheard.count))", detailText: nil)
             playAll.handler = { [weak self] _, completion in
-                self?.startQueue(unheard, from: unheard[0], bookId: book.id); completion()
+                self?.playFrom(first.id, messages: active, bookId: book.id); completion()
             }
             sections.append(CPListSection(items: [playAll]))
         }
 
-        // All message types as rows. Voice plays; text is read aloud (TTS); photo/video
-        // are non-actionable line items.
-        let rows: [CPListItem] = active.map { msg in
+        // All message types, newest first. Voice/text start continuous playback from that
+        // point; photo/video are non-actionable (and skipped during playback).
+        let rows: [CPListItem] = active.reversed().map { msg in
             let sub = "\(msg.senderName) · \(Self.time(msg.sentAt))"
+            let item: CPListItem
             switch msg.type {
             case .voice:
                 let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
-                let title = TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"
-                let item = CPListItem(text: (heard ? "" : "● ") + title, detailText: sub)
-                item.handler = { [weak self] _, completion in
-                    self?.startQueue(voices, from: msg, bookId: book.id); completion()
-                }
+                item = CPListItem(text: (heard ? "" : "● ") + (TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"), detailText: sub)
                 TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
-                return item
-            case .text:
-                let item = CPListItem(text: msg.body ?? "", detailText: sub)
                 item.handler = { [weak self] _, completion in
-                    self?.speak(msg.body ?? "", sender: msg.senderName); completion()
+                    self?.playFrom(msg.id, messages: active, bookId: book.id); completion()
                 }
-                return item
+            case .text:
+                item = CPListItem(text: msg.body ?? "", detailText: sub)
+                item.handler = { [weak self] _, completion in
+                    self?.playFrom(msg.id, messages: active, bookId: book.id); completion()
+                }
             case .photo:
-                let item = CPListItem(text: "📷 Photo", detailText: sub)
-                item.handler = { _, completion in completion() }   // non-actionable
-                return item
-            case .video:
-                let item = CPListItem(text: "🎬 Video", detailText: sub)
-                item.handler = { _, completion in completion() }   // non-actionable
-                return item
-            case .unknown:
-                let item = CPListItem(text: "Message", detailText: sub)
+                item = CPListItem(text: "📷 Photo", detailText: sub)
                 item.handler = { _, completion in completion() }
-                return item
+            case .video:
+                item = CPListItem(text: "🎬 Video", detailText: sub)
+                item.handler = { _, completion in completion() }
+            case .unknown:
+                item = CPListItem(text: "Message", detailText: sub)
+                item.handler = { _, completion in completion() }
             }
+            return item
         }
         sections.append(CPListSection(items: rows))
 
@@ -125,79 +138,114 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
     }
 
-    // Read a text message aloud through the car (iMessage-style). Stops any audio first.
-    private func speak(_ text: String, sender: String) {
-        guard !text.isEmpty else { return }
-        AudioPlayerService.shared.stopAll(deactivateSession: false)
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
-        synthesizer.stopSpeaking(at: .immediate)
-        synthesizer.speak(AVSpeechUtterance(string: "\(sender) says: \(text)"))
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
-            MPMediaItemPropertyTitle: text,
-            MPMediaItemPropertyArtist: sender
-        ]
-    }
+    // MARK: - Continuous playback (voice audio + text TTS, skipping photo/video)
 
-    // MARK: - Playback
-
-    // Play `start` and auto-advance through the rest of `queue` (chronological).
-    private func startQueue(_ queue: [Message], from start: Message, bookId: UUID) {
-        currentQueue = queue
+    private func playFrom(_ messageId: UUID, messages: [Message], bookId: UUID) {
+        playQueue = messages
+        playIndex = messages.firstIndex(where: { $0.id == messageId }) ?? 0
         currentBookId = bookId
-        AudioPlayerService.shared.onPlaybackCompleted = { completedId in
-            Task { try? await APIClient.shared.markHeard(bookId: bookId, messageId: completedId) }
-        }
-        AudioPlayerService.shared.nextToPlay = { [weak self] completedId in
-            guard let q = self?.currentQueue,
-                  let idx = q.firstIndex(where: { $0.id == completedId }), idx + 1 < q.count else { return nil }
-            return q[idx + 1]
-        }
         configureRemoteCommands()
-        // Keep the Now Playing screen + lock-screen info in sync as playback advances.
-        playingCancellable = AudioPlayerService.shared.$playingMessageId
-            .sink { [weak self] id in self?.updateNowPlaying(for: id) }
-        AudioPlayerService.shared.toggle(message: start)
+        // We drive advancement ourselves (mixed types); use AudioPlayerService's completion
+        // only as the "voice finished" signal, not its own auto-advance.
+        AudioPlayerService.shared.nextToPlay = nil
+        AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
+            if let bid = self?.currentBookId {
+                Task { try? await APIClient.shared.markHeard(bookId: bid, messageId: completedId) }
+            }
+            self?.advance()
+        }
         interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+        playCurrent()
     }
 
-    private func updateNowPlaying(for id: UUID?) {
-        let center = MPNowPlayingInfoCenter.default()
-        guard let id, let msg = currentQueue.first(where: { $0.id == id }) else { return }
-        lastPlayedId = id
-        var info: [String: Any] = [:]
-        info[MPMediaItemPropertyTitle] = TranscriptStore.shared.text(for: id) ?? "Voice message"
-        info[MPMediaItemPropertyArtist] = msg.senderName
-        info[MPMediaItemPropertyPlaybackDuration] = Double(msg.durationSeconds ?? 0)
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
-        info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
-        center.nowPlayingInfo = info
+    private func playCurrent() {
+        guard playQueue.indices.contains(playIndex) else { stopPlayback(); return }
+        let msg = playQueue[playIndex]
+        switch msg.type {
+        case .voice:
+            updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
+                             artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
+            AudioPlayerService.shared.toggle(message: msg)            // completion → advance
+        case .text:
+            let body = msg.body ?? ""
+            updateNowPlaying(title: body, artist: msg.senderName, duration: 0)
+            AudioPlayerService.shared.stopAll(deactivateSession: false)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+            try? AVAudioSession.sharedInstance().setActive(true)
+            synthesizer.stopSpeaking(at: .immediate)
+            synthesizer.speak(AVSpeechUtterance(string: "\(msg.senderName) says: \(body)"))   // didFinish → advance
+        default:
+            advance()   // skip photo/video/unknown
+        }
+    }
+
+    private func advance() {
+        playIndex += 1
+        playCurrent()
+    }
+
+    private func stopPlayback() {
+        AudioPlayerService.shared.stopAll()
+        synthesizer.stopSpeaking(at: .immediate)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in self.advance() }
+    }
+
+    // MARK: - Now Playing + transport controls
+
+    private func updateNowPlaying(title: String, artist: String, duration: Double) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: title,
+            MPMediaItemPropertyArtist: artist,
+            MPNowPlayingInfoPropertyPlaybackRate: 1.0
+        ]
+        if duration > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     private func configureRemoteCommands() {
         guard !remoteCommandsConfigured else { return }
         remoteCommandsConfigured = true
         let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in
-            guard let id = self?.lastPlayedId,
-                  let msg = self?.currentQueue.first(where: { $0.id == id }) else { return .commandFailed }
-            AudioPlayerService.shared.toggle(message: msg)   // resume from saved position
-            return .success
-        }
-        c.pauseCommand.addTarget { _ in
-            AudioPlayerService.shared.pause()
-            return .success
-        }
-        c.nextTrackCommand.addTarget { [weak self] _ in self?.skip(by: 1) ?? .commandFailed }
-        c.previousTrackCommand.addTarget { [weak self] _ in self?.skip(by: -1) ?? .commandFailed }
+        c.playCommand.addTarget { [weak self] _ in self?.resume(); return .success }
+        c.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
+        c.nextTrackCommand.addTarget { [weak self] _ in self?.skip(1) ?? .commandFailed }
+        c.previousTrackCommand.addTarget { [weak self] _ in self?.skip(-1) ?? .commandFailed }
     }
 
-    private func skip(by offset: Int) -> MPRemoteCommandHandlerStatus {
-        guard let id = AudioPlayerService.shared.playingMessageId ?? lastPlayedId,
-              let idx = currentQueue.firstIndex(where: { $0.id == id }) else { return .commandFailed }
-        let target = idx + offset
-        guard currentQueue.indices.contains(target) else { return .noSuchContent }
-        AudioPlayerService.shared.toggle(message: currentQueue[target])
+    private func resume() {
+        guard playQueue.indices.contains(playIndex) else { return }
+        let msg = playQueue[playIndex]
+        if msg.type == .text {
+            if synthesizer.isPaused { synthesizer.continueSpeaking() } else { playCurrent() }
+        } else if msg.type == .voice {
+            AudioPlayerService.shared.toggle(message: msg)
+        }
+    }
+
+    private func pause() {
+        AudioPlayerService.shared.pause()
+        if synthesizer.isSpeaking { synthesizer.pauseSpeaking(at: .word) }
+    }
+
+    // Skip to the next playable (voice/text) in the given direction, hopping over photo/video.
+    private func skip(_ offset: Int) -> MPRemoteCommandHandlerStatus {
+        var target = playIndex + offset
+        while playQueue.indices.contains(target),
+              ![MessageType.voice, .text].contains(playQueue[target].type) {
+            target += offset
+        }
+        guard playQueue.indices.contains(target) else { return .noSuchContent }
+        AudioPlayerService.shared.stopAll(deactivateSession: false)
+        synthesizer.stopSpeaking(at: .immediate)
+        playIndex = target
+        playCurrent()
         return .success
     }
 
