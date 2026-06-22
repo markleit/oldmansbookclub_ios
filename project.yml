@@ -31,7 +31,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BCH6CDU76R
         MARKETING_VERSION: 1.6.0
-        CURRENT_PROJECT_VERSION: 1
+        CURRENT_PROJECT_VERSION: 2
       configs:
         Debug:
           APS_ENVIRONMENT: development
