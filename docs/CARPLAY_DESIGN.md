@@ -17,14 +17,19 @@ Browse + play (no recording) = an **audio** CarPlay app → `com.apple.developer
 This is the common, readily-granted CarPlay category (every podcast/music app has it), far
 easier than `carplay-communication`. Must be requested from Apple.
 
-⚠️ **You CANNOT test CarPlay (sim OR car) until Apple grants the entitlement.** It's a MANAGED
-entitlement: Xcode's automatic signing strips it from builds until the App ID has it enabled,
-and the iOS Simulator's SpringBoard **refuses to launch** an app carrying it if it isn't
-legitimately provisioned ("denied by service delegate (SBMainWorkspace)"). Ad-hoc re-signing
-the .app to embed it gets past signing but still fails launch. So: with the entitlement the app
-won't launch un-provisioned; without it the CarPlay scene doesn't register. Net — CarPlay dev is
-gated on the entitlement grant (request submitted 2026-06-22), full stop. (Verified the hard way
-this session; earlier assumption that the sim works while pending was wrong.)
+### Entitlement: needed for DEVICE only; SIMULATOR testing does NOT need it
+- **Device / TestFlight / App Store:** `carplay-audio` must be granted by Apple AND **enabled on
+  the App ID** (developer portal → Identifiers → your App ID → Additional Capabilities → CarPlay),
+  then refresh the provisioning profile in Xcode. Granting the request alone is NOT enough — flip
+  the capability on the App ID, then "Try Again" in Signing & Capabilities.
+- **Simulator:** does NOT use the entitlement. Simulator builds **strip device entitlements**
+  (aps/applesignin/carplay → empty `<dict/>`); the sim's CarPlay registers off the **Info.plist
+  scene manifest**, not the entitlement. A plain `⌘R` works. ⚠️ Do NOT ad-hoc re-sign the .app to
+  embed the entitlement for the sim — that makes SpringBoard **refuse to launch** it
+  ("denied by service delegate (SBMainWorkspace)").
+- ⚠️ **CarPlay is iPhone-only — you MUST use an iPhone simulator.** On an iPad sim the Simulator
+  greys out **I/O → External Displays → CarPlay**. (Wasted a lot of time 2026-06-22 — the disabled
+  menu was purely iPad-vs-iPhone, nothing to do with entitlements/signing.)
 
 ## Architecture
 The CarPlay scene runs in the **same app process** as the phone UI, so it shares all existing
