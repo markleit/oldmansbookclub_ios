@@ -2,6 +2,7 @@ import CarPlay
 import UIKit
 import MediaPlayer
 import Combine
+import AVFoundation
 
 // CarPlay browse + play scene (issue #46). Separate scene in the same app process, so it
 // reuses APIClient, AudioPlayerService, PlaybackProgressStore, etc. Browse books → recent
@@ -15,6 +16,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var lastPlayedId: UUID?
     private var playingCancellable: AnyCancellable?
     private var remoteCommandsConfigured = false
+    private let synthesizer = AVSpeechSynthesizer()
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController) {
@@ -70,35 +72,71 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         for m in messages where m.transcript != nil {
             TranscriptStore.shared.cache(m.transcript!, for: m.id)
         }
-        let voices = messages
-            .filter { $0.type == .voice && !$0.isDeleted }
-            .sorted { $0.sentAt < $1.sentAt }
+        let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt > $1.sentAt }   // newest first
+        let voices = messages.filter { $0.type == .voice && !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }
         let unheard = voices.filter { !PlaybackProgressStore.shared.isCompleted($0.id) }
 
         var sections: [CPListSection] = []
         if !unheard.isEmpty {
-            let playAll = CPListItem(text: "Play all unheard (\(unheard.count))", detailText: nil)
+            let playAll = CPListItem(text: "Play all unheard voice (\(unheard.count))", detailText: nil)
             playAll.handler = { [weak self] _, completion in
                 self?.startQueue(unheard, from: unheard[0], bookId: book.id); completion()
             }
             sections.append(CPListSection(items: [playAll]))
         }
 
-        let rows: [CPListItem] = voices.reversed().map { msg in
-            let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
-            let title = TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"
-            let item = CPListItem(text: (heard ? "" : "● ") + title,
-                                  detailText: "\(msg.senderName) · \(Self.time(msg.sentAt))")
-            item.handler = { [weak self] _, completion in
-                self?.startQueue(voices, from: msg, bookId: book.id); completion()
+        // All message types as rows. Voice plays; text is read aloud (TTS); photo/video
+        // are non-actionable line items.
+        let rows: [CPListItem] = active.map { msg in
+            let sub = "\(msg.senderName) · \(Self.time(msg.sentAt))"
+            switch msg.type {
+            case .voice:
+                let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
+                let title = TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"
+                let item = CPListItem(text: (heard ? "" : "● ") + title, detailText: sub)
+                item.handler = { [weak self] _, completion in
+                    self?.startQueue(voices, from: msg, bookId: book.id); completion()
+                }
+                TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
+                return item
+            case .text:
+                let item = CPListItem(text: msg.body ?? "", detailText: sub)
+                item.handler = { [weak self] _, completion in
+                    self?.speak(msg.body ?? "", sender: msg.senderName); completion()
+                }
+                return item
+            case .photo:
+                let item = CPListItem(text: "📷 Photo", detailText: sub)
+                item.handler = { _, completion in completion() }   // non-actionable
+                return item
+            case .video:
+                let item = CPListItem(text: "🎬 Video", detailText: sub)
+                item.handler = { _, completion in completion() }   // non-actionable
+                return item
+            case .unknown:
+                let item = CPListItem(text: "Message", detailText: sub)
+                item.handler = { _, completion in completion() }
+                return item
             }
-            TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
-            return item
         }
         sections.append(CPListSection(items: rows))
 
         let template = CPListTemplate(title: book.title, sections: sections)
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
+    }
+
+    // Read a text message aloud through the car (iMessage-style). Stops any audio first.
+    private func speak(_ text: String, sender: String) {
+        guard !text.isEmpty else { return }
+        AudioPlayerService.shared.stopAll(deactivateSession: false)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? AVAudioSession.sharedInstance().setActive(true)
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer.speak(AVSpeechUtterance(string: "\(sender) says: \(text)"))
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+            MPMediaItemPropertyTitle: text,
+            MPMediaItemPropertyArtist: sender
+        ]
     }
 
     // MARK: - Playback
