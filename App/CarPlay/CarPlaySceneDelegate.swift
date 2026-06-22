@@ -191,7 +191,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func playCurrent() {
-        guard playQueue.indices.contains(playIndex) else { stopPlayback(); return }
+        guard playQueue.indices.contains(playIndex) else {
+            // Reached the end — leave the last message on the Now Playing screen (don't
+            // blank it), just stop playback.
+            AudioPlayerService.shared.stopAll(deactivateSession: false)
+            synthesizer.stopSpeaking(at: .immediate)
+            if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
+                info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            }
+            return
+        }
         let msg = playQueue[playIndex]
         switch msg.type {
         case .voice:
