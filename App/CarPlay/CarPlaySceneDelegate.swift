@@ -201,7 +201,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return .success
     }
 
+    // Matches the phone's formatMessageDate: time today, weekday this week, date older.
     private static func time(_ date: Date) -> String {
-        let f = DateFormatter(); f.timeStyle = .short; return f.string(from: date)
+        let cal = Calendar.current
+        if cal.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        } else if let days = cal.dateComponents([.day], from: date, to: Date()).day, days < 7 {
+            return date.formatted(.dateTime.weekday(.wide))
+        } else {
+            return date.formatted(date: .abbreviated, time: .omitted)
+        }
     }
 }
