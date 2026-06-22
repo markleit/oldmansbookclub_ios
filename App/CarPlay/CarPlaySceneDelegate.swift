@@ -1,18 +1,25 @@
 import CarPlay
 import UIKit
+import MediaPlayer
+import Combine
 
 // CarPlay browse + play scene (issue #46). Separate scene in the same app process, so it
-// reuses APIClient, AudioPlayerService, PlaybackProgressStore, etc. Phase-1 scope: browse
-// books → recent voice messages, play, and auto-advance through unheard ("play all unheard").
-// NOTE: requires the carplay-audio entitlement (pending Apple approval) to appear on a real
-// CarPlay head unit; builds + the CarPlay Simulator work for development meanwhile.
+// reuses APIClient, AudioPlayerService, PlaybackProgressStore, etc. Browse books → recent
+// voice messages, play, auto-advance through unheard, with Now Playing metadata + transport
+// controls (play/pause/next/prev) and stop-on-back.
 @MainActor
-final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
+final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPInterfaceControllerDelegate {
     private var interfaceController: CPInterfaceController?
+    private var currentQueue: [Message] = []
+    private var currentBookId: UUID?
+    private var lastPlayedId: UUID?
+    private var playingCancellable: AnyCancellable?
+    private var remoteCommandsConfigured = false
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
+        interfaceController.delegate = self
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
         root.emptyViewTitleVariants = ["Books"]
         root.emptyViewSubtitleVariants = ["Loading…"]
@@ -23,6 +30,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didDisconnectInterfaceController interfaceController: CPInterfaceController) {
         self.interfaceController = nil
+    }
+
+    // Back out of Now Playing → stop playback (and clear the Now Playing info).
+    nonisolated func templateDidDisappear(_ aTemplate: CPTemplate, animated: Bool) {
+        Task { @MainActor in
+            if aTemplate === CPNowPlayingTemplate.shared {
+                AudioPlayerService.shared.stopAll()
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            }
+        }
     }
 
     // MARK: - Books
@@ -49,14 +66,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func openBook(_ book: Book) async {
         let messages = (try? await APIClient.shared.getMessages(bookId: book.id)) ?? []
-        // Voice messages only, oldest→newest so "play all" runs in chat order.
         let voices = messages
             .filter { $0.type == .voice && !$0.isDeleted }
             .sorted { $0.sentAt < $1.sentAt }
         let unheard = voices.filter { !PlaybackProgressStore.shared.isCompleted($0.id) }
 
         var sections: [CPListSection] = []
-
         if !unheard.isEmpty {
             let playAll = CPListItem(text: "Play all unheard (\(unheard.count))", detailText: nil)
             playAll.handler = { [weak self] _, completion in
@@ -65,7 +80,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             sections.append(CPListSection(items: [playAll]))
         }
 
-        let rows: [CPListItem] = voices.reversed().map { msg in   // newest first in the list
+        let rows: [CPListItem] = voices.reversed().map { msg in
             let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
             let title = TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"
             let item = CPListItem(text: (heard ? "" : "● ") + title,
@@ -73,7 +88,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             item.handler = { [weak self] _, completion in
                 self?.startQueue(voices, from: msg, bookId: book.id); completion()
             }
-            // Warm the transcript so the row becomes readable on a later refresh.
             TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
             return item
         }
@@ -87,16 +101,62 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     // Play `start` and auto-advance through the rest of `queue` (chronological).
     private func startQueue(_ queue: [Message], from start: Message, bookId: UUID) {
+        currentQueue = queue
+        currentBookId = bookId
         AudioPlayerService.shared.onPlaybackCompleted = { completedId in
-            // Best-effort mark-heard so unread clears everywhere.
             Task { try? await APIClient.shared.markHeard(bookId: bookId, messageId: completedId) }
         }
-        AudioPlayerService.shared.nextToPlay = { completedId in
-            guard let idx = queue.firstIndex(where: { $0.id == completedId }), idx + 1 < queue.count else { return nil }
-            return queue[idx + 1]
+        AudioPlayerService.shared.nextToPlay = { [weak self] completedId in
+            guard let q = self?.currentQueue,
+                  let idx = q.firstIndex(where: { $0.id == completedId }), idx + 1 < q.count else { return nil }
+            return q[idx + 1]
         }
+        configureRemoteCommands()
+        // Keep the Now Playing screen + lock-screen info in sync as playback advances.
+        playingCancellable = AudioPlayerService.shared.$playingMessageId
+            .sink { [weak self] id in self?.updateNowPlaying(for: id) }
         AudioPlayerService.shared.toggle(message: start)
         interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+    }
+
+    private func updateNowPlaying(for id: UUID?) {
+        let center = MPNowPlayingInfoCenter.default()
+        guard let id, let msg = currentQueue.first(where: { $0.id == id }) else { return }
+        lastPlayedId = id
+        var info: [String: Any] = [:]
+        info[MPMediaItemPropertyTitle] = TranscriptStore.shared.text(for: id) ?? "Voice message"
+        info[MPMediaItemPropertyArtist] = msg.senderName
+        info[MPMediaItemPropertyPlaybackDuration] = Double(msg.durationSeconds ?? 0)
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+        info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+        center.nowPlayingInfo = info
+    }
+
+    private func configureRemoteCommands() {
+        guard !remoteCommandsConfigured else { return }
+        remoteCommandsConfigured = true
+        let c = MPRemoteCommandCenter.shared()
+        c.playCommand.addTarget { [weak self] _ in
+            guard let id = self?.lastPlayedId,
+                  let msg = self?.currentQueue.first(where: { $0.id == id }) else { return .commandFailed }
+            AudioPlayerService.shared.toggle(message: msg)   // resume from saved position
+            return .success
+        }
+        c.pauseCommand.addTarget { _ in
+            AudioPlayerService.shared.pause()
+            return .success
+        }
+        c.nextTrackCommand.addTarget { [weak self] _ in self?.skip(by: 1) ?? .commandFailed }
+        c.previousTrackCommand.addTarget { [weak self] _ in self?.skip(by: -1) ?? .commandFailed }
+    }
+
+    private func skip(by offset: Int) -> MPRemoteCommandHandlerStatus {
+        guard let id = AudioPlayerService.shared.playingMessageId ?? lastPlayedId,
+              let idx = currentQueue.firstIndex(where: { $0.id == id }) else { return .commandFailed }
+        let target = idx + offset
+        guard currentQueue.indices.contains(target) else { return .noSuchContent }
+        AudioPlayerService.shared.toggle(message: currentQueue[target])
+        return .success
     }
 
     private static func time(_ date: Date) -> String {
