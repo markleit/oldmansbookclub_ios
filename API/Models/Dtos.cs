@@ -47,7 +47,8 @@ public record MessageDto(
     Guid? ParentMessageId = null,
     string? ParentSenderName = null,
     string? ParentPreview = null,
-    DateTime? ParentSentAt = null
+    DateTime? ParentSentAt = null,
+    string? Transcript = null
 );
 
 public record SavedMessageDto(

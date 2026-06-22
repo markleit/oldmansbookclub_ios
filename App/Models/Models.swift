@@ -73,9 +73,10 @@ struct Message: Identifiable, Codable {
     var parentSenderName: String? = nil
     var parentPreview: String? = nil
     var parentSentAt: Date? = nil
+    var transcript: String? = nil   // server-shared on-device transcript for voice messages
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt, transcript
     }
 }
 
@@ -102,6 +103,7 @@ extension Message {
         parentSenderName = try c.decodeIfPresent(String.self, forKey: .parentSenderName)
         parentPreview = try c.decodeIfPresent(String.self, forKey: .parentPreview)
         parentSentAt = try c.decodeIfPresent(Date.self, forKey: .parentSentAt)
+        transcript = try c.decodeIfPresent(String.self, forKey: .transcript)
     }
 }
 

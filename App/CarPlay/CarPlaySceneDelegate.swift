@@ -66,6 +66,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func openBook(_ book: Book) async {
         let messages = (try? await APIClient.shared.getMessages(bookId: book.id)) ?? []
+        // Seed transcripts the server already has so rows read them immediately.
+        for m in messages where m.transcript != nil {
+            TranscriptStore.shared.cache(m.transcript!, for: m.id)
+        }
         let voices = messages
             .filter { $0.type == .voice && !$0.isDeleted }
             .sorted { $0.sentAt < $1.sentAt }
