@@ -23,6 +23,9 @@ targets:
         com.apple.developer.applesignin:
           - Default
         aps-environment: $(APS_ENVIRONMENT)
+        # CarPlay audio entitlement (#46). MANAGED — pending Apple approval; device/TestFlight
+        # signing will fail until granted. Simulator + CarPlay Simulator builds are unaffected.
+        com.apple.developer.carplay-audio: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
