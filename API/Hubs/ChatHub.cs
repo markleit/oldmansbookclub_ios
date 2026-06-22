@@ -41,10 +41,13 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
     // NOTE: SignalR matches hub methods by EXACT argument count (it does NOT apply C#
     // default values). So the parameter count of each public method is part of its wire
-    // contract — adding a param breaks older clients. Replies therefore go through
-    // SEPARATE *Reply methods rather than an optional param on the originals, so the
-    // live App Store client keeps working unchanged.
-    public Task SendTextMessage(Guid bookId, string body, Guid? clientId = null)
+    // contract — adding a param breaks older clients. SendTextMessage MUST stay at its
+    // original 1.5.0 arity (bookId, body) forever: the live App Store client invokes it
+    // with exactly 2 args. clientId (dedup) and replies go through SEPARATE method names.
+    // (A "default" param here doesn't help — SignalR still requires that arg count.)
+    public Task SendTextMessage(Guid bookId, string body)
+        => SendTextCore(bookId, body, null, null);
+    public Task SendTextWithClientId(Guid bookId, string body, Guid clientId)
         => SendTextCore(bookId, body, clientId, null);
     public Task SendTextReply(Guid bookId, string body, Guid clientId, Guid parentMessageId)
         => SendTextCore(bookId, body, clientId, parentMessageId);
