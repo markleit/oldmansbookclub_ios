@@ -229,16 +229,17 @@ actor ChatService {
         return conn
     }
 
-    // Replies go through dedicated *Reply hub methods (SignalR matches by exact argument
-    // count, so we can't add an optional trailing arg to the originals without breaking
-    // older clients). The non-reply path keeps the original method + arity unchanged.
+    // SignalR matches by exact arg count. The bare "SendTextMessage" is reserved for the
+    // live 1.5.0 client's 2-arg call (bookId, body) and must NOT be invoked with extra
+    // args here — the clientId/reply variants use distinct method names so all client
+    // versions coexist.
     func sendText(bookId: UUID, body: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
         do {
             let conn = try await readyConnection()
             if let pid = parentMessageId {
                 try await conn.invoke(method: "SendTextReply", arguments: bookId.uuidString, body, clientId.uuidString, pid.uuidString)
             } else {
-                try await conn.invoke(method: "SendTextMessage", arguments: bookId.uuidString, body, clientId.uuidString)
+                try await conn.invoke(method: "SendTextWithClientId", arguments: bookId.uuidString, body, clientId.uuidString)
             }
         } catch { throw translateInvokeError(error) }
     }
