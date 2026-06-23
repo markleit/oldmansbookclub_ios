@@ -248,10 +248,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func messageSections(book: Book, messages: [Message]) -> [CPListSection] {
         for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
         let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }   // chronological
+        let me = TokenStore.shared.userId
 
         var sections: [CPListSection] = []
-        // "Play all unheard" — start continuous playback from the oldest unheard voice.
-        let unheard = active.filter { $0.type == .voice && !PlaybackProgressStore.shared.isCompleted($0.id) }
+        // "Play all unheard" — start continuous playback from the oldest unheard voice. Match
+        // the phone's count: voice messages that aren't yours and aren't locally heard yet.
+        let unheard = active.filter { $0.type == .voice && $0.senderId != me && !PlaybackProgressStore.shared.isCompleted($0.id) }
         if let first = unheard.first {
             let playAll = CPListItem(text: "Play all unheard (\(unheard.count))", detailText: nil)
             playAll.handler = { [weak self] _, completion in
@@ -267,8 +269,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             let item: CPListItem
             switch msg.type {
             case .voice:
-                // Always a 🎤 mic icon (consistent), then the transcript if we have one.
-                let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
+                // Always a 🎤 mic icon (consistent), then the transcript if we have one. Your
+                // own messages never show the unheard dot (matches the phone).
+                let heard = msg.senderId == me || PlaybackProgressStore.shared.isCompleted(msg.id)
                 let body = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
                 item = CPListItem(text: (heard ? "" : "● ") + "🎤 " + body, detailText: sub)
                 TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
