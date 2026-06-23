@@ -55,6 +55,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // book if it's a different chat). Phone audio is always a voice message (text is never
     // audio), so adoption only ever deals with voice clips.
     private func syncNowPlayingState(playingId: UUID?) {
+        print("🚗CP sync id=\(playingId?.uuidString.prefix(8) ?? "nil") bookId=\(AudioPlayerService.shared.playingBookId?.uuidString.prefix(8) ?? "nil") queue=\(playQueue.count) idx=\(playIndex) tts=\(isSpeakingTTS)")
         guard let id = playingId else {
             // Player went idle. If we're reading text aloud (TTS), the player is legitimately
             // empty — don't stomp the "playing" state. Otherwise mark Now Playing paused.
@@ -101,6 +102,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let messages = (try? await APIClient.shared.getMessages(bookId: bookId)) ?? []
         for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
         let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }
+        print("🚗CP adopt book=\(bookId.uuidString.prefix(8)) msgs=\(active.count) found=\(active.contains(where: { $0.id == messageId }))")
         guard let idx = active.firstIndex(where: { $0.id == messageId }) else { return }
         playQueue = active
         playIndex = idx
@@ -292,6 +294,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return
         }
         let msg = playQueue[playIndex]
+        print("🚗CP playCurrent idx=\(playIndex) type=\(msg.type)")
         switch msg.type {
         case .voice:
             isSpeakingTTS = false
@@ -307,8 +310,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
             try? AVAudioSession.sharedInstance().setActive(true)
+            // stopSpeaking(at:) isn't instantaneous; speaking synchronously right after it
+            // drops the new utterance (e.g. when skipping text→text). Speak on the next tick.
             synthesizer.stopSpeaking(at: .immediate)
-            synthesizer.speak(AVSpeechUtterance(string: "\(msg.senderName) says: \(body)"))   // didFinish → advance
+            let utterance = AVSpeechUtterance(string: "\(msg.senderName) says: \(body)")
+            DispatchQueue.main.async { [weak self] in self?.synthesizer.speak(utterance) }   // didFinish → advance
         default:
             advance()   // skip photo/video/unknown
         }
@@ -418,6 +424,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
               ![MessageType.voice, .text].contains(playQueue[target].type) {
             target += offset
         }
+        print("🚗CP skip offset=\(offset) from=\(playIndex) target=\(target) count=\(playQueue.count)")
         guard playQueue.indices.contains(target) else { return .noSuchContent }
         AudioPlayerService.shared.stopAll(deactivateSession: false)
         synthesizer.stopSpeaking(at: .immediate)
