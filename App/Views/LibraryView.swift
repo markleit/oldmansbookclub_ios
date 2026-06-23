@@ -155,6 +155,8 @@ struct LibraryView: View {
         guard let bookId = deepLink.pendingBookId,
               let book = viewModel.books.first(where: { $0.id == bookId }) else { return }
         deepLink.pendingBookId = nil
+        // Make the book's club active first so Back lands on the right library (#57).
+        viewModel.setActiveClub(book.clubId)
         var newPath = NavigationPath()
         newPath.append(book)
         navigationPath = newPath

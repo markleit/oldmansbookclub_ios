@@ -118,6 +118,18 @@ final class LibraryViewModel: ObservableObject {
         books = []
         Task { await load() }
     }
+
+    // Switch the active club context without clearing/reloading — `books` already holds every
+    // club's books, so only the filtered lists + title need to re-derive. Used by deep links
+    // so Back from a deep-linked book lands on that book's club, not the default one (#57).
+    func setActiveClub(_ id: UUID) {
+        guard id != clubId else { return }
+        let name = myClubs.first(where: { $0.id == id })?.name
+        TokenStore.shared.clubId = id
+        TokenStore.shared.clubName = name
+        clubId = id
+        clubName = name
+    }
 }
 
 /// Reference holder for the previous network status. NWPathMonitor serializes
