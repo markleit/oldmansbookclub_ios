@@ -891,6 +891,7 @@ struct VoiceMessageBubble: View {
     @ObservedObject private var audio = AudioPlayerService.shared
     @ObservedObject private var store = PlaybackProgressStore.shared
     @GestureState private var isScrubbing = false
+    @State private var showSpeedSlider = false
     @State private var showTranscription = false
     @State private var transcription: String?
     @State private var isTranscribing = false
@@ -1053,10 +1054,22 @@ struct VoiceMessageBubble: View {
             }
 
             if isPlaying {
-                Button { audio.cycleRate() } label: {
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        showSpeedSlider.toggle()
+                    }
+                } label: {
                     BunnySpeedIcon(speed: audio.playbackRate)
                         .frame(width: 44, height: 44)
                 }
+                .overlay(alignment: .bottom) {
+                    if showSpeedSlider {
+                        SpeedSliderPopup(rate: audio.playbackRate) { audio.setRate($0) }
+                            .offset(y: -54)   // float just above the bunny
+                            .transition(.scale(scale: 0.85, anchor: .bottom).combined(with: .opacity))
+                    }
+                }
+                .onDisappear { showSpeedSlider = false }   // close if playback ends / scrolls away
 
                 RoutePickerView(tintColor: .white)   // only shown while playing (black bubble)
                     .frame(width: 44, height: 44)
@@ -1346,34 +1359,71 @@ struct FullScreenVideoView: View {
 
 // MARK: - Bunny Speed Icon
 
+// Compact speed indicator for the bunny button: a hare plus the current multiplier, so a
+// continuous rate (e.g. 2.25×) reads clearly. Tapping the button opens SpeedSliderPopup.
 struct BunnySpeedIcon: View {
     let speed: Float
 
-    private var lineCount: Int {
-        switch speed {
-        case 1.0: return 0
-        case 1.5: return 1
-        case 2.0: return 2
-        case 3.0: return 3
-        default:  return 4
+    var body: some View {
+        VStack(spacing: 1) {
+            Image(systemName: speed <= 1.0 ? "hare" : "hare.fill")
+                .font(.system(size: 16, weight: speed >= 3.0 ? .bold : .regular))
+            Text(Self.label(speed))
+                .font(.system(size: 9, weight: .semibold))
+                .monospacedDigit()
         }
     }
 
-    var body: some View {
-        HStack(spacing: 2) {
-            VStack(alignment: .trailing, spacing: 2) {
-                ForEach(0..<4, id: \.self) { i in
-                    Capsule()
-                        .frame(width: CGFloat(8 - i * 1), height: 2)
-                        .opacity(i < lineCount ? (1.0 - Double(i) * 0.18) : 0)
-                }
-            }
-            .frame(width: 12)
+    // 1.0 → "1×", 2.0 → "2×", 2.25 → "2.25×" (trailing zeros dropped).
+    static func label(_ speed: Float) -> String {
+        let r = (speed * 100).rounded() / 100
+        return r == r.rounded() ? "\(Int(r))×" : String(format: "%g×", r)
+    }
+}
 
-            Image(systemName: speed <= 1.0 ? "hare" : "hare.fill")
-                .font(.system(size: 14 + CGFloat(lineCount) * 2,
-                              weight: speed >= 4.0 ? .bold : .regular))
+// Anchored popup with a continuous 1–4× speed slider, snapping to 0.25× with a light haptic.
+// Applies the rate live (and persists via AudioPlayerService).
+struct SpeedSliderPopup: View {
+    let rate: Float
+    let onChange: (Float) -> Void
+
+    @State private var value: Double
+    private let haptic = UISelectionFeedbackGenerator()
+
+    init(rate: Float, onChange: @escaping (Float) -> Void) {
+        self.rate = rate
+        self.onChange = onChange
+        _value = State(initialValue: Double(rate))
+    }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(BunnySpeedIcon.label(Float(value)))
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+                .foregroundColor(.white)
+            HStack(spacing: 8) {
+                Image(systemName: "tortoise.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
+                Slider(value: $value, in: 1.0...4.0, step: 0.25)
+                    .tint(.white)
+                    .onChange(of: value) { v in
+                        haptic.selectionChanged()
+                        onChange(Float(v))
+                    }
+                Image(systemName: "hare.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.white.opacity(0.5))
+            }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(width: 210)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15)))
+        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        .onAppear { haptic.prepare() }
     }
 }
 

@@ -10,7 +10,17 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
-    @Published var playbackRate: Float = 1.0
+    // Continuous 1–4× voice playback speed, persisted across launches.
+    private static let rateKey = "voicePlaybackRate"
+    @Published var playbackRate: Float = {
+        let v = UserDefaults.standard.float(forKey: AudioPlayerService.rateKey)   // 0 if unset
+        return (v >= 1.0 && v <= 4.0) ? v : 1.0
+    }() {
+        didSet {
+            UserDefaults.standard.set(playbackRate, forKey: Self.rateKey)
+            player?.rate = playbackRate
+        }
+    }
     private var isExternalRouteActive: Bool = false
 
     // Fired when a message finishes — for side effects (mark-heard, UI). Distinct from
@@ -22,7 +32,6 @@ final class AudioPlayerService: ObservableObject {
     // messages; CarPlay advances through its "play all unheard" queue.
     var nextToPlay: ((UUID) -> Message?)?
 
-    private let availableRates: [Float] = [1.0, 1.5, 2.0, 3.0, 4.0]
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
     private var bufferCancellable: AnyCancellable?
@@ -52,10 +61,10 @@ final class AudioPlayerService: ObservableObject {
         }
     }
 
-    func cycleRate() {
-        let currentIndex = availableRates.firstIndex(of: playbackRate) ?? 0
-        playbackRate = availableRates[(currentIndex + 1) % availableRates.count]
-        player?.rate = playbackRate
+    // Set a continuous playback rate, clamped to 1–4×. Persisted + applied live via the
+    // playbackRate didSet.
+    func setRate(_ rate: Float) {
+        playbackRate = min(max(rate, 1.0), 4.0)
     }
 
     func pause() {
@@ -125,7 +134,11 @@ final class AudioPlayerService: ObservableObject {
             playURL = url
             AudioCache.shared.prefetch(url)
         }
-        let newPlayer = AVPlayer(url: playURL)
+        let item = AVPlayerItem(url: playURL)
+        // Pitch-preserving, high-quality time stretch so voice stays clear at higher rates —
+        // the default algorithm degrades noticeably above ~2×.
+        item.audioTimePitchAlgorithm = .spectral
+        let newPlayer = AVPlayer(playerItem: item)
         player = newPlayer
         playingMessageId = message.id
         isUserInitiatedPause = false
