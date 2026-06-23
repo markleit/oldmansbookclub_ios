@@ -51,7 +51,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
         root.emptyViewTitleVariants = ["Loading…"]
         interfaceController.setRootTemplate(root, animated: false, completion: nil)
-        print("🚗CP didConnect")
         playbackObserver = AudioPlayerService.shared.$playingMessageId
             .receive(on: DispatchQueue.main)
             .sink { [weak self] id in self?.syncNowPlayingState(playingId: id) }
@@ -78,7 +77,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // book if it's a different chat). Phone audio is always a voice message (text is never
     // audio), so adoption only ever deals with voice clips.
     private func syncNowPlayingState(playingId: UUID?) {
-        print("🚗CP sync id=\(playingId?.uuidString.prefix(8) ?? "nil") bookId=\(AudioPlayerService.shared.playingBookId?.uuidString.prefix(8) ?? "nil") queue=\(playQueue.count) idx=\(playIndex) tts=\(isSpeakingTTS)")
         guard let id = playingId else {
             // Player went idle. If we're reading text aloud (TTS), the player is legitimately
             // empty — don't stomp the "playing" state. Otherwise mark Now Playing paused.
@@ -135,7 +133,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let messages = (try? await APIClient.shared.getMessages(bookId: bookId)) ?? []
         for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
         let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }
-        print("🚗CP adopt book=\(bookId.uuidString.prefix(8)) msgs=\(active.count) found=\(active.contains(where: { $0.id == messageId }))")
         guard let idx = active.firstIndex(where: { $0.id == messageId }) else { return }
         playQueue = active
         playIndex = idx
@@ -152,7 +149,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didDisconnectInterfaceController interfaceController: CPInterfaceController) {
-        print("🚗CP didDisconnect")
         self.interfaceController = nil
         playbackObserver = nil
         progressObserver = nil
@@ -330,7 +326,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             return
         }
         let msg = playQueue[playIndex]
-        print("🚗CP playCurrent idx=\(playIndex) type=\(msg.type)")
         switch msg.type {
         case .voice:
             isSpeakingTTS = false
@@ -384,8 +379,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         Task { @MainActor in
             // Only the current utterance's natural completion should advance; a cancelled or
             // superseded utterance's callback is ignored so it can't override a manual skip.
-            guard utterance === self.currentUtterance else { print("🚗CP didFinish(stale) ignored"); return }
-            print("🚗CP didFinish → advance")
+            guard utterance === self.currentUtterance else { return }
             self.currentUtterance = nil
             self.isSpeakingTTS = false
             self.advance()
@@ -480,7 +474,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
               ![MessageType.voice, .text].contains(playQueue[target].type) {
             target += offset
         }
-        print("🚗CP skip offset=\(offset) from=\(playIndex) target=\(target) count=\(playQueue.count)")
         guard playQueue.indices.contains(target) else { return .noSuchContent }
         currentUtterance = nil
         AudioPlayerService.shared.stopAll(deactivateSession: false)
