@@ -37,6 +37,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // phone (showing paused while audio plays → needing a double-press). Observe the shared
     // player and keep the Now Playing rate (and title) in sync from the CarPlay side.
     private var playbackObserver: AnyCancellable?
+    // Drives the Now Playing elapsed time from the player's real position each second so the
+    // CarPlay progress bar actually shows and tracks (extrapolation alone often won't render).
+    private var progressObserver: AnyCancellable?
 
     // MARK: - Scene lifecycle
 
@@ -52,6 +55,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         playbackObserver = AudioPlayerService.shared.$playingMessageId
             .receive(on: DispatchQueue.main)
             .sink { [weak self] id in self?.syncNowPlayingState(playingId: id) }
+        progressObserver = AudioPlayerService.shared.$currentSeconds
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] secs in
+                guard let self, !self.isSpeakingTTS,
+                      AudioPlayerService.shared.playingMessageId != nil,
+                      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(secs)
+                info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            }
         // Adopt playback already in progress (e.g. started on the phone before CarPlay
         // connected, or while its window was closed) — the observer only sees changes.
         if AudioPlayerService.shared.playingMessageId != nil {
@@ -142,6 +155,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         print("🚗CP didDisconnect")
         self.interfaceController = nil
         playbackObserver = nil
+        progressObserver = nil
     }
 
     // Back out of Now Playing → stop playback.
