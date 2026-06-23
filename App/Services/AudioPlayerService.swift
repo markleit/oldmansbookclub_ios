@@ -51,8 +51,7 @@ final class AudioPlayerService: ObservableObject {
         if playingMessageId == message.id {
             pause()
         } else {
-            playingBookId = bookId
-            play(message: message, fromStart: fromStart)
+            play(message: message, bookId: bookId, fromStart: fromStart)
         }
     }
 
@@ -107,9 +106,9 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(duration * fraction)
     }
 
-    private func play(message: Message, fromStart: Bool = false) {
+    private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
-        stopCurrentPlayer()
+        stopCurrentPlayer()                     // clears playingBookId — re-set it below
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
 
         // Resume from the saved position. Replaying a fully-played message starts over
@@ -137,6 +136,7 @@ final class AudioPlayerService: ObservableObject {
         let newPlayer = AVPlayer(url: playURL)
         player = newPlayer
         playingMessageId = message.id
+        playingBookId = bookId
         isUserInitiatedPause = false
         playingDurationSeconds = message.durationSeconds ?? 0
         let dur = Double(message.durationSeconds ?? 0)
