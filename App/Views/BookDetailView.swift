@@ -937,10 +937,6 @@ struct VoiceMessageBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             controlsRow
-            if isPlaying && showSpeedSlider {
-                Divider().overlay(Color.white.opacity(0.3))
-                SpeedSliderRow(rate: audio.playbackRate) { audio.setRate($0) }
-            }
             if isFailed {
                 HStack(spacing: 12) {
                     Button { onRetry?() } label: {
@@ -970,8 +966,7 @@ struct VoiceMessageBubble: View {
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
         .animation(.easeInOut(duration: 0.25), value: isPlaying)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
-        .animation(.easeInOut(duration: 0.2), value: showSpeedSlider)
-        .onChange(of: isPlaying) { if !$0 { showSpeedSlider = false } }   // reset when playback ends
+        .onChange(of: isPlaying) { if !$0 { showSpeedSlider = false } }   // close popover when playback ends
         // NOTE: deliberately no onDisappear-pause here. The bubble disappears whenever
         // it scrolls out of the LazyVStack, and pausing on that stopped playback when
         // the user scrolled away. Stopping playback on leaving the chat is handled by
@@ -1060,11 +1055,13 @@ struct VoiceMessageBubble: View {
             }
 
             if isPlaying {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) { showSpeedSlider.toggle() }
-                } label: {
+                Button { showSpeedSlider.toggle() } label: {
                     BunnySpeedIcon(speed: audio.playbackRate)
                         .frame(width: 44, height: 44)
+                }
+                .popover(isPresented: $showSpeedSlider) {
+                    VerticalSpeedSlider(rate: audio.playbackRate) { audio.setRate($0) }
+                        .popoverCompactAdaptation()
                 }
 
                 RoutePickerView(tintColor: .white)   // only shown while playing (black bubble)
@@ -1377,16 +1374,16 @@ struct BunnySpeedIcon: View {
     }
 }
 
-// Inline 1–4× speed slider revealed inside the (black, playing) voice bubble when the bunny
-// is tapped — snaps to 0.25× with a light haptic, applies the rate live (and persists via
-// AudioPlayerService). Inline rather than a floating popup so the rounded-bubble clip can't
-// cut it off.
-struct SpeedSliderRow: View {
+// Vertical 1–4× speed slider shown in a popover anchored to the bunny (hare = faster on top,
+// tortoise = slower at the bottom). Snaps to 0.25× with a light haptic and applies the rate
+// live (persisted via AudioPlayerService). Custom track for reliable vertical drag.
+struct VerticalSpeedSlider: View {
     let rate: Float
     let onChange: (Float) -> Void
 
     @State private var value: Double
     private let haptic = UISelectionFeedbackGenerator()
+    private let trackHeight: CGFloat = 150
 
     init(rate: Float, onChange: @escaping (Float) -> Void) {
         self.rate = rate
@@ -1395,27 +1392,58 @@ struct SpeedSliderRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "tortoise.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
-            Slider(value: $value, in: 1.0...4.0, step: 0.25)
-                .tint(.white)
-                .onChange(of: value) { v in
-                    haptic.selectionChanged()
-                    onChange(Float(v))
-                }
-            Image(systemName: "hare.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.5))
+        VStack(spacing: 10) {
+            Image(systemName: "hare.fill").font(.system(size: 13))
             Text(BunnySpeedIcon.label(Float(value)))
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .monospacedDigit()
-                .foregroundColor(.white)
-                .frame(width: 46, alignment: .trailing)
+
+            GeometryReader { geo in
+                let h = geo.size.height
+                let frac = CGFloat((value - 1.0) / 3.0)   // 1–4× → 0–1
+                ZStack(alignment: .bottom) {
+                    Capsule().fill(Color.secondary.opacity(0.25)).frame(width: 6)
+                    Capsule().fill(Color.accentColor).frame(width: 6, height: h * frac)
+                    Circle().fill(Color(.systemBackground))
+                        .frame(width: 24, height: 24)
+                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+                        .offset(y: -(h - 24) * frac)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0).onChanged { v in
+                        let f = max(0, min(1, 1 - (v.location.y / h)))     // top = fast
+                        let snapped = ((1.0 + Double(f) * 3.0) * 4).rounded() / 4   // nearest 0.25×
+                        if snapped != value {
+                            value = snapped
+                            haptic.selectionChanged()
+                            onChange(Float(snapped))
+                        }
+                    }
+                )
+            }
+            .frame(width: 40, height: trackHeight)
+
+            Image(systemName: "tortoise.fill").font(.system(size: 13))
         }
-        .padding(.top, 2)
+        .foregroundColor(.secondary)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 16)
         .onAppear { haptic.prepare() }
+    }
+}
+
+extension View {
+    // Render a popover as a true anchored popover on iPhone too (iOS 16.4+); on older OSes
+    // it falls back to the default sheet adaptation.
+    @ViewBuilder func popoverCompactAdaptation() -> some View {
+        if #available(iOS 16.4, *) {
+            self.presentationCompactAdaptation(.popover)
+        } else {
+            self
+        }
     }
 }
 
