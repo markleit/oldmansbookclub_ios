@@ -1383,7 +1383,6 @@ struct VerticalSpeedSlider: View {
 
     @State private var value: Double
     private let haptic = UISelectionFeedbackGenerator()
-    private let trackHeight: CGFloat = 150
 
     init(rate: Float, onChange: @escaping (Float) -> Void) {
         self.rate = rate
@@ -1397,41 +1396,57 @@ struct VerticalSpeedSlider: View {
             Text(BunnySpeedIcon.label(Float(value)))
                 .font(.system(size: 13, weight: .semibold))
                 .monospacedDigit()
-
-            GeometryReader { geo in
-                let h = geo.size.height
-                let frac = CGFloat((value - 1.0) / 3.0)   // 1–4× → 0–1
-                ZStack(alignment: .bottom) {
-                    Capsule().fill(Color.secondary.opacity(0.25)).frame(width: 6)
-                    Capsule().fill(Color.accentColor).frame(width: 6, height: h * frac)
-                    Circle().fill(Color(.systemBackground))
-                        .frame(width: 24, height: 24)
-                        .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
-                        .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
-                        .offset(y: -(h - 24) * frac)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0).onChanged { v in
-                        let f = max(0, min(1, 1 - (v.location.y / h)))     // top = fast
-                        let snapped = ((1.0 + Double(f) * 3.0) * 4).rounded() / 4   // nearest 0.25×
-                        if snapped != value {
-                            value = snapped
-                            haptic.selectionChanged()
-                            onChange(Float(snapped))
-                        }
-                    }
-                )
+            SpeedTrack(value: $value) { snapped in
+                haptic.selectionChanged()
+                onChange(Float(snapped))
             }
-            .frame(width: 40, height: trackHeight)
-
+            .frame(width: 40, height: 150)
             Image(systemName: "tortoise.fill").font(.system(size: 13))
         }
         .foregroundColor(.secondary)
         .padding(.vertical, 18)
         .padding(.horizontal, 16)
         .onAppear { haptic.prepare() }
+    }
+}
+
+// Vertical track for the speed slider. Split out (with explicit numeric types) because the
+// mixed CGFloat/Double math in one large view body times out the Xcode 16.4 type-checker.
+private struct SpeedTrack: View {
+    @Binding var value: Double
+    let onSnap: (Double) -> Void   // fired when the snapped (0.25×) value changes
+
+    var body: some View {
+        GeometryReader { geo in
+            let h: CGFloat = geo.size.height
+            let frac: CGFloat = CGFloat((value - 1.0) / 3.0)   // 1–4× → 0–1
+            ZStack(alignment: .bottom) {
+                Capsule().fill(Color.secondary.opacity(0.25)).frame(width: 6)
+                Capsule().fill(Color.accentColor).frame(width: 6, height: h * frac)
+                thumb.offset(y: -(h - 24) * frac)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(drag(height: h))
+        }
+    }
+
+    private var thumb: some View {
+        Circle().fill(Color(.systemBackground))
+            .frame(width: 24, height: 24)
+            .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+    }
+
+    private func drag(height h: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0).onChanged { v in
+            let f: Double = max(0, min(1, 1 - Double(v.location.y / h)))   // top = fast
+            let snapped: Double = ((1.0 + f * 3.0) * 4).rounded() / 4      // nearest 0.25×
+            if snapped != value {
+                value = snapped
+                onSnap(snapped)
+            }
+        }
     }
 }
 
