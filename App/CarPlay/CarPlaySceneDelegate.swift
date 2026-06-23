@@ -371,7 +371,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         currentUtterance = nil
         AudioPlayerService.shared.stopAll()
         synthesizer.stopSpeaking(at: .immediate)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        // Keep the last message on the Now Playing screen but paused (rate 0) instead of
+        // clearing it — CarPlay leaves its Now Playing button up regardless, so blanking the
+        // info just yields an empty dialog when it's tapped.
+        if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
+            info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
