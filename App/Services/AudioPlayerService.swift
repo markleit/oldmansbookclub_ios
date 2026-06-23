@@ -47,12 +47,12 @@ final class AudioPlayerService: ObservableObject {
         updateRouteState()
     }
 
-    func toggle(message: Message, bookId: UUID? = nil) {
+    func toggle(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         if playingMessageId == message.id {
             pause()
         } else {
             playingBookId = bookId
-            play(message: message)
+            play(message: message, fromStart: fromStart)
         }
     }
 
@@ -107,16 +107,20 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(duration * fraction)
     }
 
-    private func play(message: Message) {
+    private func play(message: Message, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
         stopCurrentPlayer()
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
 
         // Resume from the saved position. Replaying a fully-played message starts over
-        // from the beginning but stays "heard" (green is sticky).
+        // from the beginning but stays "heard" (green is sticky). fromStart forces the
+        // beginning regardless (used by CarPlay's continuous playback / manual skip, where a
+        // resume that's already at the end would instantly complete and skip the message).
         let store = PlaybackProgressStore.shared
         var resume = store.position(for: message.id)
-        if store.isCompleted(message.id) {
+        if fromStart {
+            resume = 0
+        } else if store.isCompleted(message.id) {
             store.resetPosition(message.id)
             resume = 0
         }

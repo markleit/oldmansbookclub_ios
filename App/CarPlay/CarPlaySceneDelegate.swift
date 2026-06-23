@@ -48,9 +48,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
         root.emptyViewTitleVariants = ["Loading…"]
         interfaceController.setRootTemplate(root, animated: false, completion: nil)
+        print("🚗CP didConnect")
         playbackObserver = AudioPlayerService.shared.$playingMessageId
             .receive(on: DispatchQueue.main)
             .sink { [weak self] id in self?.syncNowPlayingState(playingId: id) }
+        // Adopt playback already in progress (e.g. started on the phone before CarPlay
+        // connected, or while its window was closed) — the observer only sees changes.
+        if AudioPlayerService.shared.playingMessageId != nil {
+            syncNowPlayingState(playingId: AudioPlayerService.shared.playingMessageId)
+        }
         Task { await loadClubs(into: root) }
     }
 
@@ -95,8 +101,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                          artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
         updateSkipButtons(voice: true)
         configureRemoteCommands()
-        if interfaceController?.topTemplate !== CPNowPlayingTemplate.shared {
-            interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+        presentNowPlaying()
+    }
+
+    // Surface the shared Now Playing template. It's a singleton, so pushing it when it's
+    // already in the nav stack fails ("already in hierarchy") — pop back to it instead.
+    private func presentNowPlaying() {
+        guard let ic = interfaceController else { return }
+        if ic.topTemplate === CPNowPlayingTemplate.shared { return }
+        if ic.templates.contains(where: { $0 === CPNowPlayingTemplate.shared }) {
+            ic.pop(to: CPNowPlayingTemplate.shared, animated: true, completion: nil)
+        } else {
+            ic.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
         }
     }
 
@@ -123,6 +139,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didDisconnectInterfaceController interfaceController: CPInterfaceController) {
+        print("🚗CP didDisconnect")
         self.interfaceController = nil
         playbackObserver = nil
     }
@@ -280,7 +297,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             }
             self?.advance()
         }
-        interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+        presentNowPlaying()
         playCurrent()
     }
 
@@ -307,7 +324,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
                              artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
             updateSkipButtons(voice: true)           // ±10s seek within the clip
-            AudioPlayerService.shared.toggle(message: msg, bookId: currentBookId)      // completion → advance
+            // fromStart: continuous playback / manual skip should play the message from the
+            // beginning (use ±10s to scrub within it), not resume a saved mid/end position.
+            AudioPlayerService.shared.toggle(message: msg, bookId: currentBookId, fromStart: true)  // completion → advance
         case .text:
             let body = msg.body ?? ""
             isSpeakingTTS = true                      // before stopAll fires the observer
