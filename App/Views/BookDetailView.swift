@@ -937,6 +937,10 @@ struct VoiceMessageBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             controlsRow
+            if isPlaying && showSpeedSlider {
+                Divider().overlay(Color.white.opacity(0.3))
+                SpeedSliderRow(rate: audio.playbackRate) { audio.setRate($0) }
+            }
             if isFailed {
                 HStack(spacing: 12) {
                     Button { onRetry?() } label: {
@@ -966,6 +970,8 @@ struct VoiceMessageBubble: View {
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
         .animation(.easeInOut(duration: 0.25), value: isPlaying)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
+        .animation(.easeInOut(duration: 0.2), value: showSpeedSlider)
+        .onChange(of: isPlaying) { if !$0 { showSpeedSlider = false } }   // reset when playback ends
         // NOTE: deliberately no onDisappear-pause here. The bubble disappears whenever
         // it scrolls out of the LazyVStack, and pausing on that stopped playback when
         // the user scrolled away. Stopping playback on leaving the chat is handled by
@@ -1055,21 +1061,11 @@ struct VoiceMessageBubble: View {
 
             if isPlaying {
                 Button {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                        showSpeedSlider.toggle()
-                    }
+                    withAnimation(.easeInOut(duration: 0.2)) { showSpeedSlider.toggle() }
                 } label: {
                     BunnySpeedIcon(speed: audio.playbackRate)
                         .frame(width: 44, height: 44)
                 }
-                .overlay(alignment: .bottom) {
-                    if showSpeedSlider {
-                        SpeedSliderPopup(rate: audio.playbackRate) { audio.setRate($0) }
-                            .offset(y: -54)   // float just above the bunny
-                            .transition(.scale(scale: 0.85, anchor: .bottom).combined(with: .opacity))
-                    }
-                }
-                .onDisappear { showSpeedSlider = false }   // close if playback ends / scrolls away
 
                 RoutePickerView(tintColor: .white)   // only shown while playing (black bubble)
                     .frame(width: 44, height: 44)
@@ -1381,9 +1377,11 @@ struct BunnySpeedIcon: View {
     }
 }
 
-// Anchored popup with a continuous 1–4× speed slider, snapping to 0.25× with a light haptic.
-// Applies the rate live (and persists via AudioPlayerService).
-struct SpeedSliderPopup: View {
+// Inline 1–4× speed slider revealed inside the (black, playing) voice bubble when the bunny
+// is tapped — snaps to 0.25× with a light haptic, applies the rate live (and persists via
+// AudioPlayerService). Inline rather than a floating popup so the rounded-bubble clip can't
+// cut it off.
+struct SpeedSliderRow: View {
     let rate: Float
     let onChange: (Float) -> Void
 
@@ -1397,32 +1395,26 @@ struct SpeedSliderPopup: View {
     }
 
     var body: some View {
-        VStack(spacing: 4) {
+        HStack(spacing: 10) {
+            Image(systemName: "tortoise.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
+            Slider(value: $value, in: 1.0...4.0, step: 0.25)
+                .tint(.white)
+                .onChange(of: value) { v in
+                    haptic.selectionChanged()
+                    onChange(Float(v))
+                }
+            Image(systemName: "hare.fill")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.5))
             Text(BunnySpeedIcon.label(Float(value)))
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 12, weight: .semibold))
                 .monospacedDigit()
                 .foregroundColor(.white)
-            HStack(spacing: 8) {
-                Image(systemName: "tortoise.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
-                Slider(value: $value, in: 1.0...4.0, step: 0.25)
-                    .tint(.white)
-                    .onChange(of: value) { v in
-                        haptic.selectionChanged()
-                        onChange(Float(v))
-                    }
-                Image(systemName: "hare.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.white.opacity(0.5))
-            }
+                .frame(width: 46, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(width: 210)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.white.opacity(0.15)))
-        .shadow(color: .black.opacity(0.35), radius: 8, y: 3)
+        .padding(.top, 2)
         .onAppear { haptic.prepare() }
     }
 }
