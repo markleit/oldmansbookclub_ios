@@ -22,6 +22,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Per-template refresh closures, run when a list reappears (e.g. after backing out of
     // playback) so unread counts / unheard dots reflect what was just played.
     private var refreshers: [ObjectIdentifier: () async -> Void] = [:]
+    // Re-render the open message list as on-device transcriptions land (so voice rows fill
+    // in their transcripts consistently instead of some showing and some not).
+    private var transcriptObserver: AnyCancellable?
 
     // MARK: - Scene lifecycle
 
@@ -117,6 +120,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             template.updateSections(self.messageSections(book: book, messages: messages))
         }
         refreshers[ObjectIdentifier(template)] = refresh
+        // Re-render this list (debounced) as transcriptions complete so transcripts fill in.
+        transcriptObserver = TranscriptStore.shared.$transcripts
+            .dropFirst()
+            .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
+            .sink { _ in Task { await refresh() } }
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
         await refresh()   // initial populate; templateWillAppear refreshes on re-entry
     }
@@ -143,14 +151,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             let item: CPListItem
             switch msg.type {
             case .voice:
+                // Always a 🎤 mic icon (consistent), then the transcript if we have one.
                 let heard = PlaybackProgressStore.shared.isCompleted(msg.id)
-                item = CPListItem(text: (heard ? "" : "● ") + (TranscriptStore.shared.text(for: msg.id) ?? "🎤 Voice message"), detailText: sub)
+                let body = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
+                item = CPListItem(text: (heard ? "" : "● ") + "🎤 " + body, detailText: sub)
                 TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
                 item.handler = { [weak self] _, completion in
                     self?.playFrom(msg.id, messages: active, bookId: book.id); completion()
                 }
             case .text:
-                item = CPListItem(text: msg.body ?? "", detailText: sub)
+                // 💬 icon disambiguates a text message from a voice transcript.
+                item = CPListItem(text: "💬 " + (msg.body ?? ""), detailText: sub)
                 item.handler = { [weak self] _, completion in
                     self?.playFrom(msg.id, messages: active, bookId: book.id); completion()
                 }
