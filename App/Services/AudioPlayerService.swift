@@ -136,12 +136,16 @@ final class AudioPlayerService: ObservableObject {
         // Play the cached local file if we have it (instant start); otherwise stream the
         // remote blob and seed the cache so replays are instant.
         let playURL: URL
+        let isCached: Bool
         if let cached = AudioCache.shared.cachedFileURL(for: url) {
             playURL = cached
+            isCached = true
         } else {
             playURL = url
+            isCached = false
             AudioCache.shared.prefetch(url)
         }
+        print("🔊 play cached=\(isCached) route=\(Self.routeDesc())")
         let item = AVPlayerItem(url: playURL)
         // Pitch-preserving time stretch tuned for speech: .timeDomain keeps voice clear at
         // higher rates while being far cheaper than .spectral (which can cause skips at 2×/3×,
@@ -171,6 +175,7 @@ final class AudioPlayerService: ObservableObject {
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                print("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -244,6 +249,12 @@ final class AudioPlayerService: ObservableObject {
             try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
         }
         try? session.setActive(true)
+        print("🔊 activateSession nearEar=\(isNearEar) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
+    }
+
+    // Describes the current audio output route (port types) — for diagnosing CarPlay routing.
+    static func routeDesc() -> String {
+        AVAudioSession.sharedInstance().currentRoute.outputs.map { "\($0.portType.rawValue)" }.joined(separator: ",")
     }
 
     private func enableProximityMonitoring() {
@@ -278,6 +289,7 @@ final class AudioPlayerService: ObservableObject {
         let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
             .contains { externalPorts.contains($0.portType) }
         isExternalRouteActive = hasExternal
+        print("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) playing=\(playingMessageId != nil)")
         if playingMessageId != nil { activateAudioSession() }
     }
 }
