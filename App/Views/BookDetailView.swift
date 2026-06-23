@@ -568,7 +568,10 @@ struct MessageRow: View {
                     if isMe {
                         Button {
                             editText = body
-                            showEditSheet = true
+                            // Defer presenting until the context menu has dismissed —
+                            // presenting a sheet during the menu's dismissal can render
+                            // it blank in Release builds (#50).
+                            DispatchQueue.main.async { showEditSheet = true }
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -865,9 +868,18 @@ struct EditMessageSheet: View {
                             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .onAppear { focused = true }
+                // Defer focus past the initial layout pass. Forcing @FocusState in a
+                // bare .onAppear raises the keyboard mid-layout which, with a resizing
+                // detent, can thrash the keyboard in an infinite show/hide loop in
+                // Release builds (#50).
+                .task {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    focused = true
+                }
         }
-        .presentationDetents([.medium])
+        // .large (full height) instead of .medium: a medium sheet resizes when the
+        // keyboard appears, which is what fed the keyboard loop above (#50).
+        .presentationDetents([.large])
     }
 }
 
