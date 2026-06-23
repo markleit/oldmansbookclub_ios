@@ -143,9 +143,10 @@ final class AudioPlayerService: ObservableObject {
             AudioCache.shared.prefetch(url)
         }
         let item = AVPlayerItem(url: playURL)
-        // Pitch-preserving, high-quality time stretch so voice stays clear at higher rates —
-        // the default algorithm degrades noticeably above ~2×.
-        item.audioTimePitchAlgorithm = .spectral
+        // Pitch-preserving time stretch tuned for speech: .timeDomain keeps voice clear at
+        // higher rates while being far cheaper than .spectral (which can cause skips at 2×/3×,
+        // especially over wireless CarPlay).
+        item.audioTimePitchAlgorithm = .timeDomain
         let newPlayer = AVPlayer(playerItem: item)
         player = newPlayer
         playingMessageId = message.id
@@ -230,15 +231,11 @@ final class AudioPlayerService: ObservableObject {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK
-        // (Xcode 26 / Swift 6.2+). Gate on the compiler so this still builds on the
-        // older Xcode the CI runner uses, while staying deprecation-warning-free on
-        // the release toolchain.
-        #if compiler(>=6.2)
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
-        #else
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        #endif
+        // A2DP only — deliberately NOT allowBluetoothHFP. HFP is the telephone-grade
+        // (~8–16 kHz, bidirectional) Bluetooth profile; allowing it lets iOS route voice
+        // playback over the car's HFP/phone channel instead of the high-quality CarPlay/A2DP
+        // media path, which sounds far worse than other apps and is prone to skips.
+        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
         if isNearEar && !isExternalRouteActive {
             // Earpiece path: requires playAndRecord to override default speaker routing
             try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
@@ -276,7 +273,7 @@ final class AudioPlayerService: ObservableObject {
 
     private func updateRouteState() {
         let externalPorts: Set<AVAudioSession.Port> = [
-            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones
+            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones, .carAudio
         ]
         let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
             .contains { externalPorts.contains($0.portType) }
