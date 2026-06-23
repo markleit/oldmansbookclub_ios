@@ -270,6 +270,18 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         c.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
         c.nextTrackCommand.addTarget { [weak self] _ in self?.skip(1) ?? .commandFailed }
         c.previousTrackCommand.addTarget { [weak self] _ in self?.skip(-1) ?? .commandFailed }
+        // Scrubbing — voice only (text TTS isn't seekable).
+        c.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let self, let e = event as? MPChangePlaybackPositionCommandEvent,
+                  self.playQueue.indices.contains(self.playIndex) else { return .commandFailed }
+            let msg = self.playQueue[self.playIndex]
+            guard msg.type == .voice, let dur = msg.durationSeconds, dur > 0 else { return .commandFailed }
+            AudioPlayerService.shared.seek(to: e.positionTime / Double(dur))
+            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = e.positionTime
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            return .success
+        }
     }
 
     private func resume() {
