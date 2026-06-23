@@ -18,6 +18,10 @@
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <!-- App uses only exempt encryption (HTTPS / Apple system crypto), so declare it here to
+         skip the export-compliance prompt on every TestFlight/App Store upload. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UIApplicationSceneManifest</key>
