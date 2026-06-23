@@ -98,6 +98,10 @@ struct LibraryView: View {
                     onDeleted: { viewModel.bookDeleted(book) },
                     onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) }
                 )
+                // Distinct identity per book so a deep link that swaps one book for
+                // another at the same stack depth rebuilds the view (and its
+                // @StateObject BookViewModel) instead of reusing the stale one (#49).
+                .id(book.id)
             }
             .task {
                 await viewModel.load()
