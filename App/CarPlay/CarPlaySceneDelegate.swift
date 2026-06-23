@@ -22,6 +22,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // True while reading a text message aloud (TTS). During TTS the audio player is idle, so
     // the playback observer must not interpret that as "paused" and zero the Now Playing rate.
     private var isSpeakingTTS = false
+    // The utterance we're currently reading. didFinish/stopSpeaking can fire for a superseded
+    // utterance (e.g. when skipping), so we only auto-advance when the finished utterance is
+    // still the current one — otherwise a stale callback yanks playIndex forward.
+    private var currentUtterance: AVSpeechUtterance?
     // Per-template refresh closures, run when a list reappears (e.g. after backing out of
     // playback) so unread counts / unheard dots reflect what was just played.
     private var refreshers: [ObjectIdentifier: () async -> Void] = [:]
@@ -285,6 +289,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // Reached the end — leave the last message on the Now Playing screen (don't
             // blank it), just stop playback.
             isSpeakingTTS = false
+            currentUtterance = nil
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             synthesizer.stopSpeaking(at: .immediate)
             if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
@@ -298,6 +303,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         switch msg.type {
         case .voice:
             isSpeakingTTS = false
+            currentUtterance = nil
             updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
                              artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
             updateSkipButtons(voice: true)           // ±10s seek within the clip
@@ -312,8 +318,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             try? AVAudioSession.sharedInstance().setActive(true)
             // stopSpeaking(at:) isn't instantaneous; speaking synchronously right after it
             // drops the new utterance (e.g. when skipping text→text). Speak on the next tick.
+            currentUtterance = nil               // ignore the cancelled utterance's callback
             synthesizer.stopSpeaking(at: .immediate)
             let utterance = AVSpeechUtterance(string: "\(msg.senderName) says: \(body)")
+            currentUtterance = utterance
             DispatchQueue.main.async { [weak self] in self?.synthesizer.speak(utterance) }   // didFinish → advance
         default:
             advance()   // skip photo/video/unknown
@@ -327,13 +335,22 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func stopPlayback() {
         isSpeakingTTS = false
+        currentUtterance = nil
         AudioPlayerService.shared.stopAll()
         synthesizer.stopSpeaking(at: .immediate)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeakingTTS = false; self.advance() }
+        Task { @MainActor in
+            // Only the current utterance's natural completion should advance; a cancelled or
+            // superseded utterance's callback is ignored so it can't override a manual skip.
+            guard utterance === self.currentUtterance else { print("🚗CP didFinish(stale) ignored"); return }
+            print("🚗CP didFinish → advance")
+            self.currentUtterance = nil
+            self.isSpeakingTTS = false
+            self.advance()
+        }
     }
 
     // MARK: - Now Playing + transport controls
@@ -426,6 +443,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         print("🚗CP skip offset=\(offset) from=\(playIndex) target=\(target) count=\(playQueue.count)")
         guard playQueue.indices.contains(target) else { return .noSuchContent }
+        currentUtterance = nil
         AudioPlayerService.shared.stopAll(deactivateSession: false)
         synthesizer.stopSpeaking(at: .immediate)
         playIndex = target
