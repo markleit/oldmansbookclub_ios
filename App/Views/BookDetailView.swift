@@ -568,7 +568,10 @@ struct MessageRow: View {
                     if isMe {
                         Button {
                             editText = body
-                            showEditSheet = true
+                            // Defer presenting until the context menu has dismissed —
+                            // presenting a sheet during the menu's dismissal can render
+                            // it blank in Release builds (#50).
+                            DispatchQueue.main.async { showEditSheet = true }
                         } label: {
                             Label("Edit", systemImage: "pencil")
                         }
@@ -866,9 +869,18 @@ struct EditMessageSheet: View {
                             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
-                .onAppear { focused = true }
+                // Defer focus past the initial layout pass. Forcing @FocusState in a
+                // bare .onAppear raises the keyboard mid-layout which, with a resizing
+                // detent, can thrash the keyboard in an infinite show/hide loop in
+                // Release builds (#50).
+                .task {
+                    try? await Task.sleep(for: .milliseconds(50))
+                    focused = true
+                }
         }
-        .presentationDetents([.medium])
+        // .large (full height) instead of .medium: a medium sheet resizes when the
+        // keyboard appears, which is what fed the keyboard loop above (#50).
+        .presentationDetents([.large])
     }
 }
 
@@ -881,6 +893,7 @@ struct VoiceMessageBubble: View {
     @ObservedObject private var audio = AudioPlayerService.shared
     @ObservedObject private var store = PlaybackProgressStore.shared
     @GestureState private var isScrubbing = false
+    @State private var showSpeedSlider = false
     @State private var showTranscription = false
     @State private var transcription: String?
     @State private var isTranscribing = false
@@ -955,6 +968,7 @@ struct VoiceMessageBubble: View {
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
         .animation(.easeInOut(duration: 0.25), value: isPlaying)
         .animation(.easeInOut(duration: 0.2), value: showTranscription)
+        .onChange(of: isPlaying) { if !$0 { showSpeedSlider = false } }   // close popover when playback ends
         // NOTE: deliberately no onDisappear-pause here. The bubble disappears whenever
         // it scrolls out of the LazyVStack, and pausing on that stopped playback when
         // the user scrolled away. Stopping playback on leaving the chat is handled by
@@ -1043,9 +1057,13 @@ struct VoiceMessageBubble: View {
             }
 
             if isPlaying {
-                Button { audio.cycleRate() } label: {
+                Button { showSpeedSlider.toggle() } label: {
                     BunnySpeedIcon(speed: audio.playbackRate)
                         .frame(width: 44, height: 44)
+                }
+                .popover(isPresented: $showSpeedSlider) {
+                    VerticalSpeedSlider(rate: audio.playbackRate) { audio.setRate($0) }
+                        .popoverCompactAdaptation()
                 }
 
                 RoutePickerView(tintColor: .white)   // only shown while playing (black bubble)
@@ -1336,33 +1354,112 @@ struct FullScreenVideoView: View {
 
 // MARK: - Bunny Speed Icon
 
+// Compact speed indicator for the bunny button: a hare plus the current multiplier, so a
+// continuous rate (e.g. 2.25×) reads clearly. Tapping the button opens SpeedSliderPopup.
 struct BunnySpeedIcon: View {
     let speed: Float
 
-    private var lineCount: Int {
-        switch speed {
-        case 1.0: return 0
-        case 1.5: return 1
-        case 2.0: return 2
-        case 3.0: return 3
-        default:  return 4
+    var body: some View {
+        VStack(spacing: 1) {
+            Image(systemName: speed <= 1.0 ? "hare" : "hare.fill")
+                .font(.system(size: 16, weight: speed >= 3.0 ? .bold : .regular))
+            Text(Self.label(speed))
+                .font(.system(size: 9, weight: .semibold))
+                .monospacedDigit()
         }
     }
 
-    var body: some View {
-        HStack(spacing: 2) {
-            VStack(alignment: .trailing, spacing: 2) {
-                ForEach(0..<4, id: \.self) { i in
-                    Capsule()
-                        .frame(width: CGFloat(8 - i * 1), height: 2)
-                        .opacity(i < lineCount ? (1.0 - Double(i) * 0.18) : 0)
-                }
-            }
-            .frame(width: 12)
+    // 1.0 → "1×", 2.0 → "2×", 2.25 → "2.25×" (trailing zeros dropped).
+    static func label(_ speed: Float) -> String {
+        let r = (speed * 100).rounded() / 100
+        return r == r.rounded() ? "\(Int(r))×" : String(format: "%g×", r)
+    }
+}
 
-            Image(systemName: speed <= 1.0 ? "hare" : "hare.fill")
-                .font(.system(size: 14 + CGFloat(lineCount) * 2,
-                              weight: speed >= 4.0 ? .bold : .regular))
+// Vertical 1–4× speed slider shown in a popover anchored to the bunny (hare = faster on top,
+// tortoise = slower at the bottom). Snaps to 0.25× with a light haptic and applies the rate
+// live (persisted via AudioPlayerService). Custom track for reliable vertical drag.
+struct VerticalSpeedSlider: View {
+    let rate: Float
+    let onChange: (Float) -> Void
+
+    @State private var value: Double
+    private let haptic = UISelectionFeedbackGenerator()
+
+    init(rate: Float, onChange: @escaping (Float) -> Void) {
+        self.rate = rate
+        self.onChange = onChange
+        _value = State(initialValue: Double(rate))
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "hare.fill").font(.system(size: 13))
+            Text(BunnySpeedIcon.label(Float(value)))
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+            SpeedTrack(value: $value) { snapped in
+                haptic.selectionChanged()
+                onChange(Float(snapped))
+            }
+            .frame(width: 40, height: 150)
+            Image(systemName: "tortoise.fill").font(.system(size: 13))
+        }
+        .foregroundColor(.secondary)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 16)
+        .onAppear { haptic.prepare() }
+    }
+}
+
+// Vertical track for the speed slider. Split out (with explicit numeric types) because the
+// mixed CGFloat/Double math in one large view body times out the Xcode 16.4 type-checker.
+private struct SpeedTrack: View {
+    @Binding var value: Double
+    let onSnap: (Double) -> Void   // fired when the snapped (0.25×) value changes
+
+    var body: some View {
+        GeometryReader { geo in
+            let h: CGFloat = geo.size.height
+            let frac: CGFloat = CGFloat((value - 1.0) / 3.0)   // 1–4× → 0–1
+            ZStack(alignment: .bottom) {
+                Capsule().fill(Color.secondary.opacity(0.25)).frame(width: 6)
+                Capsule().fill(Color.accentColor).frame(width: 6, height: h * frac)
+                thumb.offset(y: -(h - 24) * frac)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .gesture(drag(height: h))
+        }
+    }
+
+    private var thumb: some View {
+        Circle().fill(Color(.systemBackground))
+            .frame(width: 24, height: 24)
+            .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+    }
+
+    private func drag(height h: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0).onChanged { v in
+            let f: Double = max(0, min(1, 1 - Double(v.location.y / h)))   // top = fast
+            let snapped: Double = ((1.0 + f * 3.0) * 4).rounded() / 4      // nearest 0.25×
+            if snapped != value {
+                value = snapped
+                onSnap(snapped)
+            }
+        }
+    }
+}
+
+extension View {
+    // Render a popover as a true anchored popover on iPhone too (iOS 16.4+); on older OSes
+    // it falls back to the default sheet adaptation.
+    @ViewBuilder func popoverCompactAdaptation() -> some View {
+        if #available(iOS 16.4, *) {
+            self.presentationCompactAdaptation(.popover)
+        } else {
+            self
         }
     }
 }
