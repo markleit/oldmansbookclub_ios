@@ -25,6 +25,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Re-render the open message list as on-device transcriptions land (so voice rows fill
     // in their transcripts consistently instead of some showing and some not).
     private var transcriptObserver: AnyCancellable?
+    // The phone's AudioPlayerService doesn't publish play/pause state to the system Now
+    // Playing center, so CarPlay's transport can fall out of sync when you start/stop on the
+    // phone (showing paused while audio plays → needing a double-press). Observe the shared
+    // player and keep the Now Playing rate (and title) in sync from the CarPlay side.
+    private var playbackObserver: AnyCancellable?
 
     // MARK: - Scene lifecycle
 
@@ -36,12 +41,33 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
         root.emptyViewTitleVariants = ["Loading…"]
         interfaceController.setRootTemplate(root, animated: false, completion: nil)
+        playbackObserver = AudioPlayerService.shared.$playingMessageId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] id in self?.syncNowPlayingState(playingId: id) }
         Task { await loadClubs(into: root) }
+    }
+
+    // Mirror the shared player's play/pause state (and, if it's a queued message, its title)
+    // into the system Now Playing center so CarPlay's transport stays in sync no matter which
+    // surface started playback. nil id = paused/stopped → rate 0.
+    private func syncNowPlayingState(playingId: UUID?) {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyPlaybackRate] = (playingId != nil) ? 1.0 : 0.0
+        if let id = playingId {
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+            if let msg = playQueue.first(where: { $0.id == id }) {
+                info[MPMediaItemPropertyTitle] = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
+                info[MPMediaItemPropertyArtist] = msg.senderName
+                info[MPMediaItemPropertyPlaybackDuration] = Double(msg.durationSeconds ?? 0)
+            }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didDisconnectInterfaceController interfaceController: CPInterfaceController) {
         self.interfaceController = nil
+        playbackObserver = nil
     }
 
     // Back out of Now Playing → stop playback.
