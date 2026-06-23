@@ -19,6 +19,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var playIndex = 0
     private var currentBookId: UUID?
     private var remoteCommandsConfigured = false
+    // True while reading a text message aloud (TTS). During TTS the audio player is idle, so
+    // the playback observer must not interpret that as "paused" and zero the Now Playing rate.
+    private var isSpeakingTTS = false
     // Per-template refresh closures, run when a list reappears (e.g. after backing out of
     // playback) so unread counts / unheard dots reflect what was just played.
     private var refreshers: [ObjectIdentifier: () async -> Void] = [:]
@@ -47,21 +50,69 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         Task { await loadClubs(into: root) }
     }
 
-    // Mirror the shared player's play/pause state (and, if it's a queued message, its title)
-    // into the system Now Playing center so CarPlay's transport stays in sync no matter which
-    // surface started playback. nil id = paused/stopped → rate 0.
+    // Mirror the shared player's state into the CarPlay Now Playing screen, and — when the
+    // phone starts a message we're not already showing — jump to and follow it (loading its
+    // book if it's a different chat). Phone audio is always a voice message (text is never
+    // audio), so adoption only ever deals with voice clips.
     private func syncNowPlayingState(playingId: UUID?) {
-        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
-        info[MPNowPlayingInfoPropertyPlaybackRate] = (playingId != nil) ? 1.0 : 0.0
-        if let id = playingId {
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
-            if let msg = playQueue.first(where: { $0.id == id }) {
-                info[MPMediaItemPropertyTitle] = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
-                info[MPMediaItemPropertyArtist] = msg.senderName
-                info[MPMediaItemPropertyPlaybackDuration] = Double(msg.durationSeconds ?? 0)
+        guard let id = playingId else {
+            // Player went idle. If we're reading text aloud (TTS), the player is legitimately
+            // empty — don't stomp the "playing" state. Otherwise mark Now Playing paused.
+            if isSpeakingTTS { return }
+            if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
+                info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
+            return
         }
+        // Already pointed at this message (CarPlay-initiated or already adopted) → keep fresh.
+        if playQueue.indices.contains(playIndex), playQueue[playIndex].id == id { bumpNowPlayingRate(); return }
+        // Same book, phone advanced to another loaded message → follow it.
+        if let idx = playQueue.firstIndex(where: { $0.id == id }) { playIndex = idx; reflectAdopted(); return }
+        // Different chat — adopt that book's queue so CarPlay jumps to and follows it.
+        guard let bookId = AudioPlayerService.shared.playingBookId else { bumpNowPlayingRate(); return }
+        Task { await adoptExternalPlayback(messageId: id, bookId: bookId) }
+    }
+
+    private func bumpNowPlayingRate() {
+        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    // Show the now-current queue entry (started elsewhere) on CarPlay's Now Playing screen
+    // without restarting it, and surface that screen if it isn't already up.
+    private func reflectAdopted() {
+        guard playQueue.indices.contains(playIndex) else { return }
+        let msg = playQueue[playIndex]
+        updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
+                         artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
+        updateSkipButtons(voice: true)
+        configureRemoteCommands()
+        if interfaceController?.topTemplate !== CPNowPlayingTemplate.shared {
+            interfaceController?.pushTemplate(CPNowPlayingTemplate.shared, animated: true, completion: nil)
+        }
+    }
+
+    // Load the book a phone-started message lives in, adopt it as our queue, and take over the
+    // completion→advance driver so the CarPlay queue keeps moving from here.
+    private func adoptExternalPlayback(messageId: UUID, bookId: UUID) async {
+        let messages = (try? await APIClient.shared.getMessages(bookId: bookId)) ?? []
+        for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
+        let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }
+        guard let idx = active.firstIndex(where: { $0.id == messageId }) else { return }
+        playQueue = active
+        playIndex = idx
+        currentBookId = bookId
+        AudioPlayerService.shared.nextToPlay = nil
+        AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
+            if let bid = self?.currentBookId {
+                Task { try? await APIClient.shared.markHeard(bookId: bid, messageId: completedId) }
+            }
+            self?.advance()
+        }
+        reflectAdopted()
     }
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
@@ -231,6 +282,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard playQueue.indices.contains(playIndex) else {
             // Reached the end — leave the last message on the Now Playing screen (don't
             // blank it), just stop playback.
+            isSpeakingTTS = false
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             synthesizer.stopSpeaking(at: .immediate)
             if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
@@ -242,12 +294,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let msg = playQueue[playIndex]
         switch msg.type {
         case .voice:
+            isSpeakingTTS = false
             updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
                              artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
             updateSkipButtons(voice: true)           // ±10s seek within the clip
-            AudioPlayerService.shared.toggle(message: msg)            // completion → advance
+            AudioPlayerService.shared.toggle(message: msg, bookId: currentBookId)      // completion → advance
         case .text:
             let body = msg.body ?? ""
+            isSpeakingTTS = true                      // before stopAll fires the observer
             updateNowPlaying(title: body, artist: msg.senderName, duration: 0)
             updateSkipButtons(voice: false)          // TTS isn't seekable
             AudioPlayerService.shared.stopAll(deactivateSession: false)
@@ -266,13 +320,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func stopPlayback() {
+        isSpeakingTTS = false
         AudioPlayerService.shared.stopAll()
         synthesizer.stopSpeaking(at: .immediate)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.advance() }
+        Task { @MainActor in self.isSpeakingTTS = false; self.advance() }
     }
 
     // MARK: - Now Playing + transport controls

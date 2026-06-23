@@ -7,6 +7,9 @@ final class AudioPlayerService: ObservableObject {
     static let shared = AudioPlayerService()
 
     @Published private(set) var playingMessageId: UUID?
+    // The book the currently-playing message belongs to. Published purely so other surfaces
+    // (CarPlay) can locate the right chat to mirror — does not affect phone playback behavior.
+    @Published private(set) var playingBookId: UUID?
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
@@ -44,10 +47,11 @@ final class AudioPlayerService: ObservableObject {
         updateRouteState()
     }
 
-    func toggle(message: Message) {
+    func toggle(message: Message, bookId: UUID? = nil) {
         if playingMessageId == message.id {
             pause()
         } else {
+            playingBookId = bookId
             play(message: message)
         }
     }
@@ -63,6 +67,7 @@ final class AudioPlayerService: ObservableObject {
         isUserInitiatedPause = true
         player?.pause()
         playingMessageId = nil
+        playingBookId = nil
         timerCancellable?.cancel()
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
@@ -166,6 +171,7 @@ final class AudioPlayerService: ObservableObject {
         player?.pause()
         player = nil
         playingMessageId = nil
+        playingBookId = nil
         progress = 0
         currentSeconds = 0
         isBuffering = false
