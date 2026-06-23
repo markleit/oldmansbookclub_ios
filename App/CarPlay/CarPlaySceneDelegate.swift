@@ -14,6 +14,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var interfaceController: CPInterfaceController?
     private let synthesizer = AVSpeechSynthesizer()
 
+    // Now Playing album art (#55) — the app icon, built once and reused for every track.
+    private static let nowPlayingArtwork: MPMediaItemArtwork? = {
+        guard let img = UIImage(named: "AppLogo") else { return nil }
+        return MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+    }()
+
     // Continuous playback queue (mixed types, chronological).
     private var playQueue: [Message] = []
     private var playIndex = 0
@@ -394,6 +400,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             MPMediaItemPropertyArtist: artist,
             MPNowPlayingInfoPropertyPlaybackRate: 1.0
         ]
+        if let art = Self.nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = art }
         if duration > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = duration
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
