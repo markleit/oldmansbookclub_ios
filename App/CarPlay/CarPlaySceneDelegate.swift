@@ -218,10 +218,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .voice:
             updateNowPlaying(title: TranscriptStore.shared.text(for: msg.id) ?? "Voice message",
                              artist: msg.senderName, duration: Double(msg.durationSeconds ?? 0))
+            updateSkipButtons(voice: true)           // ±10s seek within the clip
             AudioPlayerService.shared.toggle(message: msg)            // completion → advance
         case .text:
             let body = msg.body ?? ""
             updateNowPlaying(title: body, artist: msg.senderName, duration: 0)
+            updateSkipButtons(voice: false)          // TTS isn't seekable
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
             try? AVAudioSession.sharedInstance().setActive(true)
@@ -259,6 +261,35 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             info[MPMediaItemPropertyPlaybackDuration] = duration
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
         }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    // CarPlay has no draggable scrubber (Apple blocks free scrubbing while driving), so for
+    // voice messages we surface ±10s skip buttons in the Now Playing custom button row. Text
+    // (TTS) isn't seekable, so we clear them there.
+    private func updateSkipButtons(voice: Bool) {
+        guard voice else {
+            CPNowPlayingTemplate.shared.updateNowPlayingButtons([])
+            return
+        }
+        let back = CPNowPlayingImageButton(image: UIImage(systemName: "gobackward.10") ?? UIImage()) { [weak self] _ in
+            self?.seekRelative(-10)
+        }
+        let fwd = CPNowPlayingImageButton(image: UIImage(systemName: "goforward.10") ?? UIImage()) { [weak self] _ in
+            self?.seekRelative(10)
+        }
+        CPNowPlayingTemplate.shared.updateNowPlayingButtons([back, fwd])
+    }
+
+    // Seek the currently-playing voice message by a relative number of seconds (clamped).
+    private func seekRelative(_ delta: Double) {
+        guard playQueue.indices.contains(playIndex) else { return }
+        let msg = playQueue[playIndex]
+        guard msg.type == .voice, let dur = msg.durationSeconds, dur > 0 else { return }
+        let target = min(max(Double(AudioPlayerService.shared.currentSeconds) + delta, 0), Double(dur))
+        AudioPlayerService.shared.seek(to: target / Double(dur))
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = target
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
