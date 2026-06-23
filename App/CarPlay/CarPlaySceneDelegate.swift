@@ -425,7 +425,40 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let fwd = CPNowPlayingImageButton(image: UIImage(systemName: "goforward.10") ?? UIImage()) { [weak self] _ in
             self?.seekRelative(10)
         }
-        CPNowPlayingTemplate.shared.updateNowPlayingButtons([back, fwd])
+        // Playback-speed button (#54): tap to cycle 1× → 1.5× → 2× → 3× → 1×. A slider isn't
+        // appropriate while driving, so it's a tap-to-cycle button showing the current rate.
+        let rate = CPNowPlayingImageButton(image: rateButtonImage(AudioPlayerService.shared.playbackRate)) { [weak self] _ in
+            self?.cycleCarPlayRate()
+        }
+        CPNowPlayingTemplate.shared.updateNowPlayingButtons([back, fwd, rate])
+    }
+
+    private let carPlayRates: [Float] = [1.0, 1.5, 2.0, 3.0]
+
+    // Advance to the next speed in the cycle, apply it (shared with the phone), and rebuild the
+    // buttons so the rate button shows the new value.
+    private func cycleCarPlayRate() {
+        let cur = AudioPlayerService.shared.playbackRate
+        let idx = carPlayRates.firstIndex(where: { abs($0 - cur) < 0.01 }) ?? -1
+        AudioPlayerService.shared.setRate(carPlayRates[(idx + 1) % carPlayRates.count])
+        updateSkipButtons(voice: true)
+    }
+
+    // Render the current rate ("1×", "1.5×", "2×"…) as a template image for the CarPlay button.
+    private func rateButtonImage(_ rate: Float) -> UIImage {
+        let text = BunnySpeedIcon.label(rate) as NSString
+        let size = CGSize(width: 44, height: 44)
+        let para = NSMutableParagraphStyle(); para.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: text.length > 2 ? 15 : 19, weight: .semibold),
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: para
+        ]
+        let img = UIGraphicsImageRenderer(size: size).image { _ in
+            let h = text.size(withAttributes: attrs).height
+            text.draw(in: CGRect(x: 0, y: (size.height - h) / 2, width: size.width, height: h), withAttributes: attrs)
+        }
+        return img.withRenderingMode(.alwaysTemplate)
     }
 
     // Seek the currently-playing voice message by a relative number of seconds (clamped).
