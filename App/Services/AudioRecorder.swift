@@ -25,9 +25,9 @@ final class AudioRecorder {
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
             AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1,
-            // 24 kbps (~180 KB/min): ~25% smaller than 32 kbps for faster sends on
-            // weak networks, with essentially imperceptible quality loss on speech.
-            AVEncoderBitRateKey: 24000,
+            // 32 kbps: reverted from 24 kbps (#48) — the smaller files weren't worth the
+            // audible quality drop on voice messages.
+            AVEncoderBitRateKey: 32000,
         ]
 
         let newRecorder = try AVAudioRecorder(url: url, settings: settings)
