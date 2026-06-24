@@ -1,10 +1,16 @@
 import AVFoundation
 import Combine
 import UIKit
+import OSLog
 
 @MainActor
 final class AudioPlayerService: ObservableObject {
     static let shared = AudioPlayerService()
+
+    // Persistent audio diagnostics (read in Console.app, category "audio"). Unlike print(),
+    // os_log survives without the debugger attached — needed to capture battery-mode skips.
+    private static let audioLog = Logger(subsystem: "com.example.oldmansbookclub", category: "audio")
+    private static func alog(_ msg: String) { audioLog.notice("\(msg, privacy: .public)") }
 
     @Published private(set) var playingMessageId: UUID?
     // The book the currently-playing message belongs to. Published purely so other surfaces
@@ -145,7 +151,7 @@ final class AudioPlayerService: ObservableObject {
             isCached = false
             AudioCache.shared.prefetch(url)
         }
-        print("🔊 play cached=\(isCached) route=\(Self.routeDesc())")
+        Self.alog("🔊 play cached=\(isCached) route=\(Self.routeDesc())")
         let item = AVPlayerItem(url: playURL)
         // Pitch-preserving time stretch tuned for speech: .timeDomain keeps voice clear at
         // higher rates while being far cheaper than .spectral (which can cause skips at 2×/3×,
@@ -175,7 +181,7 @@ final class AudioPlayerService: ObservableObject {
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
-                print("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
+                Self.alog("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
@@ -252,7 +258,7 @@ final class AudioPlayerService: ObservableObject {
             try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
         }
         try? session.setActive(true)
-        print("🔊 activateSession nearEar=\(isNearEar) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
+        Self.alog("🔊 activateSession nearEar=\(isNearEar) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
     }
 
     // Describes the current audio output route (port types) — for diagnosing CarPlay routing.
@@ -293,7 +299,7 @@ final class AudioPlayerService: ObservableObject {
             .contains { externalPorts.contains($0.portType) }
         let was = isExternalRouteActive
         isExternalRouteActive = hasExternal
-        print("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) changed=\(was != hasExternal) playing=\(playingMessageId != nil)")
+        Self.alog("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) changed=\(was != hasExternal) playing=\(playingMessageId != nil)")
         // Only reconfigure the session when the route's external-ness actually changes. Wireless
         // CarPlay fires frequent route-change notifications; re-activating (setCategory+setActive)
         // on each one disrupts the audio link and causes skips on battery (Spotify etc. configure
