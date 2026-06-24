@@ -142,10 +142,17 @@ final class AudioPlayerService: ObservableObject {
 
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
-        // Keep the audio session active across messages (don't deactivate) — deactivating +
-        // reactivating per message churns the wireless CarPlay route and causes skips.
-        stopCurrentPlayer(deactivateSession: false)
-        guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+        guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else {
+            stopCurrentPlayer(deactivateSession: false); return
+        }
+        // Reuse ONE AVPlayer across messages (replaceCurrentItem) instead of building a new one
+        // per message. A fresh AVPlayer re-handshakes the wireless CarPlay audio transport
+        // (airplayd) — ~500ms during which airplayd has no source and skips. Reusing the player
+        // keeps that stream alive. Tear down the outgoing item's observers/timer but NOT the
+        // player itself.
+        timerCancellable?.cancel()
+        bufferCancellable?.cancel()
+        isUserInitiatedPause = false
 
         // Resume from the saved position. Replaying a fully-played message starts over
         // from the beginning but stays "heard" (green is sticky). fromStart forces the
@@ -172,32 +179,38 @@ final class AudioPlayerService: ObservableObject {
             isCached = false
             AudioCache.shared.prefetch(url)
         }
-        Self.alog("🔊 play cached=\(isCached) route=\(Self.routeDesc())")
         let item = AVPlayerItem(url: playURL)
         // Pitch-preserving time stretch tuned for speech: .timeDomain keeps voice clear at
         // higher rates while being far cheaper than .spectral (which can cause skips at 2×/3×,
         // especially over wireless CarPlay).
         item.audioTimePitchAlgorithm = .timeDomain
-        let newPlayer = AVPlayer(playerItem: item)
-        player = newPlayer
+        let reusing = player != nil
+        let activePlayer: AVPlayer
+        if let existing = player {
+            existing.replaceCurrentItem(with: item)
+            activePlayer = existing
+        } else {
+            activePlayer = AVPlayer(playerItem: item)
+            player = activePlayer
+        }
+        Self.alog("🔊 play cached=\(isCached) reuse=\(reusing) route=\(Self.routeDesc())")
         playingMessageId = message.id
         playingBookId = bookId
-        isUserInitiatedPause = false
         playingDurationSeconds = message.durationSeconds ?? 0
         let dur = Double(message.durationSeconds ?? 0)
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
         isBuffering = true
         if resume > 0.5 {
-            newPlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
+            activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
         }
         activateAudioSession()
         enableProximityMonitoring()
-        newPlayer.rate = playbackRate
+        activePlayer.rate = playbackRate
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
         var hasStartedPlaying = false
-        bufferCancellable = newPlayer.publisher(for: \.timeControlStatus)
+        bufferCancellable = activePlayer.publisher(for: \.timeControlStatus)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 guard let self else { return }
@@ -254,19 +267,17 @@ final class AudioPlayerService: ObservableObject {
         if current >= duration - 0.05 {
             let completedId = playingMessageId
             saveCurrentPosition(completed: true)   // mark fully played (green)
-            // Keep the audio session active across the auto-advance boundary — deactivating it
-            // here (then reactivating for the next message) churns the wireless CarPlay route
-            // and causes the play/stop stutter + skips. This is the real per-message churn
-            // (auto-advance runs through here, not play()).
-            stopCurrentPlayer(deactivateSession: false)
+            // Do NOT tear down the player here — the next message reuses it (replaceCurrentItem)
+            // to keep the wireless CarPlay transport stream alive across the boundary.
             if let id = completedId {
-                onPlaybackCompleted?(id)        // side effects (mark-heard, UI); may start next
-                if let next = nextToPlay?(id) { // continuous playback / "play all"
-                    play(message: next)
+                onPlaybackCompleted?(id)        // CarPlay advance() may start the next (reuses player)
+                if playingMessageId == id, let next = nextToPlay?(id) {
+                    play(message: next)         // phone continuous — reuses the player
                 }
             }
-            // Nothing started playing (end of queue) — release the session now.
-            if playingMessageId == nil {
+            // Nothing advanced (end of queue) — now tear down + release the session.
+            if playingMessageId == completedId {
+                stopCurrentPlayer(deactivateSession: false)
                 deactivateAudioSession()
             }
         }
