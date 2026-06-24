@@ -288,7 +288,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 let heard = msg.senderId == me || PlaybackProgressStore.shared.isCompleted(msg.id)
                 let body = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
                 item = CPListItem(text: (heard ? "" : "● ") + "🎤 " + body, detailText: sub)
-                TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
+                // TEMP (skip investigation): eager on-device transcription of every row is a
+                // CPU/IO burst that starves audio playback on battery → skips. Disabled to
+                // confirm; if this fixes it, re-add deferred/serial transcription that pauses
+                // while audio is playing.
+                // TranscriptStore.shared.transcribeIfNeeded(messageId: msg.id, mediaUrlString: msg.mediaUrl)
                 item.handler = { [weak self] _, completion in
                     self?.playFrom(msg.id, messages: active, bookId: book.id); completion()
                 }
