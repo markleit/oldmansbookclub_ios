@@ -177,10 +177,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // MARK: - Clubs → Books
 
     private func loadClubs(into template: CPListTemplate) async {
+        // Re-run on reappear so signing in/out on the phone is reflected (e.g. signed out →
+        // shows the sign-in message; signed back in → shows clubs).
+        refreshers[ObjectIdentifier(template)] = { [weak self, weak template] in
+            guard let self, let template else { return }
+            await self.loadClubs(into: template)
+        }
         let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
         let books = (try? await APIClient.shared.getMyBooks()) ?? []
         guard !clubs.isEmpty else {
-            template.emptyViewSubtitleVariants = ["Sign in on your phone to see your clubs."]
+            // Set BOTH title + subtitle (otherwise the title stays "Loading…" → looks blank /
+            // stuck). Distinguish genuinely signed-out from signed-in-but-no-clubs.
+            if TokenStore.shared.token == nil {
+                template.emptyViewTitleVariants = ["Not signed in"]
+                template.emptyViewSubtitleVariants = ["Open the Old Man's Book Club app on your phone and sign in."]
+            } else {
+                template.emptyViewTitleVariants = ["No clubs yet"]
+                template.emptyViewSubtitleVariants = ["Join or create a club in the app on your phone."]
+            }
             template.updateSections([]); return
         }
         // Single club → skip the chooser, go straight to its books (refresh on reappear).
