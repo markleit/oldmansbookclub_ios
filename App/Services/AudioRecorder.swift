@@ -23,12 +23,11 @@ final class AudioRecorder {
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            // EXPERIMENT (wireless CarPlay skip): standard 44.1 kHz instead of 16 kHz — a
-            // non-standard low rate gets upsampled for CarPlay (~48 kHz) and can glitch through
-            // the wireless link. Record a NEW message and test only that one to isolate it.
-            AVSampleRateKey: 44100,
+            AVSampleRateKey: 16000,
             AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64000,
+            // 32 kbps: reverted from 24 kbps (#48) — the smaller files weren't worth the
+            // audible quality drop on voice messages.
+            AVEncoderBitRateKey: 32000,
         ]
 
         let newRecorder = try AVAudioRecorder(url: url, settings: settings)

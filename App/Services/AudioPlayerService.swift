@@ -250,12 +250,21 @@ final class AudioPlayerService: ObservableObject {
         if current >= duration - 0.05 {
             let completedId = playingMessageId
             saveCurrentPosition(completed: true)   // mark fully played (green)
-            stopCurrentPlayer()
+            // Keep the audio session active across the auto-advance boundary — deactivating it
+            // here (then reactivating for the next message) churns the wireless CarPlay route
+            // and causes the play/stop stutter + skips. This is the real per-message churn
+            // (auto-advance runs through here, not play()).
+            stopCurrentPlayer(deactivateSession: false)
             if let id = completedId {
-                onPlaybackCompleted?(id)        // side effects (mark-heard, UI)
+                onPlaybackCompleted?(id)        // side effects (mark-heard, UI); may start next
                 if let next = nextToPlay?(id) { // continuous playback / "play all"
                     play(message: next)
                 }
+            }
+            // Nothing started playing (end of queue) — release the session now.
+            if playingMessageId == nil {
+                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                audioSessionActive = false
             }
         }
     }
