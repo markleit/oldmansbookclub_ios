@@ -140,6 +140,20 @@ final class AudioPlayerService: ObservableObject {
         activateAudioSession()
     }
 
+    // Pause the AVPlayer but KEEP it (and the session) alive — for surfaces that briefly take
+    // over the output (CarPlay TTS). Destroying the player (stopAll) makes the next voice
+    // message build a fresh AVPlayer, which re-handshakes the wireless transport (airplayd) and
+    // stutters. Pausing keeps the stream connected so the next voice reuses it seamlessly.
+    func suspendPlayerKeepingSession() {
+        saveCurrentPosition(completed: false)
+        player?.pause()
+        playingMessageId = nil
+        playingBookId = nil
+        timerCancellable?.cancel()
+        isBuffering = false
+        Self.alog("🔊 suspend keepPlayer=\(player != nil)")
+    }
+
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else {
@@ -231,6 +245,7 @@ final class AudioPlayerService: ObservableObject {
     }
 
     private func stopCurrentPlayer(deactivateSession: Bool = true) {
+        Self.alog("🔊 destroyPlayer deactivate=\(deactivateSession) hadPlayer=\(player != nil)")
         isUserInitiatedPause = true
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
