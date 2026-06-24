@@ -12,6 +12,12 @@ final class AudioPlayerService: ObservableObject {
     private static let audioLog = Logger(subsystem: "com.example.oldmansbookclub", category: "audio")
     private static func alog(_ msg: String) { audioLog.notice("\(msg, privacy: .public)") }
 
+    // AVAudioSession setCategory/setActive do synchronous IPC with the audio daemon. On the
+    // main thread iOS flags that as a performance antipattern ("non-deterministic delays"),
+    // and it can stall the CarPlay scene enough to drop the connection (audio skips). Run all
+    // session IPC on a dedicated serial queue (serial = ordering preserved) off the main thread.
+    private static let sessionQueue = DispatchQueue(label: "com.example.oldmansbookclub.audiosession")
+
     @Published private(set) var playingMessageId: UUID?
     // The book the currently-playing message belongs to. Published purely so other surfaces
     // (CarPlay) can locate the right chat to mirror — does not affect phone playback behavior.
@@ -90,8 +96,7 @@ final class AudioPlayerService: ObservableObject {
         timerCancellable?.cancel()
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        audioSessionActive = false
+        deactivateAudioSession()
     }
 
     // Persist the playing message's position so it can be resumed later. `completed`
@@ -226,8 +231,7 @@ final class AudioPlayerService: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
         if deactivateSession {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            audioSessionActive = false
+            deactivateAudioSession()
         }
     }
 
@@ -263,36 +267,44 @@ final class AudioPlayerService: ObservableObject {
             }
             // Nothing started playing (end of queue) — release the session now.
             if playingMessageId == nil {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                audioSessionActive = false
+                deactivateAudioSession()
             }
         }
     }
 
     private func activateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
         let useEarpiece = isNearEar && !isExternalRouteActive
         // Only (re)set the category on first activation or when the earpiece/speaker decision
         // changes. Re-setting it every message re-evaluates the route and churns the wireless
         // CarPlay link → skips. A2DP only — deliberately NOT allowBluetoothHFP (the
         // telephone-grade profile that made voice route over the car's phone channel).
+        // .default (not .spokenAudio) matches music apps; .spokenAudio is more dropout-prone.
         let reconfigured = !audioSessionActive || useEarpiece != sessionUsesEarpiece
-        if reconfigured {
-            let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
-            if useEarpiece {
-                try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
-            } else {
-                // .default (not .spokenAudio) for the speaker/BT/CarPlay path — matches how
-                // music apps (Spotify etc.) configure. .spokenAudio can make the system treat
-                // the stream as lower-priority spoken audio, which is more dropout-prone over
-                // wireless CarPlay.
-                try? session.setCategory(.playback, mode: .default, options: btOptions)
-            }
-            sessionUsesEarpiece = useEarpiece
-        }
-        try? session.setActive(true)
+        if reconfigured { sessionUsesEarpiece = useEarpiece }
         audioSessionActive = true
-        Self.alog("🔊 activateSession reconfigured=\(reconfigured) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
+        Self.alog("🔊 activateSession reconfigured=\(reconfigured) ext=\(isExternalRouteActive)")
+        // Session IPC off the main thread (see sessionQueue note) — setActive on main can stall
+        // the CarPlay scene and drop the connection.
+        Self.sessionQueue.async {
+            let session = AVAudioSession.sharedInstance()
+            if reconfigured {
+                let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+                if useEarpiece {
+                    try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
+                } else {
+                    try? session.setCategory(.playback, mode: .default, options: btOptions)
+                }
+            }
+            try? session.setActive(true)
+        }
+    }
+
+    // Deactivate the session off the main thread (same reason as activateAudioSession).
+    private func deactivateAudioSession() {
+        audioSessionActive = false
+        Self.sessionQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     // Describes the current audio output route (port types) — for diagnosing CarPlay routing.
