@@ -31,6 +31,11 @@ final class AudioPlayerService: ObservableObject {
         }
     }
     private var isExternalRouteActive: Bool = false
+    // Keep the audio session active across the whole continuous-playback queue (like Spotify)
+    // rather than tearing it down + rebuilding per message — per-message session churn
+    // destabilizes the wireless CarPlay route and causes intermittent skips.
+    private var audioSessionActive = false
+    private var sessionUsesEarpiece = false
 
     // Fired when a message finishes — for side effects (mark-heard, UI). Distinct from
     // auto-advance below.
@@ -86,6 +91,7 @@ final class AudioPlayerService: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audioSessionActive = false
     }
 
     // Persist the playing message's position so it can be resumed later. `completed`
@@ -123,7 +129,9 @@ final class AudioPlayerService: ObservableObject {
 
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
-        stopCurrentPlayer()                     // clears playingBookId — re-set it below
+        // Keep the audio session active across messages (don't deactivate) — deactivating +
+        // reactivating per message churns the wireless CarPlay route and causes skips.
+        stopCurrentPlayer(deactivateSession: false)
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
 
         // Resume from the saved position. Replaying a fully-played message starts over
@@ -211,6 +219,7 @@ final class AudioPlayerService: ObservableObject {
         disableProximityMonitoring()
         if deactivateSession {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            audioSessionActive = false
         }
     }
 
@@ -245,20 +254,24 @@ final class AudioPlayerService: ObservableObject {
 
     private func activateAudioSession() {
         let session = AVAudioSession.sharedInstance()
-        // A2DP only — deliberately NOT allowBluetoothHFP. HFP is the telephone-grade
-        // (~8–16 kHz, bidirectional) Bluetooth profile; allowing it lets iOS route voice
-        // playback over the car's HFP/phone channel instead of the high-quality CarPlay/A2DP
-        // media path, which sounds far worse than other apps and is prone to skips.
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
-        if isNearEar && !isExternalRouteActive {
-            // Earpiece path: requires playAndRecord to override default speaker routing
-            try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
-        } else {
-            // Speaker/BT path: playback gives full system volume (playAndRecord reduces gain)
-            try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
+        let useEarpiece = isNearEar && !isExternalRouteActive
+        // Only (re)set the category on first activation or when the earpiece/speaker decision
+        // changes. Re-setting it every message re-evaluates the route and churns the wireless
+        // CarPlay link → skips. A2DP only — deliberately NOT allowBluetoothHFP (the
+        // telephone-grade profile that made voice route over the car's phone channel).
+        let reconfigured = !audioSessionActive || useEarpiece != sessionUsesEarpiece
+        if reconfigured {
+            let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+            if useEarpiece {
+                try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
+            } else {
+                try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
+            }
+            sessionUsesEarpiece = useEarpiece
         }
         try? session.setActive(true)
-        Self.alog("🔊 activateSession nearEar=\(isNearEar) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
+        audioSessionActive = true
+        Self.alog("🔊 activateSession reconfigured=\(reconfigured) ext=\(isExternalRouteActive) -> route=\(Self.routeDesc())")
     }
 
     // Describes the current audio output route (port types) — for diagnosing CarPlay routing.
