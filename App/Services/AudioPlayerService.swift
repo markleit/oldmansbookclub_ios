@@ -16,7 +16,10 @@ final class AudioPlayerService: ObservableObject {
     // main thread iOS flags that as a performance antipattern ("non-deterministic delays"),
     // and it can stall the CarPlay scene enough to drop the connection (audio skips). Run all
     // session IPC on a dedicated serial queue (serial = ordering preserved) off the main thread.
-    private static let sessionQueue = DispatchQueue(label: "com.example.oldmansbookclub.audiosession")
+    // .userInitiated so a high-QoS (audio) thread doesn't block waiting on this lower-priority
+    // queue — the device trace flagged exactly that priority inversion, lining up with ~660ms
+    // source stalls (airplayd starvation).
+    private static let sessionQueue = DispatchQueue(label: "com.example.oldmansbookclub.audiosession", qos: .userInitiated)
 
     @Published private(set) var playingMessageId: UUID?
     // The book the currently-playing message belongs to. Published purely so other surfaces
