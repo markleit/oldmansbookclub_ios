@@ -265,7 +265,11 @@ final class AudioPlayerService: ObservableObject {
             if useEarpiece {
                 try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
             } else {
-                try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
+                // .default (not .spokenAudio) for the speaker/BT/CarPlay path — matches how
+                // music apps (Spotify etc.) configure. .spokenAudio can make the system treat
+                // the stream as lower-priority spoken audio, which is more dropout-prone over
+                // wireless CarPlay.
+                try? session.setCategory(.playback, mode: .default, options: btOptions)
             }
             sessionUsesEarpiece = useEarpiece
         }
