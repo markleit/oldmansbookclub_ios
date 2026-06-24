@@ -180,7 +180,10 @@ final class AudioPlayerService: ObservableObject {
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                         guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause else { return }
-                        self.activateAudioSession()
+                        // On external routes (CarPlay/BT) don't re-activate the whole session —
+                        // that disrupts the wireless audio link and cascades into skips. Just nudge
+                        // the player to resume; AVPlayer recovers from transient stalls on its own.
+                        if !self.isExternalRouteActive { self.activateAudioSession() }
                         self.player?.rate = self.playbackRate
                     }
                 }
@@ -288,8 +291,13 @@ final class AudioPlayerService: ObservableObject {
         ]
         let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
             .contains { externalPorts.contains($0.portType) }
+        let was = isExternalRouteActive
         isExternalRouteActive = hasExternal
-        print("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) playing=\(playingMessageId != nil)")
-        if playingMessageId != nil { activateAudioSession() }
+        print("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) changed=\(was != hasExternal) playing=\(playingMessageId != nil)")
+        // Only reconfigure the session when the route's external-ness actually changes. Wireless
+        // CarPlay fires frequent route-change notifications; re-activating (setCategory+setActive)
+        // on each one disrupts the audio link and causes skips on battery (Spotify etc. configure
+        // once and leave it).
+        if playingMessageId != nil && was != hasExternal { activateAudioSession() }
     }
 }
