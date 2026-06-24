@@ -365,8 +365,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             updateNowPlaying(title: body, artist: msg.senderName, duration: 0)
             updateSkipButtons(voice: false)          // TTS isn't seekable
             AudioPlayerService.shared.stopAll(deactivateSession: false)
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
-            try? AVAudioSession.sharedInstance().setActive(true)
+            // Use the shared session config (.default) so TTS doesn't leave the session on a
+            // different mode — that made voice messages played right after a text skip.
+            AudioPlayerService.shared.ensurePlaybackSession()
             // stopSpeaking(at:) isn't instantaneous; speaking synchronously right after it
             // drops the new utterance (e.g. when skipping text→text). Speak on the next tick.
             currentUtterance = nil               // ignore the cancelled utterance's callback

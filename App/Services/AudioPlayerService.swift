@@ -127,6 +127,14 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(duration * fraction)
     }
 
+    // Activate + configure the playback session (idempotent, same .default config as voice).
+    // For audio played outside the AVPlayer path — CarPlay TTS — so it doesn't leave the
+    // session on a different mode that the idempotent activate won't correct, which made
+    // voice messages played after a spoken text message skip.
+    func ensurePlaybackSession() {
+        activateAudioSession()
+    }
+
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
         // Keep the audio session active across messages (don't deactivate) — deactivating +
