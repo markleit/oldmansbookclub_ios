@@ -58,10 +58,18 @@ final class TokenStore {
             kSecAttrAccount: account
         ]
         if let value, let data = value.data(using: .utf8) {
-            let attributes: [CFString: Any] = [kSecValueData: data]
+            // AfterFirstUnlock so the token is readable while the device is locked (after the
+            // first unlock since boot) — e.g. CarPlay running in the background with the phone
+            // in your pocket. The default (WhenUnlocked) returns nil there, which made the app
+            // think the session was invalid and wipe the (still-valid) tokens → spurious logout.
+            let attributes: [CFString: Any] = [
+                kSecValueData: data,
+                kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock
+            ]
             if SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecItemNotFound {
                 var add = query
                 add[kSecValueData] = data
+                add[kSecAttrAccessible] = kSecAttrAccessibleAfterFirstUnlock
                 SecItemAdd(add as CFDictionary, nil)
             }
         } else {

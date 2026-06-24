@@ -786,7 +786,11 @@ final class APIClient {
         defer { refreshLock.unlock() }
         if let existing = refreshTask { return (existing, false) }
         let task = Task<RefreshOutcome, Never> { [weak self] in
-            guard let self, let rt = TokenStore.shared.refreshToken else { return .rejected }
+            // A nil refresh token here may be a transient Keychain read failure (e.g. device
+            // locked while CarPlay runs in the background), NOT a definitive rejection — treat
+            // it as transient so we never wipe a still-valid session. Only an explicit server
+            // 401/403 on /auth/refresh below is a true sign-out.
+            guard let self, let rt = TokenStore.shared.refreshToken else { return .transient }
             do {
                 let response = try await self.refresh(refreshToken: rt)
                 TokenStore.shared.token = response.accessToken
