@@ -210,6 +210,10 @@ final class AudioPlayerService: ObservableObject {
             activePlayer = AVPlayer(playerItem: item)
             player = activePlayer
         }
+        // Local cached files don't need stall-minimization buffering — and that buffering makes
+        // AVPlayer stop/restart its audio I/O engine, starving the wireless CarPlay transport
+        // (airplayd) → skips. Play immediately and keep the I/O running.
+        activePlayer.automaticallyWaitsToMinimizeStalling = false
         Self.alog("🔊 play cached=\(isCached) reuse=\(reusing) route=\(Self.routeDesc())")
         playingMessageId = message.id
         playingBookId = bookId
@@ -223,7 +227,7 @@ final class AudioPlayerService: ObservableObject {
         }
         activateAudioSession()
         enableProximityMonitoring()
-        activePlayer.rate = playbackRate
+        activePlayer.playImmediately(atRate: playbackRate)   // start now, don't wait to buffer
         UIApplication.shared.isIdleTimerDisabled = true
         startTimer()
         var hasStartedPlaying = false
