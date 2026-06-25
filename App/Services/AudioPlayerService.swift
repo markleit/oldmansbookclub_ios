@@ -7,10 +7,20 @@ import OSLog
 final class AudioPlayerService: ObservableObject {
     static let shared = AudioPlayerService()
 
-    // Persistent audio diagnostics (read in Console.app, category "audio"). Unlike print(),
-    // os_log survives without the debugger attached — needed to capture battery-mode skips.
+    // Persistent audio diagnostics (the 🔊 traces) used to hunt the wireless-CarPlay skips —
+    // read in Console.app, category "audio". Unlike print(), os_log survives without the debugger
+    // attached, so it captures battery-mode skips. STRIPPED by default; re-enable by adding
+    // AUDIO_DIAG to SWIFT_ACTIVE_COMPILATION_CONDITIONS in project.yml (then `xcodegen generate`).
+    // The call sites stay in place — @autoclosure makes them zero-cost (the message, incl.
+    // routeDesc(), isn't even evaluated) unless the flag is set.
+    #if AUDIO_DIAG
     private static let audioLog = Logger(subsystem: "com.example.oldmansbookclub", category: "audio")
-    private static func alog(_ msg: String) { audioLog.notice("\(msg, privacy: .public)") }
+    #endif
+    private static func alog(_ msg: @autoclosure () -> String) {
+        #if AUDIO_DIAG
+        audioLog.notice("\(msg(), privacy: .public)")
+        #endif
+    }
 
     // AVAudioSession setCategory/setActive do synchronous IPC with the audio daemon. On the
     // main thread iOS flags that as a performance antipattern ("non-deterministic delays"),

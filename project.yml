@@ -35,6 +35,9 @@ targets:
         DEVELOPMENT_TEAM: BCH6CDU76R
         MARKETING_VERSION: 1.6.1
         CURRENT_PROJECT_VERSION: 2
+        # To re-enable the 🔊 audio diagnostics (AudioPlayerService.alog, for debugging the
+        # wireless-CarPlay audio path), add AUDIO_DIAG here, then run `xcodegen generate`:
+        #   SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) AUDIO_DIAG
       configs:
         Debug:
           APS_ENVIRONMENT: development
