@@ -10,9 +10,18 @@ import AVFoundation
 // voice → audio, text → read aloud (TTS), photo/video skipped.
 @MainActor
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate,
-                                  CPInterfaceControllerDelegate, AVSpeechSynthesizerDelegate {
+                                  CPInterfaceControllerDelegate, AVSpeechSynthesizerDelegate,
+                                  AVAudioPlayerDelegate {
     private var interfaceController: CPInterfaceController?
     private let synthesizer = AVSpeechSynthesizer()
+    // Offline TTS rendering only (AVSpeechSynthesizer.write → file). The LIVE synthesizer engine
+    // speaking over the wireless CarPlay route reconfigures the shared audio path and wedges it
+    // system-wide (our voice playback AND other apps like Spotify skip afterwards, persistently).
+    // Rendering to a file keeps the engine off the route; we then play the file like any voice clip.
+    private let renderSynth = AVSpeechSynthesizer()
+    private var ttsPlayer: AVAudioPlayer?
+    // Identifies the in-flight render so a newer text/skip can supersede a stale one.
+    private var ttsRenderToken = UUID()
 
     // Now Playing album art (#55) — the app icon, built once and reused for every track.
     private static let nowPlayingArtwork: MPMediaItemArtwork? = {
@@ -344,6 +353,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // blank it), just stop playback.
             isSpeakingTTS = false
             currentUtterance = nil
+            ttsRenderToken = UUID()
+            ttsPlayer?.stop(); ttsPlayer = nil
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             synthesizer.stopSpeaking(at: .immediate)
             if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
@@ -372,13 +383,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // fresh player after TTS re-handshakes the wireless transport and stutters.
             AudioPlayerService.shared.suspendPlayerKeepingSession()
             AudioPlayerService.shared.ensurePlaybackSession()
-            // stopSpeaking(at:) isn't instantaneous; speaking synchronously right after it
-            // drops the new utterance (e.g. when skipping text→text). Speak on the next tick.
-            currentUtterance = nil               // ignore the cancelled utterance's callback
+            currentUtterance = nil               // ignore any cancelled live-utterance callback
             synthesizer.stopSpeaking(at: .immediate)
-            let utterance = AVSpeechUtterance(string: "\(msg.senderName) says: \(body)")
-            currentUtterance = utterance
-            DispatchQueue.main.async { [weak self] in self?.synthesizer.speak(utterance) }   // didFinish → advance
+            ttsPlayer?.stop(); ttsPlayer = nil
+            // Render to a file and play it (keeps the live TTS engine off the CarPlay route).
+            renderTTS("\(msg.senderName) says: \(body)")
         default:
             advance()   // skip photo/video/unknown
         }
@@ -392,6 +401,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private func stopPlayback() {
         isSpeakingTTS = false
         currentUtterance = nil
+        ttsRenderToken = UUID()
+        ttsPlayer?.stop(); ttsPlayer = nil
         AudioPlayerService.shared.stopAll()
         synthesizer.stopSpeaking(at: .immediate)
         // Keep the last message on the Now Playing screen but paused (rate 0) instead of
@@ -410,6 +421,68 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             guard utterance === self.currentUtterance else { return }
             self.currentUtterance = nil
             self.isSpeakingTTS = false
+            self.advance()
+        }
+    }
+
+    // MARK: - TTS via file (keeps the live synth engine off the wireless CarPlay route)
+
+    // Render the utterance offline to a temp file (no audio route touched), then play it like a
+    // voice clip. Falls back to live speech only if rendering yields nothing playable.
+    private func renderTTS(_ text: String) {
+        let token = UUID()
+        ttsRenderToken = token
+        let utterance = AVSpeechUtterance(string: text)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tts-\(token.uuidString)").appendingPathExtension("caf")
+        var file: AVAudioFile?
+        var wroteAny = false
+        renderSynth.write(utterance) { [weak self] buffer in
+            guard let self, let pcm = buffer as? AVAudioPCMBuffer else { return }
+            if pcm.frameLength == 0 {
+                file = nil   // close/flush the file
+                Task { @MainActor in
+                    self.playRenderedTTS(at: url, token: token, text: text, rendered: wroteAny)
+                }
+                return
+            }
+            if file == nil {
+                file = try? AVAudioFile(forWriting: url,
+                                        settings: pcm.format.settings,
+                                        commonFormat: pcm.format.commonFormat,
+                                        interleaved: pcm.format.isInterleaved)
+            }
+            if (try? file?.write(from: pcm)) != nil { wroteAny = true }
+        }
+    }
+
+    @MainActor
+    private func playRenderedTTS(at url: URL, token: UUID, text: String, rendered: Bool) {
+        // A newer text/skip superseded this render — drop it.
+        guard token == ttsRenderToken, isSpeakingTTS else {
+            try? FileManager.default.removeItem(at: url); return
+        }
+        if rendered, let player = try? AVAudioPlayer(contentsOf: url) {
+            player.delegate = self
+            player.prepareToPlay()
+            ttsPlayer = player
+            player.play()
+        } else {
+            // Rendering failed — fall back to the live synthesizer so the message is still read.
+            try? FileManager.default.removeItem(at: url)
+            let utterance = AVSpeechUtterance(string: text)
+            currentUtterance = utterance
+            synthesizer.speak(utterance)   // didFinish → advance
+        }
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        let url = player.url
+        Task { @MainActor in
+            guard player === self.ttsPlayer else { return }
+            self.ttsPlayer = nil
+            self.isSpeakingTTS = false
+            if let url { try? FileManager.default.removeItem(at: url) }
             self.advance()
         }
     }
@@ -518,7 +591,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard playQueue.indices.contains(playIndex) else { return }
         let msg = playQueue[playIndex]
         if msg.type == .text {
-            if synthesizer.isPaused { synthesizer.continueSpeaking() } else { playCurrent() }
+            if let p = ttsPlayer, !p.isPlaying { p.play() }
+            else if synthesizer.isPaused { synthesizer.continueSpeaking() }
+            else { playCurrent() }
         } else if msg.type == .voice {
             AudioPlayerService.shared.toggle(message: msg)
         }
@@ -526,6 +601,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func pause() {
         AudioPlayerService.shared.pause()
+        ttsPlayer?.pause()
         if synthesizer.isSpeaking { synthesizer.pauseSpeaking(at: .word) }
     }
 
@@ -538,6 +614,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         guard playQueue.indices.contains(target) else { return .noSuchContent }
         currentUtterance = nil
+        ttsRenderToken = UUID()
+        ttsPlayer?.stop(); ttsPlayer = nil
         AudioPlayerService.shared.stopAll(deactivateSession: false)
         synthesizer.stopSpeaking(at: .immediate)
         playIndex = target
