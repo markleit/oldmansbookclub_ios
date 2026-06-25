@@ -228,7 +228,11 @@ final class AudioPlayerService: ObservableObject {
         activateAudioSession()
         enableProximityMonitoring()
         activePlayer.playImmediately(atRate: playbackRate)   // start now, don't wait to buffer
-        UIApplication.shared.isIdleTimerDisabled = true
+        // Only keep the PHONE screen awake for on-device playback. On an external route
+        // (CarPlay/BT) the screen doesn't need to be on — and keeping it on while driving drives
+        // constant brightness/HDR/flicker work that competes with audio over the wireless link
+        // (the `audio` background mode keeps playback alive with the screen asleep).
+        UIApplication.shared.isIdleTimerDisabled = !isExternalRouteActive
         startTimer()
         var hasStartedPlaying = false
         bufferCancellable = activePlayer.publisher(for: \.timeControlStatus)
