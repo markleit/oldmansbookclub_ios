@@ -145,6 +145,7 @@ final class BookViewModel: ObservableObject {
     // cancel echo watchdogs when we leave it. Registered once (see startLifecycleObservers).
     private var appActiveObserver: NSObjectProtocol?
     private var appBackgroundObserver: NSObjectProtocol?
+    private var uploadCompletedObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -599,25 +600,41 @@ final class BookViewModel: ObservableObject {
         }
         currentlySendingMedia.insert(item.id)
         defer { currentlySendingMedia.remove(item.id) }
-        // Hold a background-task assertion across the upload + invoke so locking or
-        // backgrounding the phone right after hitting send doesn't suspend us mid-flight
-        // and strand the message (#70/#72). iOS grants ~30s; the persisted queue + the
-        // resume-time flush cover anything that outruns the window.
+        // Hold a background-task assertion across the foreground work (getUploadUrl + kicking
+        // the upload, or the invoke) so locking/backgrounding right after send doesn't suspend
+        // us mid-step. iOS grants ~30s; the background URLSession then carries the actual blob
+        // PUT across full suspension/termination, and the resume-time flush drives the invoke.
         let bgTask = BackgroundTaskBox(name: "send-media-\(item.id.uuidString)")
         defer { bgTask.end() }
-        do {
-            let mediaUrl: String
-            if let uploaded = item.uploadedMediaUrl {
-                // Upload succeeded on a previous attempt — only SignalR remains.
-                mediaUrl = uploaded
-            } else {
+
+        // Upload phase: if the blob isn't up yet, hand the PUT to the background session and
+        // return. Completion posts .mediaUploadCompleted → flush re-enters here with
+        // uploadedMediaUrl set to run the invoke (which can't happen while suspended anyway).
+        guard let mediaUrl = item.uploadedMediaUrl else {
+            if await BackgroundUploadService.shared.hasInflightUpload(itemId: item.id) {
+                return  // already uploading in the background; its completion will drive the rest
+            }
+            do {
                 let ext = (item.fileName as NSString).pathExtension
                 let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-                try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: item.contentType)
-                mediaUrl = response.mediaUrl
-                MediaSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
+                BackgroundUploadService.shared.upload(
+                    itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
+                    mediaUrl: response.mediaUrl, contentType: item.contentType)
+                // Leave the bubble in .sending; it clears when the upload completes and the
+                // invoke (below, on re-entry) lands the server echo.
+            } catch {
+                MediaSendQueue.shared.incrementRetry(id: item.id)
+                if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                    messages[idx].sendState = .failed
+                }
+                if case ChatError.serverError(let msg) = error { errorMessage = msg }
             }
+            return
+        }
+
+        // Invoke phase: the blob is uploaded; only SignalR remains.
+        do {
             do {
                 try await invokeHub(for: item, mediaUrl: mediaUrl)
             } catch let invokeErr {
@@ -650,6 +667,18 @@ final class BookViewModel: ObservableObject {
                 errorMessage = msg
             }
         }
+    }
+
+    // Drive the invoke once a background upload finishes. On success the queue item now has
+    // uploadedMediaUrl set, so re-entering sendMediaItem skips straight to the invoke; on
+    // failure it re-fetches a fresh SAS and re-uploads (auto-retry up to the cap).
+    private func handleUploadCompleted(_ itemId: UUID) async {
+        guard let item = MediaSendQueue.shared.items.first(where: { $0.id == itemId }),
+              item.bookId == book.id else { return }
+        if let idx = messages.firstIndex(where: { $0.id == itemId }) {
+            messages[idx].sendState = .sending
+        }
+        await sendMediaItem(item)
     }
 
     private func invokeHub(for item: MediaQueueItem, mediaUrl: String) async throws {
@@ -898,13 +927,22 @@ final class BookViewModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in self?.cancelEchoTimeouts() }
         }
+        // A background blob upload finished — drive the invoke for that item (B).
+        uploadCompletedObserver = center.addObserver(
+            forName: .mediaUploadCompleted, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
+            Task { @MainActor in await self?.handleUploadCompleted(itemId) }
+        }
     }
 
     private func stopLifecycleObservers() {
         if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
         if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = uploadCompletedObserver { NotificationCenter.default.removeObserver(o) }
         appActiveObserver = nil
         appBackgroundObserver = nil
+        uploadCompletedObserver = nil
     }
 
     private func startNetworkMonitorIfNeeded() {
