@@ -30,8 +30,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Message>()
             .HasIndex(m => new { m.BookId, m.SentAt });
 
+        // Unique per sender so a re-send (suspend/resume, reconnect, manual retry) carrying
+        // the same clientId can never create a second row — the DB is the idempotency backstop
+        // for the check-then-insert in TryRebroadcastExistingAsync (which races under
+        // near-simultaneous invokes). Filtered to non-null: forwards/legacy rows have no clientId.
         modelBuilder.Entity<Message>()
-            .HasIndex(m => m.ClientId)
+            .HasIndex(m => new { m.SenderId, m.ClientId })
+            .IsUnique()
             .HasFilter("[ClientId] IS NOT NULL");
 
         // Self-reference for inline quoted replies. NoAction: parents are soft-deleted,

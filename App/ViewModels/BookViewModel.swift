@@ -137,6 +137,14 @@ final class BookViewModel: ObservableObject {
     // don't clobber each other (#35).
     private var pendingTextIds: Set<UUID> = []
     private var currentlySendingMedia: Set<UUID> = []
+    // Echo-timeout watchdogs keyed by item id so we can cancel them when the app
+    // backgrounds (a frozen timer would otherwise fire on resume and falsely mark an
+    // in-flight send as failed) and replace them on re-send.
+    private var echoTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    // App-lifecycle observers: re-flush pending media when we return to the foreground,
+    // cancel echo watchdogs when we leave it. Registered once (see startLifecycleObservers).
+    private var appActiveObserver: NSObjectProtocol?
+    private var appBackgroundObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -204,6 +212,7 @@ final class BookViewModel: ObservableObject {
         }
         isLoadingMessages = false
         startNetworkMonitorIfNeeded()
+        startLifecycleObservers()
 
         guard !isOffline else { return }
 
@@ -590,6 +599,12 @@ final class BookViewModel: ObservableObject {
         }
         currentlySendingMedia.insert(item.id)
         defer { currentlySendingMedia.remove(item.id) }
+        // Hold a background-task assertion across the upload + invoke so locking or
+        // backgrounding the phone right after hitting send doesn't suspend us mid-flight
+        // and strand the message (#70/#72). iOS grants ~30s; the persisted queue + the
+        // resume-time flush cover anything that outruns the window.
+        let bgTask = BackgroundTaskBox(name: "send-media-\(item.id.uuidString)")
+        defer { bgTask.end() }
         do {
             let mediaUrl: String
             if let uploaded = item.uploadedMediaUrl {
@@ -718,10 +733,17 @@ final class BookViewModel: ObservableObject {
     // Safety net for silent SignalR failures: if invoke() returns success but the
     // server echo never arrives within the timeout, treat the send as failed so the
     // user knows (and can retry). The queue entry is preserved so retry works.
+    //
+    // The watchdog is tracked + cancellable so backgrounding can tear it down: otherwise
+    // its sleep would elapse against wall-clock while suspended and fire the instant we
+    // resume, falsely failing a send that was simply waiting out a suspension (#70/#72).
+    // A fresh send/re-send replaces any prior watchdog for the same item.
     private func scheduleEchoTimeout(for itemId: UUID, after seconds: TimeInterval = 15) {
-        Task { [weak self] in
+        echoTimeoutTasks[itemId]?.cancel()
+        echoTimeoutTasks[itemId] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
+            self.echoTimeoutTasks[itemId] = nil
             // Echo would have replaced the optimistic message's id with the server's id;
             // if we still find the optimistic id, no echo arrived in time.
             guard let idx = self.messages.firstIndex(where: { $0.id == itemId }) else { return }
@@ -731,6 +753,13 @@ final class BookViewModel: ObservableObject {
                 self.messages[idx].sendState = .failed
             }
         }
+    }
+
+    // Tear down all echo watchdogs (app backgrounding). The pending items stay queued with
+    // their current state; the foreground re-flush re-sends and re-arms fresh watchdogs.
+    private func cancelEchoTimeouts() {
+        for task in echoTimeoutTasks.values { task.cancel() }
+        echoTimeoutTasks.removeAll()
     }
 
     private func flushPendingMedia() async {
@@ -846,7 +875,36 @@ final class BookViewModel: ObservableObject {
     func disconnect() {
         networkMonitor?.cancel()
         networkMonitor = nil
+        cancelEchoTimeouts()
+        stopLifecycleObservers()
         Task { await ChatService.shared.disconnect() }
+    }
+
+    // Re-flush pending media when the app returns to the foreground, and cancel echo
+    // watchdogs when it leaves — so a send interrupted by locking/backgrounding the phone
+    // finishes on resume instead of stranding (or falsely failing) the message (#70/#72).
+    // Re-flush is safe to fire repeatedly: sendMediaItem skips items already in flight, and
+    // the server's (SenderId, ClientId) idempotency makes any re-invoke duplicate-proof.
+    private func startLifecycleObservers() {
+        guard appActiveObserver == nil else { return }
+        let center = NotificationCenter.default
+        appActiveObserver = center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.flushPendingMedia() }
+        }
+        appBackgroundObserver = center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.cancelEchoTimeouts() }
+        }
+    }
+
+    private func stopLifecycleObservers() {
+        if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
+        appActiveObserver = nil
+        appBackgroundObserver = nil
     }
 
     private func startNetworkMonitorIfNeeded() {
