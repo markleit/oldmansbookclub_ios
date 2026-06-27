@@ -56,6 +56,29 @@ final class BackgroundUploadService: NSObject {
         task.resume()
     }
 
+    /// Start background uploads for any queued media that isn't uploaded yet and has no
+    /// upload already in flight — so the blob bytes move on app launch/foreground regardless
+    /// of which screen is open, instead of waiting for the user to open that book's chat.
+    /// The (cheap) SignalR invoke still lands when the matching chat connects (D's flush /
+    /// handleUploadCompleted). `getUploadUrl` needs auth, so this no-ops when signed out.
+    @MainActor
+    func resumePendingUploads() async {
+        guard TokenStore.shared.token != nil else { return }
+        for item in MediaSendQueue.shared.items where item.uploadedMediaUrl == nil {
+            if await hasInflightUpload(itemId: item.id) { continue }
+            guard FileManager.default.fileExists(atPath: item.localFileUrl.path) else { continue }
+            do {
+                let ext = (item.fileName as NSString).pathExtension
+                let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
+                guard let uploadUrl = URL(string: response.uploadUrl) else { continue }
+                upload(itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
+                       mediaUrl: response.mediaUrl, contentType: item.contentType)
+            } catch {
+                continue   // transient (e.g. auth/network) — retried on the next launch/foreground
+            }
+        }
+    }
+
     /// Whether a background upload for this item is already running/queued — guards the send
     /// path from kicking a second PUT for the same item (e.g. a flush racing the first send).
     func hasInflightUpload(itemId: UUID) async -> Bool {
