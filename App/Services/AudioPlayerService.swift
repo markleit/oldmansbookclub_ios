@@ -292,9 +292,16 @@ final class AudioPlayerService: ObservableObject {
 
     private func tick() {
         guard let player, let item = player.currentItem else { return }
+        // After replaceCurrentItem (we reuse one player to keep the CarPlay stream alive), the new
+        // item's clock isn't valid for a moment and the player can briefly report the PREVIOUS
+        // item's (large) time. That made the progress bar jump and snap back to 0 — the visible
+        // "restart" — even though the audio stream itself plays through fine, and it could trip the
+        // completion check early. Wait until the item is actually ready, and read the item's own
+        // clock (item.currentTime) rather than the player's shared one.
+        guard item.status == .readyToPlay else { return }
         let duration = item.duration.seconds
-        let current = player.currentTime().seconds
-        guard duration.isFinite, duration > 0 else { return }
+        let current = item.currentTime().seconds
+        guard duration.isFinite, duration > 0, current.isFinite, current >= 0 else { return }
         // Display against the recorded total (if known) so the bar/counter never
         // overrun it; playback still completes at the real file end below.
         let displayTotal = playingDurationSeconds > 0 ? Double(playingDurationSeconds) : duration
