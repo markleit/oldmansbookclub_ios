@@ -32,7 +32,13 @@ struct RootView: View {
                 ContentView()
                     .task { await requestPushPermission() }
                     .onChange(of: scenePhase) { phase in
-                        if phase == .active { Task { await refreshMyProfile() } }
+                        if phase == .active {
+                            Task { await refreshMyProfile() }
+                            // Get pending blob uploads moving on every foreground (and first
+                            // launch), regardless of which screen is open — the bytes upload
+                            // in the background; the send completes when the chat connects.
+                            Task { await BackgroundUploadService.shared.resumePendingUploads() }
+                        }
                     }
             } else if let clubName = auth.pendingApprovalClubName {
                 PendingApprovalView(clubName: clubName, declined: false)

@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Recreate the background upload session so any task that finished while the app was
+        // suspended/killed delivers its completion (marks the queue item uploaded).
+        BackgroundUploadService.shared.activate()
         // Cold launch: notification payload is in launchOptions before any view exists
         if let notification = launchOptions?[.remoteNotification] as? [String: Any],
            let bookIdStr = notification["bookId"] as? String,
@@ -29,6 +32,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             DeepLinkCoordinator.shared.pendingBookId = bookId
         }
         return true
+    }
+
+    // The system relaunched us (or woke us) to finish delivering background upload events.
+    // Hand the completion handler to the service; it's called once all events are delivered.
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler, for: identifier)
     }
 
     func application(
