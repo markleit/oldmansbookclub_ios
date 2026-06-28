@@ -184,10 +184,14 @@ final class BookViewModel: ObservableObject {
             let myId = TokenStore.shared.userId
             for msg in fetched {
                 // Reconcile a confirmed server message with its optimistic copy when the
-                // live SignalR echo was missed (e.g. app backgrounded mid-send). The
-                // optimistic entry's id equals our clientId; without this the server copy
-                // (different id) would appear as a duplicate and the queue entry would stick.
-                if let cid = msg.clientId, msg.senderId == myId, byId[cid] != nil {
+                // live SignalR echo was missed (app backgrounded/killed mid-send). The
+                // optimistic entry's id equals our clientId. Clear the queue/pending entry
+                // even when the optimistic copy ISN'T in memory — on a cold launch the cache
+                // excludes pending sends, so byId[cid] is nil and the entry would otherwise
+                // survive: restorePendingMediaBubbles would resurrect it as a ghost that can
+                // never reconcile (its re-send echo is dropped because the server id is
+                // already loaded here) and stick permanently on .failed.
+                if let cid = msg.clientId, msg.senderId == myId {
                     byId.removeValue(forKey: cid)
                     clearPendingSend(clientId: cid)
                 }
