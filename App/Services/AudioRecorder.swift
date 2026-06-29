@@ -23,11 +23,22 @@ final class AudioRecorder {
 
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 16000,
+            // 32 kHz (was 16 kHz): 16 kHz capped the audio band at 8 kHz (Nyquist), which
+            // is what gave voice notes their slightly dull "telephony" character. 32 kHz
+            // opens the band to 16 kHz and recovers the presence/air of natural speech.
+            // Mono stays — there's one phone mic, so stereo would just duplicate the
+            // channel and double the bytes for zero audible gain.
+            AVSampleRateKey: 32000,
             AVNumberOfChannelsKey: 1,
-            // 32 kbps: reverted from 24 kbps (#48) — the smaller files weren't worth the
-            // audible quality drop on voice messages.
-            AVEncoderBitRateKey: 32000,
+            // Long-term-average VBR around 48 kbps (was 32 kbps CBR): the variable
+            // allocation spends bits on speech and almost none on silence/pauses, so we
+            // get better quality per byte while keeping file size (≈ egress, the cost
+            // lever) predictable. ~48 kbps feeds the wider 32 kHz band without spreading
+            // bits thin. .high tells the AAC encoder to use its better psychoacoustic
+            // model. Net ≈1.5× today's bytes for clearly more natural voice.
+            AVEncoderBitRateKey: 48000,
+            AVEncoderBitRateStrategyKey: AVAudioBitRateStrategy_LongTermAverage,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
 
         let newRecorder = try AVAudioRecorder(url: url, settings: settings)
