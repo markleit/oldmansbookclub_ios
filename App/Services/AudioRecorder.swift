@@ -52,4 +52,19 @@ final class AudioRecorder {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return (url, duration)
     }
+
+    /// Abandon the current take without producing a message: stop capture, delete the
+    /// partial temp file, and tear down the session. Used when the recording is
+    /// interrupted by backgrounding or a call/Siri/alarm (#75) — a truncated, never-
+    /// deliberately-finished take is the wrong thing to send, so it's discarded.
+    /// Safe to call when not recording (no-op).
+    func discard() {
+        guard let recorder else { return }
+        let url = recorder.url
+        recorder.stop()
+        self.recorder = nil
+        self.startTime = nil
+        try? FileManager.default.removeItem(at: url)
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
 }

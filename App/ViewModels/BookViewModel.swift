@@ -146,6 +146,7 @@ final class BookViewModel: ObservableObject {
     private var appActiveObserver: NSObjectProtocol?
     private var appBackgroundObserver: NSObjectProtocol?
     private var uploadCompletedObserver: NSObjectProtocol?
+    private var audioInterruptionObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -552,6 +553,19 @@ final class BookViewModel: ObservableObject {
         )
     }
 
+    /// Drop an in-progress take when recording is interrupted by backgrounding or a
+    /// call/Siri/alarm (#75). Such a take is truncated and was never deliberately
+    /// finished, so we discard rather than send a fragment — and silently, since the
+    /// audio is gone regardless and a banner on every return is more nag than help.
+    /// No send, no wall-clock duration math, no user notice. A no-op when not recording.
+    func discardRecording() {
+        guard isRecording else { return }
+        isRecording = false               // didSet re-enables the idle timer
+        stopRecordingTypingPings()
+        recordingStartTime = nil
+        audioRecorder.discard()
+    }
+
     func retryMediaMessage(id: UUID) async {
         // Manual retry resets the auto-retry budget so the user can always try again,
         // even after the automatic attempts were exhausted (retryCount hit the ceiling).
@@ -929,7 +943,21 @@ final class BookViewModel: ObservableObject {
         appBackgroundObserver = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.cancelEchoTimeouts() }
+            Task { @MainActor in
+                self?.cancelEchoTimeouts()
+                // Actually backgrounded: iOS suspends capture seconds from now, so finalize
+                // (discard) any in-progress take rather than leave it stuck recording (#75).
+                self?.discardRecording()
+            }
+        }
+        // Recording interrupted by a phone call / Siri / alarm (#75). Only `.began`
+        // matters — a truncated take is discarded; we don't auto-resume on `.ended`.
+        audioInterruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            Task { @MainActor in self?.discardRecording() }
         }
         // A background blob upload finished — drive the invoke for that item (B).
         uploadCompletedObserver = center.addObserver(
@@ -944,9 +972,11 @@ final class BookViewModel: ObservableObject {
         if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
         if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
         if let o = uploadCompletedObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = audioInterruptionObserver { NotificationCenter.default.removeObserver(o) }
         appActiveObserver = nil
         appBackgroundObserver = nil
         uploadCompletedObserver = nil
+        audioInterruptionObserver = nil
     }
 
     private func startNetworkMonitorIfNeeded() {
