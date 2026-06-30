@@ -35,6 +35,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
     }()
 
+    // Our authoritative copy of the Now Playing info. We mutate this and always write the WHOLE
+    // dict — never read it back from MPNowPlayingInfoCenter, whose getter does not reliably return
+    // the artwork we set, so a read-modify-write would silently drop the album art (it showed at
+    // each message start via updateNowPlaying, then vanished on the next elapsed update). Keeping
+    // the art in npInfo means every commit re-asserts it.
+    private var npInfo: [String: Any] = [:]
+
     // Continuous playback queue (mixed types, chronological).
     private var playQueue: [Message] = []
     private var playIndex = 0
@@ -83,25 +90,23 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             .receive(on: DispatchQueue.main)
             .sink { [weak self] secs in
                 guard let self, !self.isSpeakingTTS,
-                      AudioPlayerService.shared.playingMessageId != nil,
-                      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
-                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(secs)
-                info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+                      AudioPlayerService.shared.playingMessageId != nil, !self.npInfo.isEmpty else { return }
+                self.npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(secs)
+                self.npInfo[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
+                self.commitNowPlaying()
             }
         advancingObserver = AudioPlayerService.shared.$isAdvancing
             .receive(on: DispatchQueue.main)
             .sink { [weak self] advancing in
                 guard let self, !self.isSpeakingTTS,
-                      AudioPlayerService.shared.playingMessageId != nil,
-                      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+                      AudioPlayerService.shared.playingMessageId != nil, !self.npInfo.isEmpty else { return }
                 // Pin elapsed to the real position and only run the clock (rate 1) once the item
                 // clock is ACTUALLY advancing. timeControlStatus == .playing fires during the
                 // route warmup (automaticallyWaitsToMinimizeStalling = false) while the clock is
                 // still 0, which let the scrubber extrapolate ahead and then snap back.
-                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
-                info[MPNowPlayingInfoPropertyPlaybackRate] = advancing ? 1.0 : 0.0
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+                self.npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+                self.npInfo[MPNowPlayingInfoPropertyPlaybackRate] = advancing ? 1.0 : 0.0
+                self.commitNowPlaying()
             }
         // Adopt playback already in progress (e.g. started on the phone before CarPlay
         // connected, or while its window was closed) — the observer only sees changes.
@@ -120,9 +125,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             // Player went idle. If we're reading text aloud (TTS), the player is legitimately
             // empty — don't stomp the "playing" state. Otherwise mark Now Playing paused.
             if isSpeakingTTS { return }
-            if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
-                info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            if !npInfo.isEmpty {
+                npInfo[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+                commitNowPlaying()
             }
             return
         }
@@ -136,10 +141,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     private func bumpNowPlayingRate() {
-        guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
-        info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        guard !npInfo.isEmpty else { return }
+        npInfo[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
+        npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+        commitNowPlaying()
+    }
+
+    // Always write the WHOLE locally-owned dict (which retains the artwork). Never read back from
+    // MPNowPlayingInfoCenter — see npInfo.
+    private func commitNowPlaying() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = npInfo
     }
 
     // Show the now-current queue entry (started elsewhere) on CarPlay's Now Playing screen
@@ -382,9 +393,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             ttsPlayer?.stop(); ttsPlayer = nil
             AudioPlayerService.shared.stopAll(deactivateSession: false)
             synthesizer.stopSpeaking(at: .immediate)
-            if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
-                info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
-                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            if !npInfo.isEmpty {
+                npInfo[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+                commitNowPlaying()
             }
             return
         }
@@ -433,9 +444,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // Keep the last message on the Now Playing screen but paused (rate 0) instead of
         // clearing it — CarPlay leaves its Now Playing button up regardless, so blanking the
         // info just yields an empty dialog when it's tapped.
-        if var info = MPNowPlayingInfoCenter.default().nowPlayingInfo {
-            info[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        if !npInfo.isEmpty {
+            npInfo[MPNowPlayingInfoPropertyPlaybackRate] = 0.0
+            commitNowPlaying()
         }
     }
 
@@ -528,7 +539,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             info[MPMediaItemPropertyPlaybackDuration] = duration
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        npInfo = info
+        commitNowPlaying()
     }
 
     // CarPlay has no draggable scrubber (Apple blocks free scrubbing while driving), so for
@@ -588,9 +600,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         guard msg.type == .voice, let dur = msg.durationSeconds, dur > 0 else { return }
         let target = min(max(Double(AudioPlayerService.shared.currentSeconds) + delta, 0), Double(dur))
         AudioPlayerService.shared.seek(to: target / Double(dur))
-        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = target
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = target
+        commitNowPlaying()
     }
 
     private func configureRemoteCommands() {
@@ -608,9 +619,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             let msg = self.playQueue[self.playIndex]
             guard msg.type == .voice, let dur = msg.durationSeconds, dur > 0 else { return .commandFailed }
             AudioPlayerService.shared.seek(to: e.positionTime / Double(dur))
-            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
-            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = e.positionTime
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            self.npInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = e.positionTime
+            self.commitNowPlaying()
             return .success
         }
     }
