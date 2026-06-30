@@ -60,8 +60,9 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         // Idempotent re-send + echo the clientId back so the client matches the optimistic
         // bubble by id (not by body — identical consecutive sends raced the body key).
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId, parentMessageId: parentMessageId);
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        var saved = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId, parentMessageId: parentMessageId);
+        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
+        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
     }
 
     // Per-type upload caps, enforced server-side so a misbehaving client can't bypass
@@ -92,9 +93,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
         await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
 
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Voice,
+        var saved = await SaveMessageAsync(bookId, MessageType.Voice,
             mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId, parentMessageId: parentMessageId);
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
+        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
     }
 
     public Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
@@ -109,9 +111,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
         await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
 
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Photo,
+        var saved = await SaveMessageAsync(bookId, MessageType.Photo,
             mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
+        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
     }
 
     public Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
@@ -126,9 +129,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
         await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
-        var (message, bookTitle) = await SaveMessageAsync(bookId, MessageType.Video,
+        var saved = await SaveMessageAsync(bookId, MessageType.Video,
             mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
+        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
     }
 
     // Idempotent re-send protection: if a message with this clientId already exists
@@ -153,6 +157,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             .SendAsync("NewMessage", ToDto(existing, existing.Sender.EffectiveName, existing.Sender.AvatarUrl, broadcastUrl));
         return true;
     }
+
+    // SQL Server: 2627 = unique constraint violation, 2601 = unique index violation. Either
+    // means a row with this (SenderId, ClientId) already exists — i.e. a duplicate re-send.
+    private static bool IsUniqueClientIdViolation(DbUpdateException ex)
+        => ex.InnerException is Microsoft.Data.SqlClient.SqlException sql
+           && (sql.Number == 2601 || sql.Number == 2627);
 
     public async Task EditTextMessage(Guid messageId, string newBody)
     {
@@ -224,14 +234,18 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
 
         // Strip any stale SAS from the stored URL — SaveMessageAsync stores plain URL and generates fresh SAS for broadcast
         var plainMediaUrl = original.MediaUrl?.Split('?')[0];
-        var (message, bookTitle) = await SaveMessageAsync(bookId, original.Type,
+        var saved = await SaveMessageAsync(bookId, original.Type,
             body: original.Body, mediaUrl: plainMediaUrl,
             durationSeconds: original.DurationSeconds, isForwarded: true);
-
-        await BroadcastAndNotify(bookId, message, bookTitle);
+        if (saved is not { } s) return;   // forwards carry no clientId, so this won't trip — defensive
+        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
     }
 
-    private async Task<(MessageDto dto, string bookTitle)> SaveMessageAsync(Guid bookId, MessageType type,
+    // Returns null when a concurrent invoke with the same clientId won the insert race:
+    // the existing winner is rebroadcast in here and the caller must skip BroadcastAndNotify
+    // (no second broadcast, no duplicate push). The DB unique index on (SenderId, ClientId)
+    // is what makes this race-safe — TryRebroadcastExistingAsync alone is check-then-insert.
+    private async Task<(MessageDto dto, string bookTitle)?> SaveMessageAsync(Guid bookId, MessageType type,
         string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false,
         Guid? clientId = null, Guid? parentMessageId = null)
     {
@@ -259,7 +273,18 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
         };
 
         db.Messages.Add(message);
-        await db.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (IsUniqueClientIdViolation(ex))
+        {
+            // Another invoke with the same clientId committed first. Drop our would-be
+            // duplicate and rebroadcast the winner; signal the caller to bail.
+            db.Entry(message).State = EntityState.Detached;
+            await TryRebroadcastExistingAsync(bookId, clientId);
+            return null;
+        }
 
         string? broadcastMediaUrl = mediaUrl;
         if (mediaUrl != null)

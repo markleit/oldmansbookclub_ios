@@ -137,6 +137,16 @@ final class BookViewModel: ObservableObject {
     // don't clobber each other (#35).
     private var pendingTextIds: Set<UUID> = []
     private var currentlySendingMedia: Set<UUID> = []
+    // Echo-timeout watchdogs keyed by item id so we can cancel them when the app
+    // backgrounds (a frozen timer would otherwise fire on resume and falsely mark an
+    // in-flight send as failed) and replace them on re-send.
+    private var echoTimeoutTasks: [UUID: Task<Void, Never>] = [:]
+    // App-lifecycle observers: re-flush pending media when we return to the foreground,
+    // cancel echo watchdogs when we leave it. Registered once (see startLifecycleObservers).
+    private var appActiveObserver: NSObjectProtocol?
+    private var appBackgroundObserver: NSObjectProtocol?
+    private var uploadCompletedObserver: NSObjectProtocol?
+    private var audioInterruptionObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
@@ -175,10 +185,14 @@ final class BookViewModel: ObservableObject {
             let myId = TokenStore.shared.userId
             for msg in fetched {
                 // Reconcile a confirmed server message with its optimistic copy when the
-                // live SignalR echo was missed (e.g. app backgrounded mid-send). The
-                // optimistic entry's id equals our clientId; without this the server copy
-                // (different id) would appear as a duplicate and the queue entry would stick.
-                if let cid = msg.clientId, msg.senderId == myId, byId[cid] != nil {
+                // live SignalR echo was missed (app backgrounded/killed mid-send). The
+                // optimistic entry's id equals our clientId. Clear the queue/pending entry
+                // even when the optimistic copy ISN'T in memory — on a cold launch the cache
+                // excludes pending sends, so byId[cid] is nil and the entry would otherwise
+                // survive: restorePendingMediaBubbles would resurrect it as a ghost that can
+                // never reconcile (its re-send echo is dropped because the server id is
+                // already loaded here) and stick permanently on .failed.
+                if let cid = msg.clientId, msg.senderId == myId {
                     byId.removeValue(forKey: cid)
                     clearPendingSend(clientId: cid)
                 }
@@ -204,6 +218,7 @@ final class BookViewModel: ObservableObject {
         }
         isLoadingMessages = false
         startNetworkMonitorIfNeeded()
+        startLifecycleObservers()
 
         guard !isOffline else { return }
 
@@ -538,6 +553,19 @@ final class BookViewModel: ObservableObject {
         )
     }
 
+    /// Drop an in-progress take when recording is interrupted by backgrounding or a
+    /// call/Siri/alarm (#75). Such a take is truncated and was never deliberately
+    /// finished, so we discard rather than send a fragment — and silently, since the
+    /// audio is gone regardless and a banner on every return is more nag than help.
+    /// No send, no wall-clock duration math, no user notice. A no-op when not recording.
+    func discardRecording() {
+        guard isRecording else { return }
+        isRecording = false               // didSet re-enables the idle timer
+        stopRecordingTypingPings()
+        recordingStartTime = nil
+        audioRecorder.discard()
+    }
+
     func retryMediaMessage(id: UUID) async {
         // Manual retry resets the auto-retry budget so the user can always try again,
         // even after the automatic attempts were exhausted (retryCount hit the ceiling).
@@ -590,19 +618,41 @@ final class BookViewModel: ObservableObject {
         }
         currentlySendingMedia.insert(item.id)
         defer { currentlySendingMedia.remove(item.id) }
-        do {
-            let mediaUrl: String
-            if let uploaded = item.uploadedMediaUrl {
-                // Upload succeeded on a previous attempt — only SignalR remains.
-                mediaUrl = uploaded
-            } else {
+        // Hold a background-task assertion across the foreground work (getUploadUrl + kicking
+        // the upload, or the invoke) so locking/backgrounding right after send doesn't suspend
+        // us mid-step. iOS grants ~30s; the background URLSession then carries the actual blob
+        // PUT across full suspension/termination, and the resume-time flush drives the invoke.
+        let bgTask = BackgroundTaskBox(name: "send-media-\(item.id.uuidString)")
+        defer { bgTask.end() }
+
+        // Upload phase: if the blob isn't up yet, hand the PUT to the background session and
+        // return. Completion posts .mediaUploadCompleted → flush re-enters here with
+        // uploadedMediaUrl set to run the invoke (which can't happen while suspended anyway).
+        guard let mediaUrl = item.uploadedMediaUrl else {
+            if await BackgroundUploadService.shared.hasInflightUpload(itemId: item.id) {
+                return  // already uploading in the background; its completion will drive the rest
+            }
+            do {
                 let ext = (item.fileName as NSString).pathExtension
                 let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-                try await APIClient.shared.uploadMediaFile(at: item.localFileUrl, to: uploadUrl, contentType: item.contentType)
-                mediaUrl = response.mediaUrl
-                MediaSendQueue.shared.markUploaded(id: item.id, mediaUrl: mediaUrl)
+                BackgroundUploadService.shared.upload(
+                    itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
+                    mediaUrl: response.mediaUrl, contentType: item.contentType)
+                // Leave the bubble in .sending; it clears when the upload completes and the
+                // invoke (below, on re-entry) lands the server echo.
+            } catch {
+                MediaSendQueue.shared.incrementRetry(id: item.id)
+                if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                    messages[idx].sendState = .failed
+                }
+                if case ChatError.serverError(let msg) = error { errorMessage = msg }
             }
+            return
+        }
+
+        // Invoke phase: the blob is uploaded; only SignalR remains.
+        do {
             do {
                 try await invokeHub(for: item, mediaUrl: mediaUrl)
             } catch let invokeErr {
@@ -635,6 +685,18 @@ final class BookViewModel: ObservableObject {
                 errorMessage = msg
             }
         }
+    }
+
+    // Drive the invoke once a background upload finishes. On success the queue item now has
+    // uploadedMediaUrl set, so re-entering sendMediaItem skips straight to the invoke; on
+    // failure it re-fetches a fresh SAS and re-uploads (auto-retry up to the cap).
+    private func handleUploadCompleted(_ itemId: UUID) async {
+        guard let item = MediaSendQueue.shared.items.first(where: { $0.id == itemId }),
+              item.bookId == book.id else { return }
+        if let idx = messages.firstIndex(where: { $0.id == itemId }) {
+            messages[idx].sendState = .sending
+        }
+        await sendMediaItem(item)
     }
 
     private func invokeHub(for item: MediaQueueItem, mediaUrl: String) async throws {
@@ -718,10 +780,17 @@ final class BookViewModel: ObservableObject {
     // Safety net for silent SignalR failures: if invoke() returns success but the
     // server echo never arrives within the timeout, treat the send as failed so the
     // user knows (and can retry). The queue entry is preserved so retry works.
+    //
+    // The watchdog is tracked + cancellable so backgrounding can tear it down: otherwise
+    // its sleep would elapse against wall-clock while suspended and fire the instant we
+    // resume, falsely failing a send that was simply waiting out a suspension (#70/#72).
+    // A fresh send/re-send replaces any prior watchdog for the same item.
     private func scheduleEchoTimeout(for itemId: UUID, after seconds: TimeInterval = 15) {
-        Task { [weak self] in
+        echoTimeoutTasks[itemId]?.cancel()
+        echoTimeoutTasks[itemId] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
+            self.echoTimeoutTasks[itemId] = nil
             // Echo would have replaced the optimistic message's id with the server's id;
             // if we still find the optimistic id, no echo arrived in time.
             guard let idx = self.messages.firstIndex(where: { $0.id == itemId }) else { return }
@@ -731,6 +800,13 @@ final class BookViewModel: ObservableObject {
                 self.messages[idx].sendState = .failed
             }
         }
+    }
+
+    // Tear down all echo watchdogs (app backgrounding). The pending items stay queued with
+    // their current state; the foreground re-flush re-sends and re-arms fresh watchdogs.
+    private func cancelEchoTimeouts() {
+        for task in echoTimeoutTasks.values { task.cancel() }
+        echoTimeoutTasks.removeAll()
     }
 
     private func flushPendingMedia() async {
@@ -846,7 +922,61 @@ final class BookViewModel: ObservableObject {
     func disconnect() {
         networkMonitor?.cancel()
         networkMonitor = nil
+        cancelEchoTimeouts()
+        stopLifecycleObservers()
         Task { await ChatService.shared.disconnect() }
+    }
+
+    // Re-flush pending media when the app returns to the foreground, and cancel echo
+    // watchdogs when it leaves — so a send interrupted by locking/backgrounding the phone
+    // finishes on resume instead of stranding (or falsely failing) the message (#70/#72).
+    // Re-flush is safe to fire repeatedly: sendMediaItem skips items already in flight, and
+    // the server's (SenderId, ClientId) idempotency makes any re-invoke duplicate-proof.
+    private func startLifecycleObservers() {
+        guard appActiveObserver == nil else { return }
+        let center = NotificationCenter.default
+        appActiveObserver = center.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in await self?.flushPendingMedia() }
+        }
+        appBackgroundObserver = center.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.cancelEchoTimeouts()
+                // Actually backgrounded: iOS suspends capture seconds from now, so finalize
+                // (discard) any in-progress take rather than leave it stuck recording (#75).
+                self?.discardRecording()
+            }
+        }
+        // Recording interrupted by a phone call / Siri / alarm (#75). Only `.began`
+        // matters — a truncated take is discarded; we don't auto-resume on `.ended`.
+        audioInterruptionObserver = center.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+            Task { @MainActor in self?.discardRecording() }
+        }
+        // A background blob upload finished — drive the invoke for that item (B).
+        uploadCompletedObserver = center.addObserver(
+            forName: .mediaUploadCompleted, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
+            Task { @MainActor in await self?.handleUploadCompleted(itemId) }
+        }
+    }
+
+    private func stopLifecycleObservers() {
+        if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = uploadCompletedObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = audioInterruptionObserver { NotificationCenter.default.removeObserver(o) }
+        appActiveObserver = nil
+        appBackgroundObserver = nil
+        uploadCompletedObserver = nil
+        audioInterruptionObserver = nil
     }
 
     private func startNetworkMonitorIfNeeded() {
