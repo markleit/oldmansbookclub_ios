@@ -80,9 +80,14 @@ final class AudioPlayerService: ObservableObject {
     // Last item-clock reading, to detect whether playback is actually advancing (drives isAdvancing).
     private var lastAdvanceCheckTime: Double = -1
     private var routeCancellable: AnyCancellable?
+    private var interruptionCancellable: AnyCancellable?
     private var proximityCancellable: AnyCancellable?
     private var isNearEar = false
     private var isUserInitiatedPause = false
+    // True between an audio-session interruption's .began and .ended (incoming call, Siri, another
+    // app like Spotify taking the session). While set, the stall-recovery must NOT auto-resume —
+    // otherwise we fight the interruption and keep talking over the call/other audio.
+    private var isInterrupted = false
     // The message's recorded length. AVPlayer's item.duration for AAC/m4a can run
     // longer than the audible content, making the counter overshoot the displayed
     // total. We keep playing to the real file end but clamp the published
@@ -94,7 +99,42 @@ final class AudioPlayerService: ObservableObject {
             .publisher(for: AVAudioSession.routeChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] note in self?.handleRouteChange(note) }
+        // Pause on interruptions (calls/Siri/other apps) and resume only when the system says so.
+        // Lives here (not in a view model) so it also covers CarPlay-driven playback.
+        interruptionCancellable = NotificationCenter.default
+            .publisher(for: AVAudioSession.interruptionNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] note in self?.handleInterruption(note) }
         updateRouteState()
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            guard playingMessageId != nil else { return }
+            // Suspend playback but KEEP the message/position so .ended can resume it. Marking
+            // isInterrupted stops the .paused stall-recovery from immediately resuming over the
+            // interruption. The player paused → tick stops advancing → Now Playing shows paused.
+            isInterrupted = true
+            saveCurrentPosition(completed: false)
+            player?.pause()
+            isAdvancing = false
+            isBuffering = false
+        case .ended:
+            guard isInterrupted else { return }
+            isInterrupted = false
+            let opts = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            // Only resume if the system grants it (e.g. call ended) and we still have a message.
+            if opts.contains(.shouldResume), playingMessageId != nil {
+                activateAudioSession()
+                player?.playImmediately(atRate: playbackRate)
+            }
+        @unknown default:
+            break
+        }
     }
 
     func toggle(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
@@ -191,6 +231,7 @@ final class AudioPlayerService: ObservableObject {
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
         isUserInitiatedPause = false
+        isInterrupted = false   // a fresh play is not an interrupted one
 
         // Resume from the saved position. Replaying a fully-played message starts over
         // from the beginning but stays "heard" (green is sticky). fromStart forces the
@@ -266,9 +307,9 @@ final class AudioPlayerService: ObservableObject {
                 if status != .playing { self.isAdvancing = false }   // tick promotes once the clock moves
                 Self.alog("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
-                if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
+                if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, !self.isInterrupted, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                        guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause else { return }
+                        guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause, !self.isInterrupted else { return }
                         // On external routes (CarPlay/BT) don't re-activate the whole session —
                         // that disrupts the wireless audio link and cascades into skips. Just nudge
                         // the player to resume; AVPlayer recovers from transient stalls on its own.
@@ -292,6 +333,7 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = 0
         isBuffering = false
         isAdvancing = false
+        isInterrupted = false
         lastAdvanceCheckTime = -1
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
