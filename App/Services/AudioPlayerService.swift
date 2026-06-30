@@ -77,7 +77,6 @@ final class AudioPlayerService: ObservableObject {
     // Set when an explicit reposition happens (new message, resume seek, user seek/skip) so the
     // next tick may accept a backward time. Otherwise tick rejects backward jumps, which are the
     // reused player reporting a stale ~0 time after replaceCurrentItem (the timer "restart").
-    private var allowBackwardTick = false
     // Last item-clock reading, to detect whether playback is actually advancing (drives isAdvancing).
     private var lastAdvanceCheckTime: Double = -1
     private var routeCancellable: AnyCancellable?
@@ -155,7 +154,6 @@ final class AudioPlayerService: ObservableObject {
         player.seek(to: time)
         progress = fraction
         currentSeconds = Int(duration * fraction)
-        allowBackwardTick = true   // this is an intentional reposition; let tick accept it
     }
 
     // Activate + configure the playback session (idempotent, same .default config as voice).
@@ -244,7 +242,6 @@ final class AudioPlayerService: ObservableObject {
         let dur = Double(message.durationSeconds ?? 0)
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
-        allowBackwardTick = true   // new message / resume position — let the first tick re-baseline
         lastAdvanceCheckTime = resume   // don't count the resume jump as "advancing"
         isAdvancing = false
         isBuffering = true
@@ -321,16 +318,6 @@ final class AudioPlayerService: ObservableObject {
         let duration = item.duration.seconds
         let current = item.currentTime().seconds
         guard duration.isFinite, duration > 0, current.isFinite, current >= 0 else { return }
-        // Reject a spurious backward jump: the reused player can briefly report a near-start time
-        // right after replaceCurrentItem (or a transient re-buffer) even though audio keeps
-        // playing, snapping the progress display back to ~0 (the visible timer "restart"). An
-        // explicit reposition (seek/skip/new message) sets allowBackwardTick to permit the rewind;
-        // anything else that goes >1s backward is the glitch and is ignored. Completion below uses
-        // a forward read, so this never blocks end-of-message advance.
-        if current + 1.0 < Double(currentSeconds), !allowBackwardTick {
-            return
-        }
-        allowBackwardTick = false
         // The clock advanced since the last tick → audio is really playing (not just claiming to
         // during warmup). CarPlay gates the Now Playing rate on this so the scrubber never runs
         // ahead of the audio and snaps back.
