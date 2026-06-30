@@ -61,10 +61,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Drives the Now Playing elapsed time from the player's real position each second so the
     // CarPlay progress bar actually shows and tracks (extrapolation alone often won't render).
     private var progressObserver: AnyCancellable?
-    // While the player is buffering/warming the route (1–2s on CarPlay), report rate 0 to Now
+    // While the item clock isn't advancing (route warming on CarPlay, 1–2s), report rate 0 to Now
     // Playing so the system doesn't extrapolate the scrubber forward and then snap it back to 0
-    // when real audio starts (the visible "timer restart"). Flip back to rate 1 when playing.
-    private var bufferingObserver: AnyCancellable?
+    // when real audio starts (the visible "timer restart"). Flip to rate 1 once it's advancing.
+    private var advancingObserver: AnyCancellable?
 
     // MARK: - Scene lifecycle
 
@@ -89,7 +89,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
-        bufferingObserver = AudioPlayerService.shared.$isAdvancing
+        advancingObserver = AudioPlayerService.shared.$isAdvancing
             .receive(on: DispatchQueue.main)
             .sink { [weak self] advancing in
                 guard let self, !self.isSpeakingTTS,
@@ -191,7 +191,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.interfaceController = nil
         playbackObserver = nil
         progressObserver = nil
-        bufferingObserver = nil
+        advancingObserver = nil
     }
 
     // Back out of Now Playing → stop playback.
