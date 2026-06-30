@@ -61,6 +61,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Drives the Now Playing elapsed time from the player's real position each second so the
     // CarPlay progress bar actually shows and tracks (extrapolation alone often won't render).
     private var progressObserver: AnyCancellable?
+    // While the player is buffering/warming the route (1–2s on CarPlay), report rate 0 to Now
+    // Playing so the system doesn't extrapolate the scrubber forward and then snap it back to 0
+    // when real audio starts (the visible "timer restart"). Flip back to rate 1 when playing.
+    private var bufferingObserver: AnyCancellable?
 
     // MARK: - Scene lifecycle
 
@@ -82,7 +86,19 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                       AudioPlayerService.shared.playingMessageId != nil,
                       var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
                 info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(secs)
-                info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+                info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isBuffering ? 0.0 : 1.0
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            }
+        bufferingObserver = AudioPlayerService.shared.$isBuffering
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] buffering in
+                guard let self, !self.isSpeakingTTS,
+                      AudioPlayerService.shared.playingMessageId != nil,
+                      var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+                // Pin elapsed to the real position and only run the clock (rate 1) once the
+                // route has warmed and audio is actually playing — see bufferingObserver note.
+                info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
+                info[MPNowPlayingInfoPropertyPlaybackRate] = buffering ? 0.0 : 1.0
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
         // Adopt playback already in progress (e.g. started on the phone before CarPlay
@@ -173,6 +189,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         self.interfaceController = nil
         playbackObserver = nil
         progressObserver = nil
+        bufferingObserver = nil
     }
 
     // Back out of Now Playing → stop playback.
@@ -499,7 +516,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: artist,
-            MPNowPlayingInfoPropertyPlaybackRate: 1.0
+            // 0 while buffering/warming so the system doesn't run the scrubber ahead of the
+            // audio and then snap it back; the buffering/progress observers promote it to 1.
+            MPNowPlayingInfoPropertyPlaybackRate: AudioPlayerService.shared.isBuffering ? 0.0 : 1.0
         ]
         if let art = Self.nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = art }
         if duration > 0 {
