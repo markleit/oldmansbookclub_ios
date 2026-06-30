@@ -22,6 +22,17 @@ final class TranscriptStore: ObservableObject {
 
     func text(for id: UUID) -> String? { transcripts[id.uuidString] }
 
+    // Cache a transcript that came FROM the server (don't re-upload it). Used to seed
+    // the store from loaded messages so reply chips, voice rows, and CarPlay show the
+    // shared transcript immediately.
+    func cache(_ text: String, for id: UUID) {
+        guard !text.isEmpty, transcripts[id.uuidString] == nil else { return }
+        transcripts[id.uuidString] = text
+        if let data = try? JSONEncoder().encode(transcripts) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
     func store(_ text: String, for id: UUID) {
         guard !text.isEmpty else { return }
         let isNew = transcripts[id.uuidString] == nil

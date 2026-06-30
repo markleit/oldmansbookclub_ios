@@ -299,7 +299,8 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                         : m.Parent.Type == MessageType.Voice ? (m.Parent.Transcript == null ? "🎤 Voice message" : "🎤 " + (m.Parent.Transcript.Length <= 120 ? m.Parent.Transcript : m.Parent.Transcript.Substring(0, 120) + "…"))
                         : m.Parent.Type == MessageType.Photo ? "📷 Photo"
                         : "🎬 Video"),
-                m.DeletedAt != null || m.Parent == null || m.Parent.DeletedAt != null ? (DateTime?)null : m.Parent.SentAt))
+                m.DeletedAt != null || m.Parent == null || m.Parent.DeletedAt != null ? (DateTime?)null : m.Parent.SentAt,
+                m.DeletedAt == null ? m.Transcript : null))
             .ToListAsync();
 
         if (messages.Any(m => m.MediaUrl != null))

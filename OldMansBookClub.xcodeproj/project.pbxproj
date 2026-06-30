@@ -18,6 +18,7 @@
 		363A0B3B09A3515D08C1476D /* ManageClubsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345BF07C510F9CAACFA8BD0C /* ManageClubsView.swift */; };
 		3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */; };
 		3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */; };
+		3CC240C8A15A7B6730EBC4E1 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A518484880F73D42F012B0EA /* FeedbackView.swift */; };
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
@@ -75,6 +76,7 @@
 		6531FD0CE01104B5FBC19167 /* MessageInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageInputView.swift; sourceTree = "<group>"; };
 		6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackProgressStore.swift; sourceTree = "<group>"; };
 		6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
 		785A72030A13869F8B069614 /* BackgroundUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundUploadService.swift; sourceTree = "<group>"; };
 		7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EULAView.swift; sourceTree = "<group>"; };
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
@@ -118,6 +120,14 @@
 				B561ED5FA32D5FF7BE41DA80 /* Models.swift */,
 			);
 			path = Models;
+			sourceTree = "<group>";
+		};
+		0CDF0216D5CDCA07615408FC /* CarPlay */ = {
+			isa = PBXGroup;
+			children = (
+				709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */,
+			);
+			path = CarPlay;
 			sourceTree = "<group>";
 		};
 		0DC96F159ED578CF4C8628B8 /* Services */ = {
@@ -203,6 +213,7 @@
 				BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */,
 				17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */,
 				6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */,
+				0CDF0216D5CDCA07615408FC /* CarPlay */,
 				0116884E101D0BEC9BE7977E /* Models */,
 				0DC96F159ED578CF4C8628B8 /* Services */,
 				63E0C14231CDC9123264B6AA /* ViewModels */,
@@ -305,6 +316,7 @@
 				2C2EF1F408CB370E728F6C62 /* BrowseClubsView.swift in Sources */,
 				301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */,
 				DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */,
+				3CC240C8A15A7B6730EBC4E1 /* CarPlaySceneDelegate.swift in Sources */,
 				958AF33D661E4DE915A5862A /* ChatService.swift in Sources */,
 				F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */,
 				CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */,
@@ -406,7 +418,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.6.2;
+				MARKETING_VERSION = 1.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -429,7 +441,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.6.2;
+				MARKETING_VERSION = 1.7.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

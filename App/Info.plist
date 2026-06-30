@@ -24,10 +24,31 @@
     <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <!-- Required so audio keeps playing (un-throttled) while the phone is locked/backgrounded
+         during CarPlay. Without it iOS throttles the app in the background → audio skips/
+         stutters (was masked by the debugger, which suppresses background throttling). -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>
-        <false/>
+        <true/>
+        <key>UISceneConfigurations</key>
+        <dict>
+            <key>CPTemplateApplicationSceneSessionRoleApplication</key>
+            <array>
+                <dict>
+                    <key>UISceneClassName</key>
+                    <string>CPTemplateApplicationScene</string>
+                    <key>UISceneConfigurationName</key>
+                    <string>CarPlay</string>
+                    <key>UISceneDelegateClassName</key>
+                    <string>$(PRODUCT_MODULE_NAME).CarPlaySceneDelegate</string>
+                </dict>
+            </array>
+        </dict>
     </dict>
     <key>NSAppTransportSecurity</key>
     <dict>

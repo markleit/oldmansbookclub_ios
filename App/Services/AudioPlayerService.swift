@@ -1,12 +1,40 @@
 import AVFoundation
 import Combine
 import UIKit
+import OSLog
 
 @MainActor
 final class AudioPlayerService: ObservableObject {
     static let shared = AudioPlayerService()
 
+    // Persistent audio diagnostics (the 🔊 traces) used to hunt the wireless-CarPlay skips —
+    // read in Console.app, category "audio". Unlike print(), os_log survives without the debugger
+    // attached, so it captures battery-mode skips. STRIPPED by default; re-enable by adding
+    // AUDIO_DIAG to SWIFT_ACTIVE_COMPILATION_CONDITIONS in project.yml (then `xcodegen generate`).
+    // The call sites stay in place — @autoclosure makes them zero-cost (the message, incl.
+    // routeDesc(), isn't even evaluated) unless the flag is set.
+    #if AUDIO_DIAG
+    private static let audioLog = Logger(subsystem: "com.example.oldmansbookclub", category: "audio")
+    #endif
+    private static func alog(_ msg: @autoclosure () -> String) {
+        #if AUDIO_DIAG
+        audioLog.notice("\(msg(), privacy: .public)")
+        #endif
+    }
+
+    // AVAudioSession setCategory/setActive do synchronous IPC with the audio daemon. On the
+    // main thread iOS flags that as a performance antipattern ("non-deterministic delays"),
+    // and it can stall the CarPlay scene enough to drop the connection (audio skips). Run all
+    // session IPC on a dedicated serial queue (serial = ordering preserved) off the main thread.
+    // .userInitiated so a high-QoS (audio) thread doesn't block waiting on this lower-priority
+    // queue — the device trace flagged exactly that priority inversion, lining up with ~660ms
+    // source stalls (airplayd starvation).
+    private static let sessionQueue = DispatchQueue(label: "com.example.oldmansbookclub.audiosession", qos: .userInitiated)
+
     @Published private(set) var playingMessageId: UUID?
+    // The book the currently-playing message belongs to. Published purely so other surfaces
+    // (CarPlay) can locate the right chat to mirror — does not affect phone playback behavior.
+    @Published private(set) var playingBookId: UUID?
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
@@ -22,6 +50,11 @@ final class AudioPlayerService: ObservableObject {
         }
     }
     private var isExternalRouteActive: Bool = false
+    // Keep the audio session active across the whole continuous-playback queue (like Spotify)
+    // rather than tearing it down + rebuilding per message — per-message session churn
+    // destabilizes the wireless CarPlay route and causes intermittent skips.
+    private var audioSessionActive = false
+    private var sessionUsesEarpiece = false
 
     // Fired when a message finishes — for side effects (mark-heard, UI). Distinct from
     // auto-advance below.
@@ -53,11 +86,11 @@ final class AudioPlayerService: ObservableObject {
         updateRouteState()
     }
 
-    func toggle(message: Message) {
+    func toggle(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         if playingMessageId == message.id {
             pause()
         } else {
-            play(message: message)
+            play(message: message, bookId: bookId, fromStart: fromStart)
         }
     }
 
@@ -72,10 +105,11 @@ final class AudioPlayerService: ObservableObject {
         isUserInitiatedPause = true
         player?.pause()
         playingMessageId = nil
+        playingBookId = nil
         timerCancellable?.cancel()
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        deactivateAudioSession()
     }
 
     // Persist the playing message's position so it can be resumed later. `completed`
@@ -111,16 +145,51 @@ final class AudioPlayerService: ObservableObject {
         currentSeconds = Int(duration * fraction)
     }
 
-    private func play(message: Message) {
+    // Activate + configure the playback session (idempotent, same .default config as voice).
+    // For audio played outside the AVPlayer path — CarPlay TTS — so it doesn't leave the
+    // session on a different mode that the idempotent activate won't correct, which made
+    // voice messages played after a spoken text message skip.
+    func ensurePlaybackSession() {
+        activateAudioSession()
+    }
+
+    // Pause the AVPlayer but KEEP it (and the session) alive — for surfaces that briefly take
+    // over the output (CarPlay TTS). Destroying the player (stopAll) makes the next voice
+    // message build a fresh AVPlayer, which re-handshakes the wireless transport (airplayd) and
+    // stutters. Pausing keeps the stream connected so the next voice reuses it seamlessly.
+    func suspendPlayerKeepingSession() {
+        saveCurrentPosition(completed: false)
+        player?.pause()
+        playingMessageId = nil
+        playingBookId = nil
+        timerCancellable?.cancel()
+        isBuffering = false
+        Self.alog("🔊 suspend keepPlayer=\(player != nil)")
+    }
+
+    private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
-        stopCurrentPlayer()
-        guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else { return }
+        guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else {
+            stopCurrentPlayer(deactivateSession: false); return
+        }
+        // Reuse ONE AVPlayer across messages (replaceCurrentItem) instead of building a new one
+        // per message. A fresh AVPlayer re-handshakes the wireless CarPlay audio transport
+        // (airplayd) — ~500ms during which airplayd has no source and skips. Reusing the player
+        // keeps that stream alive. Tear down the outgoing item's observers/timer but NOT the
+        // player itself.
+        timerCancellable?.cancel()
+        bufferCancellable?.cancel()
+        isUserInitiatedPause = false
 
         // Resume from the saved position. Replaying a fully-played message starts over
-        // from the beginning but stays "heard" (green is sticky).
+        // from the beginning but stays "heard" (green is sticky). fromStart forces the
+        // beginning regardless (used by CarPlay's continuous playback / manual skip, where a
+        // resume that's already at the end would instantly complete and skip the message).
         let store = PlaybackProgressStore.shared
         var resume = store.position(for: message.id)
-        if store.isCompleted(message.id) {
+        if fromStart {
+            resume = 0
+        } else if store.isCompleted(message.id) {
             store.resetPosition(message.id)
             resume = 0
         }
@@ -128,44 +197,68 @@ final class AudioPlayerService: ObservableObject {
         // Play the cached local file if we have it (instant start); otherwise stream the
         // remote blob and seed the cache so replays are instant.
         let playURL: URL
+        let isCached: Bool
         if let cached = AudioCache.shared.cachedFileURL(for: url) {
             playURL = cached
+            isCached = true
         } else {
             playURL = url
+            isCached = false
             AudioCache.shared.prefetch(url)
         }
         let item = AVPlayerItem(url: playURL)
-        // Pitch-preserving, high-quality time stretch so voice stays clear at higher rates —
-        // the default algorithm degrades noticeably above ~2×.
-        item.audioTimePitchAlgorithm = .spectral
-        let newPlayer = AVPlayer(playerItem: item)
-        player = newPlayer
+        // Pitch-preserving time stretch tuned for speech: .timeDomain keeps voice clear at
+        // higher rates while being far cheaper than .spectral (which can cause skips at 2×/3×,
+        // especially over wireless CarPlay).
+        item.audioTimePitchAlgorithm = .timeDomain
+        let reusing = player != nil
+        let activePlayer: AVPlayer
+        if let existing = player {
+            existing.replaceCurrentItem(with: item)
+            activePlayer = existing
+        } else {
+            activePlayer = AVPlayer(playerItem: item)
+            player = activePlayer
+        }
+        // Local cached files don't need stall-minimization buffering — and that buffering makes
+        // AVPlayer stop/restart its audio I/O engine, starving the wireless CarPlay transport
+        // (airplayd) → skips. Play immediately and keep the I/O running.
+        activePlayer.automaticallyWaitsToMinimizeStalling = false
+        Self.alog("🔊 play cached=\(isCached) reuse=\(reusing) route=\(Self.routeDesc())")
         playingMessageId = message.id
-        isUserInitiatedPause = false
+        playingBookId = bookId
         playingDurationSeconds = message.durationSeconds ?? 0
         let dur = Double(message.durationSeconds ?? 0)
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
         isBuffering = true
         if resume > 0.5 {
-            newPlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
+            activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
         }
         activateAudioSession()
         enableProximityMonitoring()
-        newPlayer.rate = playbackRate
-        UIApplication.shared.isIdleTimerDisabled = true
+        activePlayer.playImmediately(atRate: playbackRate)   // start now, don't wait to buffer
+        // Only keep the PHONE screen awake for on-device playback. On an external route
+        // (CarPlay/BT) the screen doesn't need to be on — and keeping it on while driving drives
+        // constant brightness/HDR/flicker work that competes with audio over the wireless link
+        // (the `audio` background mode keeps playback alive with the screen asleep).
+        UIApplication.shared.isIdleTimerDisabled = !isExternalRouteActive
         startTimer()
         var hasStartedPlaying = false
-        bufferCancellable = newPlayer.publisher(for: \.timeControlStatus)
+        bufferCancellable = activePlayer.publisher(for: \.timeControlStatus)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                Self.alog("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                         guard let self, self.playingMessageId != nil, !self.isUserInitiatedPause else { return }
-                        self.activateAudioSession()
+                        // On external routes (CarPlay/BT) don't re-activate the whole session —
+                        // that disrupts the wireless audio link and cascades into skips. Just nudge
+                        // the player to resume; AVPlayer recovers from transient stalls on its own.
+                        if !self.isExternalRouteActive { self.activateAudioSession() }
                         self.player?.rate = self.playbackRate
                     }
                 }
@@ -173,19 +266,21 @@ final class AudioPlayerService: ObservableObject {
     }
 
     private func stopCurrentPlayer(deactivateSession: Bool = true) {
+        Self.alog("🔊 destroyPlayer deactivate=\(deactivateSession) hadPlayer=\(player != nil)")
         isUserInitiatedPause = true
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
         player?.pause()
         player = nil
         playingMessageId = nil
+        playingBookId = nil
         progress = 0
         currentSeconds = 0
         isBuffering = false
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
         if deactivateSession {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            deactivateAudioSession()
         }
     }
 
@@ -197,9 +292,16 @@ final class AudioPlayerService: ObservableObject {
 
     private func tick() {
         guard let player, let item = player.currentItem else { return }
+        // After replaceCurrentItem (we reuse one player to keep the CarPlay stream alive), the new
+        // item's clock isn't valid for a moment and the player can briefly report the PREVIOUS
+        // item's (large) time. That made the progress bar jump and snap back to 0 — the visible
+        // "restart" — even though the audio stream itself plays through fine, and it could trip the
+        // completion check early. Wait until the item is actually ready, and read the item's own
+        // clock (item.currentTime) rather than the player's shared one.
+        guard item.status == .readyToPlay else { return }
         let duration = item.duration.seconds
-        let current = player.currentTime().seconds
-        guard duration.isFinite, duration > 0 else { return }
+        let current = item.currentTime().seconds
+        guard duration.isFinite, duration > 0, current.isFinite, current >= 0 else { return }
         // Display against the recorded total (if known) so the bar/counter never
         // overrun it; playback still completes at the real file end below.
         let displayTotal = playingDurationSeconds > 0 ? Double(playingDurationSeconds) : duration
@@ -208,35 +310,60 @@ final class AudioPlayerService: ObservableObject {
         if current >= duration - 0.05 {
             let completedId = playingMessageId
             saveCurrentPosition(completed: true)   // mark fully played (green)
-            stopCurrentPlayer()
+            // Do NOT tear down the player here — the next message reuses it (replaceCurrentItem)
+            // to keep the wireless CarPlay transport stream alive across the boundary.
             if let id = completedId {
-                onPlaybackCompleted?(id)        // side effects (mark-heard, UI)
-                if let next = nextToPlay?(id) { // continuous playback / "play all"
-                    play(message: next)
+                onPlaybackCompleted?(id)        // CarPlay advance() may start the next (reuses player)
+                if playingMessageId == id, let next = nextToPlay?(id) {
+                    play(message: next)         // phone continuous — reuses the player
                 }
+            }
+            // Nothing advanced (end of queue) — now tear down + release the session.
+            if playingMessageId == completedId {
+                stopCurrentPlayer(deactivateSession: false)
+                deactivateAudioSession()
             }
         }
     }
 
     private func activateAudioSession() {
-        let session = AVAudioSession.sharedInstance()
-        // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK
-        // (Xcode 26 / Swift 6.2+). Gate on the compiler so this still builds on the
-        // older Xcode the CI runner uses, while staying deprecation-warning-free on
-        // the release toolchain.
-        #if compiler(>=6.2)
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothHFP, .allowBluetoothA2DP]
-        #else
-        let btOptions: AVAudioSession.CategoryOptions = [.allowBluetooth, .allowBluetoothA2DP]
-        #endif
-        if isNearEar && !isExternalRouteActive {
-            // Earpiece path: requires playAndRecord to override default speaker routing
-            try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
-        } else {
-            // Speaker/BT path: playback gives full system volume (playAndRecord reduces gain)
-            try? session.setCategory(.playback, mode: .spokenAudio, options: btOptions)
+        let useEarpiece = isNearEar && !isExternalRouteActive
+        // Only (re)set the category on first activation or when the earpiece/speaker decision
+        // changes. Re-setting it every message re-evaluates the route and churns the wireless
+        // CarPlay link → skips. A2DP only — deliberately NOT allowBluetoothHFP (the
+        // telephone-grade profile that made voice route over the car's phone channel).
+        // .default (not .spokenAudio) matches music apps; .spokenAudio is more dropout-prone.
+        let reconfigured = !audioSessionActive || useEarpiece != sessionUsesEarpiece
+        if reconfigured { sessionUsesEarpiece = useEarpiece }
+        audioSessionActive = true
+        Self.alog("🔊 activateSession reconfigured=\(reconfigured) ext=\(isExternalRouteActive)")
+        // Session IPC off the main thread (see sessionQueue note) — setActive on main can stall
+        // the CarPlay scene and drop the connection.
+        Self.sessionQueue.async {
+            let session = AVAudioSession.sharedInstance()
+            if reconfigured {
+                let btOptions: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP]
+                if useEarpiece {
+                    try? session.setCategory(.playAndRecord, mode: .spokenAudio, options: btOptions)
+                } else {
+                    try? session.setCategory(.playback, mode: .default, options: btOptions)
+                }
+            }
+            try? session.setActive(true)
         }
-        try? session.setActive(true)
+    }
+
+    // Deactivate the session off the main thread (same reason as activateAudioSession).
+    private func deactivateAudioSession() {
+        audioSessionActive = false
+        Self.sessionQueue.async {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    // Describes the current audio output route (port types) — for diagnosing CarPlay routing.
+    static func routeDesc() -> String {
+        AVAudioSession.sharedInstance().currentRoute.outputs.map { "\($0.portType.rawValue)" }.joined(separator: ",")
     }
 
     private func enableProximityMonitoring() {
@@ -266,11 +393,17 @@ final class AudioPlayerService: ObservableObject {
 
     private func updateRouteState() {
         let externalPorts: Set<AVAudioSession.Port> = [
-            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones
+            .bluetoothA2DP, .bluetoothHFP, .bluetoothLE, .airPlay, .headphones, .carAudio
         ]
         let hasExternal = AVAudioSession.sharedInstance().currentRoute.outputs
             .contains { externalPorts.contains($0.portType) }
+        let was = isExternalRouteActive
         isExternalRouteActive = hasExternal
-        if playingMessageId != nil { activateAudioSession() }
+        Self.alog("🔊 routeChange -> \(Self.routeDesc()) ext=\(hasExternal) changed=\(was != hasExternal) playing=\(playingMessageId != nil)")
+        // Only reconfigure the session when the route's external-ness actually changes. Wireless
+        // CarPlay fires frequent route-change notifications; re-activating (setCategory+setActive)
+        // on each one disrupts the audio link and causes skips on battery (Spotify etc. configure
+        // once and leave it).
+        if playingMessageId != nil && was != hasExternal { activateAudioSession() }
     }
 }

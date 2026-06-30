@@ -817,6 +817,7 @@ struct MessageRow: View {
             VoiceMessageBubble(
                 message: message,
                 isMe: isMe,
+                bookId: viewModel.book.id,
                 onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
                 onCancel: { viewModel.cancelMediaMessage(id: message.id) }
             )
@@ -886,6 +887,7 @@ struct EditMessageSheet: View {
 struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
+    var bookId: UUID
     var onRetry: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
@@ -991,7 +993,7 @@ struct VoiceMessageBubble: View {
                     .foregroundColor(isMe ? .white.opacity(0.85) : .orange)
                     .frame(width: 36, height: 36)
             } else {
-                Button { audio.toggle(message: message) } label: {
+                Button { audio.toggle(message: message, bookId: bookId) } label: {
                     Group {
                         if isPlaying && audio.isBuffering {
                             ProgressView().tint(.black)

@@ -15,9 +15,41 @@ distraction risk — deferred to a later phase. See "Deferred: recording" below.
 ## Entitlement
 Browse + play (no recording) = an **audio** CarPlay app → `com.apple.developer.carplay-audio`.
 This is the common, readily-granted CarPlay category (every podcast/music app has it), far
-easier than `carplay-communication`. Must still be requested from Apple; nothing custom shows
-on the CarPlay screen until granted. (Confirm exact entitlement string + template availability
-against current Apple docs before building.)
+easier than `carplay-communication`. Must be requested from Apple.
+
+### Entitlement: needed for DEVICE only; SIMULATOR testing does NOT need it
+- **Device / TestFlight / App Store:** `carplay-audio` must be granted by Apple AND **enabled on
+  the App ID** (developer portal → Identifiers → your App ID → Additional Capabilities → CarPlay),
+  then refresh the provisioning profile in Xcode. Granting the request alone is NOT enough — flip
+  the capability on the App ID, then "Try Again" in Signing & Capabilities.
+- **Simulator:** does NOT use the entitlement. Simulator builds **strip device entitlements**
+  (aps/applesignin/carplay → empty `<dict/>`); the sim's CarPlay registers off the **Info.plist
+  scene manifest**, not the entitlement. A plain `⌘R` works. ⚠️ Do NOT ad-hoc re-sign the .app to
+  embed the entitlement for the sim — that makes SpringBoard **refuse to launch** it
+  ("denied by service delegate (SBMainWorkspace)").
+- ⚠️ **CarPlay is iPhone-only — you MUST use an iPhone simulator.** On an iPad sim the Simulator
+  greys out **I/O → External Displays → CarPlay**. (Wasted a lot of time 2026-06-22 — the disabled
+  menu was purely iPad-vs-iPhone, nothing to do with entitlements/signing.)
+
+### ⚠️ Info.plist CarPlay scene MUST include `UISceneClassName`
+The scene config needs BOTH keys or `templateApplicationScene(_:didConnect:)` never fires
+(CarPlay launches the app but shows a blank screen — no error):
+```
+UISceneClassName        = CPTemplateApplicationScene
+UISceneDelegateClassName = $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+UISceneConfigurationName = CarPlay
+```
+With only `UISceneDelegateClassName`, the system never creates a `CPTemplateApplicationScene`
+for the role, so the delegate is never connected. (This cost hours 2026-06-22.) After a fresh
+build, you may need to close + reopen the Simulator's CarPlay window once for it to populate.
+
+### ⚠️ Only ONE simulator may be booted when testing CarPlay
+Multiple booted simulators **fight over the CarPlay external display** → it's created with zero
+physical size + an off-screen window (`carkitd: "Physical size is zero"`), so icons render but
+**taps do nothing / images drop**. Shut down ALL other sims (`xcrun simctl shutdown all`, keep
+one), then enable CarPlay. With a single booted sim it works and is fully interactive. (This was
+THE cause of the "icons show but nothing's tappable" dead-end — not the runtime, app, or
+entitlement. Cost hours 2026-06-22.)
 
 ## Architecture
 The CarPlay scene runs in the **same app process** as the phone UI, so it shares all existing

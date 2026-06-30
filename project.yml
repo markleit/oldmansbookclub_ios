@@ -23,6 +23,9 @@ targets:
         com.apple.developer.applesignin:
           - Default
         aps-environment: $(APS_ENVIRONMENT)
+        # CarPlay audio entitlement (#46). MANAGED — pending Apple approval; device/TestFlight
+        # signing will fail until granted. Simulator + CarPlay Simulator builds are unaffected.
+        com.apple.developer.carplay-audio: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
@@ -30,8 +33,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BCH6CDU76R
-        MARKETING_VERSION: 1.6.2
+        MARKETING_VERSION: 1.7.0
         CURRENT_PROJECT_VERSION: 1
+        # To re-enable the 🔊 audio diagnostics (AudioPlayerService.alog, for debugging the
+        # wireless-CarPlay audio path), add AUDIO_DIAG here, then run `xcodegen generate`:
+        #   SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) AUDIO_DIAG
       configs:
         Debug:
           APS_ENVIRONMENT: development

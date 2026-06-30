@@ -423,6 +423,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
             deleted ? null : parentMessageId,
             deleted ? null : parentSenderName,
             deleted ? null : parentPreview,
-            deleted ? null : parentSentAt);
+            deleted ? null : parentSentAt,
+            deleted ? null : m.Transcript);
     }
 }
