@@ -48,10 +48,14 @@ final class AudioCue: NSObject, AVAudioPlayerDelegate {
             // e.g. a route error — don't hang the recording flow forever.
             Task { try? await Task.sleep(for: .seconds(1)); self.resumeStartFinished() }
         }
-        // Player buffer is drained; the last samples are still ~outputLatency from leaving the
-        // route. Return that tick on the shared audio-device clock so the recorder opens just
-        // after it via record(atTime:) — deterministic, and never overlaps the chirp.
-        return player.deviceCurrentTime + AVAudioSession.sharedInstance().outputLatency
+        // Player buffer is drained, but the last samples are still in flight through the route.
+        // Open capture only after the FULL queried pipeline depth has elapsed, not just the
+        // output side: outputLatency (output buffering) + inputLatency (capture buffering) +
+        // ioBufferDuration (one IO quantum). These are all read from the active route — large
+        // on a CarPlay/HFP head unit, tiny on a bare phone — so the gap is route-derived rather
+        // than a magic delay, and covers the chirp tail that outputLatency alone left audible.
+        let session = AVAudioSession.sharedInstance()
+        return player.deviceCurrentTime + session.outputLatency + session.inputLatency + session.ioBufferDuration
     }
 
     private func resumeStartFinished() {
