@@ -38,6 +38,11 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
+    // True only while audio is actually rendering (timeControlStatus == .playing) — distinct
+    // from !isBuffering, which is also true before playback has started or while paused. CarPlay
+    // uses this to run the Now Playing scrubber only when audio is really moving (no extrapolating
+    // ahead during route warmup, then snapping back).
+    @Published private(set) var isPlaying: Bool = false
     // Continuous 1–4× voice playback speed, persisted across launches.
     private static let rateKey = "voicePlaybackRate"
     @Published var playbackRate: Float = {
@@ -250,6 +255,7 @@ final class AudioPlayerService: ObservableObject {
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
+                self.isPlaying = (status == .playing)
                 Self.alog("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
@@ -277,6 +283,7 @@ final class AudioPlayerService: ObservableObject {
         progress = 0
         currentSeconds = 0
         isBuffering = false
+        isPlaying = false
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
         if deactivateSession {
