@@ -127,7 +127,11 @@ stability work.
 - [ ] M7. Speaker vs. earpiece/Bluetooth routing on the phone is correct after a CarPlay session ends and the phone is used alone.
 
 **Recording (shared audio session):**
-- [ ] M8. Recording a voice message on the phone still works; mic chirps/cues behave (ref. closed #11).
+- [ ] M8. Recording a voice message on the phone still works; mic chirps/cues behave.
+- [ ] M8a. **#11 — chirp not in the recording, [CAR]:** while connected to **CarPlay** (high-latency HFP route), record a voice message and play it back → the "mic open" start chirp is **NOT** audible at the head of the recording (it used to bleed in). Also confirm the chirp still plays out loud at record start, and the recording's first word isn't clipped (capture is scheduled just after the chirp via `record(atTime:)`).
+- [ ] M8b. Repeat M8a on a **bare phone** and on **A2DP Bluetooth** → chirp precedes capture cleanly, no bleed, no clipped first word (the fix is route-latency-aware, must hold on low-latency routes too).
+- [ ] M8c. **Press-and-hold quick release**: tap-and-immediately-release the record button → no stuck recording, no empty/garbage message sent (release during the chirp pre-roll cancels capture).
+- [ ] M8d. Recorded message **duration** looks right (not inflated by the chirp pre-roll gap).
 - [ ] M9. Record → play → record again on the phone: no session conflict, mic still captures (the `.playAndRecord` vs `.playback` category switching still works).
 
 **Background audio (`UIBackgroundModes: audio` — standard/required for a CarPlay audio app):**
