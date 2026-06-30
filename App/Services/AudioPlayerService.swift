@@ -73,6 +73,10 @@ final class AudioPlayerService: ObservableObject {
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
     private var bufferCancellable: AnyCancellable?
+    // Set when an explicit reposition happens (new message, resume seek, user seek/skip) so the
+    // next tick may accept a backward time. Otherwise tick rejects backward jumps, which are the
+    // reused player reporting a stale ~0 time after replaceCurrentItem (the timer "restart").
+    private var allowBackwardTick = false
     private var routeCancellable: AnyCancellable?
     private var proximityCancellable: AnyCancellable?
     private var isNearEar = false
@@ -148,6 +152,7 @@ final class AudioPlayerService: ObservableObject {
         player.seek(to: time)
         progress = fraction
         currentSeconds = Int(duration * fraction)
+        allowBackwardTick = true   // this is an intentional reposition; let tick accept it
     }
 
     // Activate + configure the playback session (idempotent, same .default config as voice).
@@ -236,6 +241,7 @@ final class AudioPlayerService: ObservableObject {
         let dur = Double(message.durationSeconds ?? 0)
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
+        allowBackwardTick = true   // new message / resume position — let the first tick re-baseline
         isBuffering = true
         if resume > 0.5 {
             activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
@@ -309,6 +315,16 @@ final class AudioPlayerService: ObservableObject {
         let duration = item.duration.seconds
         let current = item.currentTime().seconds
         guard duration.isFinite, duration > 0, current.isFinite, current >= 0 else { return }
+        // Reject a spurious backward jump: the reused player can briefly report a near-start time
+        // right after replaceCurrentItem (or a transient re-buffer) even though audio keeps
+        // playing, snapping the progress display back to ~0 (the visible timer "restart"). An
+        // explicit reposition (seek/skip/new message) sets allowBackwardTick to permit the rewind;
+        // anything else that goes >1s backward is the glitch and is ignored. Completion below uses
+        // a forward read, so this never blocks end-of-message advance.
+        if current + 1.0 < Double(currentSeconds), !allowBackwardTick {
+            return
+        }
+        allowBackwardTick = false
         // Display against the recorded total (if known) so the bar/counter never
         // overrun it; playback still completes at the real file end below.
         let displayTotal = playingDurationSeconds > 0 ? Double(playingDurationSeconds) : duration
