@@ -24,9 +24,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var ttsRenderToken = UUID()
 
     // Now Playing album art (#55) — the app icon, built once and reused for every track.
+    // Return an image rendered at the requested bounds (some Now Playing renderers won't draw
+    // artwork whose returned size doesn't match the size they asked for).
     private static let nowPlayingArtwork: MPMediaItemArtwork? = {
         guard let img = UIImage(named: "AppLogo") else { return nil }
-        return MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+        return MPMediaItemArtwork(boundsSize: img.size) { size in
+            UIGraphicsImageRenderer(size: size).image { _ in
+                img.draw(in: CGRect(origin: .zero, size: size))
+            }
+        }
     }()
 
     // Continuous playback queue (mixed types, chronological).
