@@ -10,15 +10,22 @@ final class AudioRecorder {
     // base) at which capture should begin — used to start exactly after the "mic open" chirp
     // has finished leaving the output route, with no main-thread sleep (see AudioCue).
     func start(atTime startAt: TimeInterval? = nil) throws {
-        let session = AVAudioSession.sharedInstance()
-        // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK;
-        // gate on the compiler so this builds on the older Xcode CI uses too.
-        #if compiler(>=6.2)
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
-        #else
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
-        #endif
-        try session.setActive(true)
+        // When a start chirp is scheduled (startAt set), AudioCue has ALREADY configured and
+        // activated the playAndRecord session and scheduled the chirp to sound shortly. Calling
+        // setCategory/setActive again here resets the audio route mid-schedule and cancels the
+        // pending chirp — the user never hears the "mic open" cue. So only set up the session
+        // ourselves when there's no chirp (cue disabled); otherwise inherit AudioCue's config.
+        if startAt == nil {
+            let session = AVAudioSession.sharedInstance()
+            // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK;
+            // gate on the compiler so this builds on the older Xcode CI uses too.
+            #if compiler(>=6.2)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP])
+            #else
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
+            #endif
+            try session.setActive(true)
+        }
 
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
