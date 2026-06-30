@@ -4,10 +4,15 @@ import AVFoundation
 // style "go ahead" beep. The tone is generated in memory (no bundled asset) and
 // played to completion BEFORE capture begins, so it never ends up in the recording.
 @MainActor
-final class AudioCue {
+final class AudioCue: NSObject, AVAudioPlayerDelegate {
     static let shared = AudioCue()
+    private override init() { super.init() }
 
     private var player: AVAudioPlayer?
+    // Resumed the instant the start chirp finishes playing (delegate event) so the caller
+    // creates the recorder only after the tone is done — arming/creating the recorder while
+    // the chirp is still in flight cancels it (the cue went silent). See playRecordStart.
+    private var startFinished: CheckedContinuation<Void, Never>?
 
     // User setting (Settings → "Recording Tones"), stored via @AppStorage under the
     // same key. Defaults to on when the key has never been written.
@@ -26,17 +31,36 @@ final class AudioCue {
     // are queried values, so this holds on a bare phone and on a high-latency CarPlay/HFP
     // route alike, where a fixed delay let the tail bleed into the recording (#11).
     // Returns nil when the cue is disabled — the caller then starts capture immediately.
-    func playRecordStart() -> TimeInterval? {
+    func playRecordStart() async -> TimeInterval? {
         guard AudioCue.isEnabled else { return nil }
         configureSessionForCue()
         guard let player = try? AVAudioPlayer(data: recordStartData) else { return nil }
         self.player = player
+        player.delegate = self
         player.prepareToPlay()
-        // Schedule playback at a precise tick (small lead for scheduling headroom) so the
-        // math below is exact rather than relative to an approximate "play now".
-        let chirpStart = player.deviceCurrentTime + 0.05
-        player.play(atTime: chirpStart)
-        return chirpStart + player.duration + AVAudioSession.sharedInstance().outputLatency
+        player.play()
+        // Wait until the chirp has ACTUALLY finished sounding (delegate event — not a guessed
+        // delay) before returning, so the caller doesn't create/arm the recorder while the
+        // tone is still playing (which cancels it).
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            startFinished = c
+            // Deadlock guard ONLY (not the timing mechanism): if the delegate never fires —
+            // e.g. a route error — don't hang the recording flow forever.
+            Task { try? await Task.sleep(for: .seconds(1)); self.resumeStartFinished() }
+        }
+        // Player buffer is drained; the last samples are still ~outputLatency from leaving the
+        // route. Return that tick on the shared audio-device clock so the recorder opens just
+        // after it via record(atTime:) — deterministic, and never overlaps the chirp.
+        return player.deviceCurrentTime + AVAudioSession.sharedInstance().outputLatency
+    }
+
+    private func resumeStartFinished() {
+        startFinished?.resume()
+        startFinished = nil
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.resumeStartFinished() }
     }
 
     // Plays the "over" chirp on recording close. Fire-and-forget: capture has already

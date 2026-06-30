@@ -519,8 +519,8 @@ final class BookViewModel: ObservableObject {
         // "Mic is open" chirp (walkie-talkie style). Returns the audio-device-clock time
         // after which capture can begin without the tone bleeding in; the recorder starts
         // exactly then via record(atTime:) (deterministic — no sleep). nil = cue disabled.
-        let recordAt = AudioCue.shared.playRecordStart()
-        // Released before we got here → stopRecording already flipped isRecording off; abort.
+        let recordAt = await AudioCue.shared.playRecordStart()
+        // Released during the chirp → stopRecording already flipped isRecording off; abort.
         guard isRecording else { return }
         do {
             try audioRecorder.start(atTime: recordAt)
