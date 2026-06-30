@@ -18,16 +18,25 @@ final class AudioCue {
     private lazy var recordStartData: Data = AudioCue.chirp(tones: [(1174.66, 60), (1567.98, 60)])
     private lazy var recordStopData: Data = AudioCue.chirp(tones: [(1567.98, 55), (1174.66, 75)])
 
-    // Plays the start chirp and returns once it has finished (~130ms). Callers start
-    // the recorder after this so the beep precedes capture, walkie-talkie style.
-    func playRecordStart() async {
-        guard AudioCue.isEnabled else { return }
+    // Plays the "mic open" chirp and returns the audio-device-clock time after which the
+    // recorder may begin capturing without the tone bleeding in. The recorder schedules
+    // its start at this exact tick via AVAudioRecorder.record(atTime:), which shares the
+    // AVAudioPlayer.deviceCurrentTime clock — so the gap is enforced by the audio hardware,
+    // not a main-thread sleep. The window is (chirp duration + route output latency): both
+    // are queried values, so this holds on a bare phone and on a high-latency CarPlay/HFP
+    // route alike, where a fixed delay let the tail bleed into the recording (#11).
+    // Returns nil when the cue is disabled — the caller then starts capture immediately.
+    func playRecordStart() -> TimeInterval? {
+        guard AudioCue.isEnabled else { return nil }
         configureSessionForCue()
-        guard let player = try? AVAudioPlayer(data: recordStartData) else { return }
+        guard let player = try? AVAudioPlayer(data: recordStartData) else { return nil }
         self.player = player
         player.prepareToPlay()
-        player.play()
-        try? await Task.sleep(for: .milliseconds(150))
+        // Schedule playback at a precise tick (small lead for scheduling headroom) so the
+        // math below is exact rather than relative to an approximate "play now".
+        let chirpStart = player.deviceCurrentTime + 0.05
+        player.play(atTime: chirpStart)
+        return chirpStart + player.duration + AVAudioSession.sharedInstance().outputLatency
     }
 
     // Plays the "over" chirp on recording close. Fire-and-forget: capture has already

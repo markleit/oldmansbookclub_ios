@@ -516,14 +516,14 @@ final class BookViewModel: ObservableObject {
         // that mimics tap-to-talk. Claiming it here lets a release during the chirp
         // cancel the start, and its didSet disables the idle timer for the recording.
         isRecording = true
-        // "Mic is open" chirp (walkie-talkie style). Plays to completion before
-        // capture starts so it precedes — and never bleeds into — the recording.
-        await AudioCue.shared.playRecordStart()
-        // Released during the chirp → stopRecording already flipped isRecording off;
-        // abort without starting capture.
+        // "Mic is open" chirp (walkie-talkie style). Returns the audio-device-clock time
+        // after which capture can begin without the tone bleeding in; the recorder starts
+        // exactly then via record(atTime:) (deterministic — no sleep). nil = cue disabled.
+        let recordAt = AudioCue.shared.playRecordStart()
+        // Released before we got here → stopRecording already flipped isRecording off; abort.
         guard isRecording else { return }
         do {
-            try audioRecorder.start()
+            try audioRecorder.start(atTime: recordAt)
             recordingStartTime = Date()
             startRecordingTypingPings()   // broadcast "is recording audio…"
         } catch {

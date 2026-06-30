@@ -6,7 +6,10 @@ final class AudioRecorder {
 
     var isRecording: Bool { recorder?.isRecording ?? false }
 
-    func start() throws {
+    // `startAt`, when provided, is an audio-device-clock time (AVAudioPlayer.deviceCurrentTime
+    // base) at which capture should begin — used to start exactly after the "mic open" chirp
+    // has finished leaving the output route, with no main-thread sleep (see AudioCue).
+    func start(atTime startAt: TimeInterval? = nil) throws {
         let session = AVAudioSession.sharedInstance()
         // `.allowBluetooth` was renamed to `.allowBluetoothHFP` in the iOS 26 SDK;
         // gate on the compiler so this builds on the older Xcode CI uses too.
@@ -42,15 +45,21 @@ final class AudioRecorder {
         ]
 
         let newRecorder = try AVAudioRecorder(url: url, settings: settings)
-        // record() returns false if the session isn't ready; surface that as an
-        // error instead of leaving a recorder that reports isRecording == false
-        // (which would later make stop() return nil and silently drop the message).
-        guard newRecorder.record() else {
+        newRecorder.prepareToRecord()
+        // record()/record(atTime:) return false if the session isn't ready; surface that as
+        // an error instead of leaving a recorder that reports isRecording == false (which
+        // would later make stop() return nil and silently drop the message).
+        let started = startAt.map { newRecorder.record(atTime: $0) } ?? newRecorder.record()
+        guard started else {
             throw NSError(domain: "AudioRecorder", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to start recording."])
         }
         recorder = newRecorder
-        startTime = Date()
+        // Measure duration from the moment capture actually begins. With record(atTime:) that
+        // is `startAt`, which is in the future by the chirp pre-roll; offset the wall clock by
+        // that gap (computed on the same device clock) so the gap isn't counted as audio.
+        let preroll = startAt.map { max(0, $0 - newRecorder.deviceCurrentTime) } ?? 0
+        startTime = Date().addingTimeInterval(preroll)
     }
 
     func stop() -> (url: URL, duration: Int)? {
