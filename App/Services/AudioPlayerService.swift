@@ -38,11 +38,12 @@ final class AudioPlayerService: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var currentSeconds: Int = 0
     @Published private(set) var isBuffering: Bool = false
-    // True only while audio is actually rendering (timeControlStatus == .playing) — distinct
-    // from !isBuffering, which is also true before playback has started or while paused. CarPlay
-    // uses this to run the Now Playing scrubber only when audio is really moving (no extrapolating
-    // ahead during route warmup, then snapping back).
-    @Published private(set) var isPlaying: Bool = false
+    // True only while the item's PLAYBACK CLOCK is actually advancing between ticks. This is the
+    // signal CarPlay uses to run the Now Playing scrubber (rate 1). timeControlStatus == .playing
+    // is NOT enough: with automaticallyWaitsToMinimizeStalling = false, playImmediately reports
+    // .playing during the route warmup while the clock is still pinned at 0, so the system would
+    // extrapolate the scrubber ahead and then snap it back when real playback starts.
+    @Published private(set) var isAdvancing: Bool = false
     // Continuous 1–4× voice playback speed, persisted across launches.
     private static let rateKey = "voicePlaybackRate"
     @Published var playbackRate: Float = {
@@ -77,6 +78,8 @@ final class AudioPlayerService: ObservableObject {
     // next tick may accept a backward time. Otherwise tick rejects backward jumps, which are the
     // reused player reporting a stale ~0 time after replaceCurrentItem (the timer "restart").
     private var allowBackwardTick = false
+    // Last item-clock reading, to detect whether playback is actually advancing (drives isAdvancing).
+    private var lastAdvanceCheckTime: Double = -1
     private var routeCancellable: AnyCancellable?
     private var proximityCancellable: AnyCancellable?
     private var isNearEar = false
@@ -242,6 +245,8 @@ final class AudioPlayerService: ObservableObject {
         progress = (dur > 0 && resume > 0) ? min(resume / dur, 1) : 0
         currentSeconds = Int(resume)
         allowBackwardTick = true   // new message / resume position — let the first tick re-baseline
+        lastAdvanceCheckTime = resume   // don't count the resume jump as "advancing"
+        isAdvancing = false
         isBuffering = true
         if resume > 0.5 {
             activePlayer.seek(to: CMTime(seconds: resume, preferredTimescale: 600))
@@ -261,7 +266,7 @@ final class AudioPlayerService: ObservableObject {
             .sink { [weak self] status in
                 guard let self else { return }
                 self.isBuffering = (status == .waitingToPlayAtSpecifiedRate)
-                self.isPlaying = (status == .playing)
+                if status != .playing { self.isAdvancing = false }   // tick promotes once the clock moves
                 Self.alog("🔊 status=\(status.rawValue) buffering=\(self.isBuffering) route=\(Self.routeDesc())")
                 if status == .playing { hasStartedPlaying = true }
                 if status == .paused, hasStartedPlaying, !self.isUserInitiatedPause, self.playingMessageId != nil {
@@ -289,7 +294,8 @@ final class AudioPlayerService: ObservableObject {
         progress = 0
         currentSeconds = 0
         isBuffering = false
-        isPlaying = false
+        isAdvancing = false
+        lastAdvanceCheckTime = -1
         UIApplication.shared.isIdleTimerDisabled = false
         disableProximityMonitoring()
         if deactivateSession {
@@ -325,6 +331,11 @@ final class AudioPlayerService: ObservableObject {
             return
         }
         allowBackwardTick = false
+        // The clock advanced since the last tick → audio is really playing (not just claiming to
+        // during warmup). CarPlay gates the Now Playing rate on this so the scrubber never runs
+        // ahead of the audio and snaps back.
+        isAdvancing = current > lastAdvanceCheckTime + 0.02
+        lastAdvanceCheckTime = current
         // Display against the recorded total (if known) so the bar/counter never
         // overrun it; playback still completes at the real file end below.
         let displayTotal = playingDurationSeconds > 0 ? Double(playingDurationSeconds) : duration

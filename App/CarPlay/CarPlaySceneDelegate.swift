@@ -86,20 +86,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                       AudioPlayerService.shared.playingMessageId != nil,
                       var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
                 info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(secs)
-                info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isPlaying ? 1.0 : 0.0
+                info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
-        bufferingObserver = AudioPlayerService.shared.$isPlaying
+        bufferingObserver = AudioPlayerService.shared.$isAdvancing
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] playing in
+            .sink { [weak self] advancing in
                 guard let self, !self.isSpeakingTTS,
                       AudioPlayerService.shared.playingMessageId != nil,
                       var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
-                // Pin elapsed to the real position and only run the clock (rate 1) once audio is
-                // ACTUALLY playing — !isBuffering alone is also true before start/while paused,
-                // which let the scrubber extrapolate ahead during route warmup, then snap back.
+                // Pin elapsed to the real position and only run the clock (rate 1) once the item
+                // clock is ACTUALLY advancing. timeControlStatus == .playing fires during the
+                // route warmup (automaticallyWaitsToMinimizeStalling = false) while the clock is
+                // still 0, which let the scrubber extrapolate ahead and then snap back.
                 info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
-                info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
+                info[MPNowPlayingInfoPropertyPlaybackRate] = advancing ? 1.0 : 0.0
                 MPNowPlayingInfoCenter.default().nowPlayingInfo = info
             }
         // Adopt playback already in progress (e.g. started on the phone before CarPlay
@@ -136,7 +137,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     private func bumpNowPlayingRate() {
         guard var info = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
-        info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isPlaying ? 1.0 : 0.0
+        info[MPNowPlayingInfoPropertyPlaybackRate] = AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = Double(AudioPlayerService.shared.currentSeconds)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
@@ -517,9 +518,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: artist,
-            // 0 unless audio is actually playing, so the system doesn't run the scrubber ahead
-            // of the audio during route warmup and then snap it back; the observers promote to 1.
-            MPNowPlayingInfoPropertyPlaybackRate: AudioPlayerService.shared.isPlaying ? 1.0 : 0.0
+            // 0 unless the item clock is actually advancing, so the system doesn't run the
+            // scrubber ahead of the audio during route warmup and then snap it back; the
+            // observers promote it to 1 once playback is really moving.
+            MPNowPlayingInfoPropertyPlaybackRate: AudioPlayerService.shared.isAdvancing ? 1.0 : 0.0
         ]
         if let art = Self.nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = art }
         if duration > 0 {
