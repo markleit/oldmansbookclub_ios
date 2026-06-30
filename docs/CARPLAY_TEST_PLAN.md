@@ -130,9 +130,13 @@ stability work.
 - [ ] M8. Recording a voice message on the phone still works; mic chirps/cues behave (ref. closed #11).
 - [ ] M9. Record → play → record again on the phone: no session conflict, mic still captures (the `.playAndRecord` vs `.playback` category switching still works).
 
-**Background audio (new `UIBackgroundModes: audio` — app-wide):**
-- [ ] M10. Play a voice message on the phone, then lock/background → confirm the **new** continue-in-background behavior is intended (previously it stopped). Decide if that's the desired UX.
-- [ ] M11. Battery sanity: leaving the app backgrounded after playback ends does NOT keep the app awake/draining (session should release when nothing is playing).
+**Background audio (`UIBackgroundModes: audio` — standard/required for a CarPlay audio app):**
+> Declaring this is the convention — it's how every audio app keeps playing in the background,
+> and CarPlay audio apps require it. Not a review risk. These checks are behavioral hygiene,
+> not a policy decision.
+- [ ] M10. Lock-screen / Control Center **Now Playing controls** appear during phone playback and work (play/pause/skip) — a side effect of background audio being enabled.
+- [ ] M11. **Session releases when idle**: after playback finishes in the background, the app does NOT stay awake / keep Now Playing / drain battery (session deactivates when nothing is playing).
+- [ ] M11b. **No runaway autoplay while locked**: locking the phone mid-message doesn't silently churn through the whole queue if that's not the intended UX — confirm autoplay-while-locked behaves as designed.
 
 **App launch / scenes (new `UISceneConfigurations`):**
 - [ ] M12. **Clean launch on a plain phone (no CarPlay)**: app launches and shows its normal UI — adding the CarPlay scene config did not break the default window scene.
