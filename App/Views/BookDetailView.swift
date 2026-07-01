@@ -1377,19 +1377,22 @@ struct BunnySpeedIcon: View {
 }
 
 // Vertical 1–4× speed slider shown in a popover anchored to the bunny (hare = faster on top,
-// tortoise = slower at the bottom). Snaps to 0.25× with a light haptic and applies the rate
-// live (persisted via AudioPlayerService). Custom track for reliable vertical drag.
+// tortoise = slower at the bottom). Free-flowing (#61) — lands on any speed, with a light
+// haptic detent only at whole multipliers. Applies the rate live (persisted via
+// AudioPlayerService). Custom track for reliable vertical drag.
 struct VerticalSpeedSlider: View {
     let rate: Float
     let onChange: (Float) -> Void
 
     @State private var value: Double
+    @State private var lastDetent: Int
     private let haptic = UISelectionFeedbackGenerator()
 
     init(rate: Float, onChange: @escaping (Float) -> Void) {
         self.rate = rate
         self.onChange = onChange
         _value = State(initialValue: Double(rate))
+        _lastDetent = State(initialValue: Int(Double(rate)))
     }
 
     var body: some View {
@@ -1398,9 +1401,12 @@ struct VerticalSpeedSlider: View {
             Text(BunnySpeedIcon.label(Float(value)))
                 .font(.system(size: 13, weight: .semibold))
                 .monospacedDigit()
-            SpeedTrack(value: $value) { snapped in
-                haptic.selectionChanged()
-                onChange(Float(snapped))
+            SpeedTrack(value: $value) { newValue in
+                // Haptic only when crossing a whole multiplier, so a free-flowing drag
+                // still gets a light tactile detent at 1×/2×/3×/4× without buzzing continuously.
+                let detent = Int(newValue)
+                if detent != lastDetent { haptic.selectionChanged(); lastDetent = detent }
+                onChange(Float(newValue))
             }
             .frame(width: 40, height: 150)
             Image(systemName: "tortoise.fill").font(.system(size: 13))
@@ -1416,7 +1422,7 @@ struct VerticalSpeedSlider: View {
 // mixed CGFloat/Double math in one large view body times out the Xcode 16.4 type-checker.
 private struct SpeedTrack: View {
     @Binding var value: Double
-    let onSnap: (Double) -> Void   // fired when the snapped (0.25×) value changes
+    let onChange: (Double) -> Void   // fired when the (free-flowing) value changes
 
     var body: some View {
         GeometryReader { geo in
@@ -1443,10 +1449,12 @@ private struct SpeedTrack: View {
     private func drag(height h: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0).onChanged { v in
             let f: Double = max(0, min(1, 1 - Double(v.location.y / h)))   // top = fast
-            let snapped: Double = ((1.0 + f * 3.0) * 4).rounded() / 4      // nearest 0.25×
-            if snapped != value {
-                value = snapped
-                onSnap(snapped)
+            // Free-flowing (#61): land on any speed. Round to 0.05 only so the label
+            // doesn't jitter to two decimals — no coarse 0.25× detents.
+            let precise: Double = ((1.0 + f * 3.0) * 20).rounded() / 20
+            if precise != value {
+                value = precise
+                onChange(precise)
             }
         }
     }
