@@ -23,6 +23,12 @@ final class LibraryViewModel: ObservableObject {
 
     private var networkMonitor: NWPathMonitor?
 
+    // Foreground/appear fire load() often (every scenePhase == .active, tab switches).
+    // Skip a network refetch if we just did one, so quick app-switches don't churn the
+    // list. User-driven loads (pull-to-refresh, retry, club switch, reconnect) pass force.
+    private var lastLoadedAt: Date?
+    private let minReloadInterval: TimeInterval = 30
+
     private func loadCache() {
         guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
               let cached = try? Self.decoder.decode([Book].self, from: data) else { return }
@@ -34,7 +40,10 @@ final class LibraryViewModel: ObservableObject {
         UserDefaults.standard.set(data, forKey: Self.cacheKey)
     }
 
-    func load() async {
+    func load(force: Bool = false) async {
+        if !force, let last = lastLoadedAt, Date().timeIntervalSince(last) < minReloadInterval {
+            return
+        }
         loadCache()
         isOffline = false
         isLoading = books.isEmpty
@@ -57,10 +66,16 @@ final class LibraryViewModel: ObservableObject {
         }
 
         do {
+            let coversBefore = books.map { "\($0.id)|\($0.coverBlobUrl ?? "")" }
             let fetched = try await APIClient.shared.getMyBooks()
             books = fetched
             saveCache(fetched)
-            imageRefreshToken = UUID()
+            lastLoadedAt = Date()
+            // Only bust cover-image caches when a cover actually changed — bumping the
+            // token unconditionally re-renders every cover on each foreground (the visible
+            // "flicker"), even when nothing changed.
+            let coversAfter = fetched.map { "\($0.id)|\($0.coverBlobUrl ?? "")" }
+            if coversBefore != coversAfter { imageRefreshToken = UUID() }
             // Keep the app icon badge in sync with total unread on every load
             // (initial, pull-to-refresh, foreground). Pushes set it while backgrounded.
             try? await UNUserNotificationCenter.current().setBadgeCount(fetched.reduce(0) { $0 + $1.unreadCount })
@@ -87,7 +102,7 @@ final class LibraryViewModel: ObservableObject {
             let wasOffline = prevStatus.value.map { $0 != .satisfied } ?? false
             prevStatus.value = path.status
             guard wasOffline, path.status == .satisfied else { return }
-            Task { await self?.load() }
+            Task { await self?.load(force: true) }
         }
         monitor.start(queue: DispatchQueue(label: "library-net-monitor"))
     }
@@ -116,7 +131,7 @@ final class LibraryViewModel: ObservableObject {
         clubId = club.id
         clubName = club.name
         books = []
-        Task { await load() }
+        Task { await load(force: true) }
     }
 
     // Switch the active club context without clearing/reloading — `books` already holds every
