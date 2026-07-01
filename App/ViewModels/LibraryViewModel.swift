@@ -44,21 +44,46 @@ final class LibraryViewModel: ObservableObject {
         if !force, let last = lastLoadedAt, Date().timeIntervalSince(last) < minReloadInterval {
             return
         }
-        loadCache()
-        isOffline = false
-        isLoading = books.isEmpty
-        errorMessage = nil
+        // Every @Published write here re-renders LibraryView; a re-render mid-refresh cancels
+        // the .refreshable Task (→ -999 → blank/flicker). So only write when the value actually
+        // changes — a refresh where nothing changed must produce zero re-renders until the end.
+        if books.isEmpty { loadCache() }
+        if isOffline { isOffline = false }
+        let wantLoading = books.isEmpty
+        if isLoading != wantLoading { isLoading = wantLoading }
+        if errorMessage != nil { errorMessage = nil }
 
-        let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
-        myClubs = clubs
+        // Only trust an authoritative clubs list to (re)select the active club. A *failed*
+        // fetch must NOT be read as "you have no clubs" — doing so wiped clubId to nil and
+        // left every section filtering on nil → a silent blank page with no error/retry.
+        let clubs: [Club]
+        do {
+            clubs = try await APIClient.shared.getMyClubs()
+        } catch let error where error.isCancellation {
+            // A cancelled request (e.g. the refreshable's Task torn down by a re-render) is NOT
+            // a failure — never mutate club/books/error state on it, or we blank a good UI.
+            isLoading = false
+            return
+        } catch {
+            // Keep the current club + cached books; surface offline/error instead of blanking.
+            if books.isEmpty { errorMessage = "Unable to load. Check your connection." }
+            else { isOffline = true }
+            isLoading = false
+            return
+        }
+        if myClubs.map({ "\($0.id)|\($0.name)" }) != clubs.map({ "\($0.id)|\($0.name)" }) {
+            myClubs = clubs
+        }
         if TokenStore.shared.clubId == nil || !clubs.contains(where: { $0.id == TokenStore.shared.clubId }) {
             let first = clubs.first
             TokenStore.shared.clubId = first?.id
             TokenStore.shared.clubName = first?.name
         }
 
-        clubId = TokenStore.shared.clubId
-        clubName = TokenStore.shared.clubName ?? myClubs.first(where: { $0.id == clubId })?.name
+        let newClubId = TokenStore.shared.clubId
+        if clubId != newClubId { clubId = newClubId }
+        let newClubName = TokenStore.shared.clubName ?? myClubs.first(where: { $0.id == clubId })?.name
+        if clubName != newClubName { clubName = newClubName }
 
         guard clubId != nil else {
             isLoading = false
@@ -68,8 +93,10 @@ final class LibraryViewModel: ObservableObject {
         do {
             let coversBefore = books.map { "\($0.id)|\($0.coverBlobUrl ?? "")" }
             let fetched = try await APIClient.shared.getMyBooks()
-            books = fetched
-            saveCache(fetched)
+            if books != fetched {
+                books = fetched
+                saveCache(fetched)
+            }
             lastLoadedAt = Date()
             // Only bust cover-image caches when a cover actually changed — bumping the
             // token unconditionally re-renders every cover on each foreground (the visible
@@ -79,7 +106,7 @@ final class LibraryViewModel: ObservableObject {
             // Keep the app icon badge in sync with total unread on every load
             // (initial, pull-to-refresh, foreground). Pushes set it while backgrounded.
             try? await UNUserNotificationCenter.current().setBadgeCount(fetched.reduce(0) { $0 + $1.unreadCount })
-        } catch is CancellationError {
+        } catch let error where error.isCancellation {
             isLoading = false
             return
         } catch {
@@ -144,6 +171,15 @@ final class LibraryViewModel: ObservableObject {
         TokenStore.shared.clubName = name
         clubId = id
         clubName = name
+    }
+}
+
+extension Error {
+    /// A Swift task cancellation or a URLSession `-999` cancelled request — both mean the
+    /// request was superseded/torn down, not that it failed. Callers must not surface these
+    /// as errors or mutate UI state on them.
+    var isCancellation: Bool {
+        self is CancellationError || (self as? URLError)?.code == .cancelled
     }
 }
 
