@@ -26,7 +26,7 @@ struct LibraryView: View {
                     if let error = viewModel.errorMessage {
                         VStack(spacing: 12) {
                             Text(error).foregroundColor(.secondary)
-                            Button("Retry") { Task { await viewModel.load() } }
+                            Button("Retry") { Task { await viewModel.load(force: true) } }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
@@ -89,7 +89,7 @@ struct LibraryView: View {
 }
                 .padding(.vertical)
             }
-            .refreshable { await viewModel.load() }
+            .refreshable { await viewModel.load(force: true) }
             .overlay { if viewModel.isLoading { ProgressView() } }
             .navigationTitle(viewModel.clubName ?? "Library")
             .navigationDestination(for: Book.self) { book in
@@ -281,7 +281,7 @@ struct AddBookSheetWrapper: View {
                     } else {
                         Text("Couldn't load club info.")
                             .foregroundColor(.secondary)
-                        Button("Retry") { Task { await viewModel.load() } }
+                        Button("Retry") { Task { await viewModel.load(force: true) } }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
