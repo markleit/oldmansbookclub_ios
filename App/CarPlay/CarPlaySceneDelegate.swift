@@ -273,9 +273,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.updateSections([CPListSection(items: items)])
     }
 
+    // Leading icon for book rows — a consistent book glyph so the list reads as a bookshelf.
+    private static let bookRowIcon: UIImage? = UIImage(
+        systemName: "book.closed.fill",
+        withConfiguration: UIImage.SymbolConfiguration(pointSize: 36, weight: .regular))?
+        .withTintColor(.label, renderingMode: .alwaysOriginal)
+
     private func bookSections(_ books: [Book]) -> [CPListSection] {
         let items = books.map { book -> CPListItem in
-            let item = CPListItem(text: book.title, detailText: book.unreadCount > 0 ? "\(book.unreadCount) new" : nil)
+            let item = CPListItem(text: book.title,
+                                  detailText: book.unreadCount > 0 ? "\(book.unreadCount) new" : nil,
+                                  image: Self.bookRowIcon)
             item.handler = { [weak self] _, completion in
                 Task { await self?.openBook(book); completion() }
             }
