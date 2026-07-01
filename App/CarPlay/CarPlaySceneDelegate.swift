@@ -274,10 +274,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     }
 
     // Leading icon for book rows — a consistent book glyph so the list reads as a bookshelf.
+    // Template (not a baked color) so CarPlay tints it for the current appearance — a fixed
+    // .label color resolves once at creation (light = black) and stays invisible in dark mode.
     private static let bookRowIcon: UIImage? = UIImage(
         systemName: "book.closed.fill",
         withConfiguration: UIImage.SymbolConfiguration(pointSize: 36, weight: .regular))?
-        .withTintColor(.label, renderingMode: .alwaysOriginal)
+        .withRenderingMode(.alwaysTemplate)
 
     private func bookSections(_ books: [Book]) -> [CPListSection] {
         let items = books.map { book -> CPListItem in
