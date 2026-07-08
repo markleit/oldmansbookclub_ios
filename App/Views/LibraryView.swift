@@ -217,11 +217,12 @@ struct UnreadBadge: View {
 struct CurrentBookCard: View {
     let book: Book
     var refreshToken: UUID = UUID()
+    @ObservedObject private var unreadStore = UnreadStore.shared
 
     var body: some View {
         HStack(spacing: 16) {
             CachedBookCover(urlString: book.coverBlobUrl, width: 80, height: 120, cornerRadius: 8, refreshToken: refreshToken)
-                .overlay(alignment: .topTrailing) { UnreadBadge(count: book.unreadCount) }
+                .overlay(alignment: .topTrailing) { UnreadBadge(count: unreadStore.counts[book.id] ?? 0) }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(book.title)
@@ -247,11 +248,12 @@ struct CurrentBookCard: View {
 struct PastBookRow: View {
     let book: Book
     var refreshToken: UUID = UUID()
+    @ObservedObject private var unreadStore = UnreadStore.shared
 
     var body: some View {
         HStack(spacing: 12) {
             CachedBookCover(urlString: book.coverBlobUrl, width: 36, height: 52, cornerRadius: 4, refreshToken: refreshToken)
-                .overlay(alignment: .topTrailing) { UnreadBadge(count: book.unreadCount) }
+                .overlay(alignment: .topTrailing) { UnreadBadge(count: unreadStore.counts[book.id] ?? 0) }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(book.title).font(.headline).foregroundColor(.primary)

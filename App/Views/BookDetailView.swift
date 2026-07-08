@@ -9,9 +9,11 @@ struct BookDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: BookViewModel
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
-    // Observed so the title's unread (unheard-voice) count updates live as messages
-    // are played / marked heard.
+    // Observed so voice bubbles re-render live as messages are played / marked heard.
     @ObservedObject private var playbackStore = PlaybackProgressStore.shared
+    // Single source of truth for the unread count shown in the title (same value the
+    // club-view + icon badges use).
+    @ObservedObject private var unreadStore = UnreadStore.shared
     // Observed so the reply banner's voice transcript appears when it finishes.
     @ObservedObject private var transcripts = TranscriptStore.shared
     @State private var showingDeleteConfirm = false
@@ -298,7 +300,8 @@ struct BookDetailView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: viewModel.typingIndicator)
         .onChange(of: viewModel.messageText) { _ in viewModel.notifyTyping() }
-        .navigationTitle(unheardVoiceMessages.isEmpty ? viewModel.book.title : "\(viewModel.book.title) (\(unheardVoiceMessages.count))")
+        .navigationTitle({ let n = unreadStore.counts[viewModel.book.id] ?? 0
+            return n == 0 ? viewModel.book.title : "\(viewModel.book.title) (\(n))" }())
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -362,7 +365,10 @@ struct BookDetailView: View {
             // Report the voice message as heard (sticky, server-side) for receipts + unread.
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
-                Task { try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId) }
+                Task { @MainActor in
+                    vm.syncUnread()   // local completed state already set → reflect to all surfaces
+                    try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId)
+                }
             }
             // Auto-advance to the next (newer) voice message in the chat, if any.
             AudioPlayerService.shared.nextToPlay = { [weak viewModel] completedId in
@@ -428,14 +434,24 @@ struct BookDetailView: View {
             Label("Details", systemImage: "info.circle")
         }
         Divider()
-        if !unheardVoiceMessages.isEmpty {
+        if (unreadStore.counts[viewModel.book.id] ?? 0) > 0 {
             Button {
+                // Mark every type consumed so the count zeroes on all surfaces: voice →
+                // heard, text/photo/video → read (advance last-seen to newest). Local
+                // first (instant), then both server calls; next load reconciles.
                 PlaybackProgressStore.shared.markHeard(
                     unheardVoiceMessages.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
                 )
-                Task { try? await APIClient.shared.markAllHeard(bookId: viewModel.book.id) }
+                UnreadStore.shared.zero(bookId: viewModel.book.id)
+                let latestId = viewModel.visibleMessages.first?.id
+                Task {
+                    try? await APIClient.shared.markAllHeard(bookId: viewModel.book.id)
+                    if let latestId {
+                        try? await APIClient.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
+                    }
+                }
             } label: {
-                Label("Mark all as heard", systemImage: "checkmark.circle")
+                Label("Mark all as read", systemImage: "checkmark.circle")
             }
             Divider()
         }
@@ -580,6 +596,7 @@ struct MessageRow: View {
                 if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
                     Button {
                         PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
+                        viewModel.syncUnread()   // reflect to title + club + icon badges
                         Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
                     } label: {
                         Label("Mark as Heard", systemImage: "checkmark.circle")
