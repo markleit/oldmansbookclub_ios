@@ -1178,9 +1178,13 @@ private func formatMessageDate(_ date: Date) -> String {
     if calendar.isDateInToday(date) {
         return date.formatted(date: .omitted, time: .shortened)
     } else if let days = calendar.dateComponents([.day], from: date, to: now).day, days < 7 {
-        return date.formatted(.dateTime.weekday(.wide))
+        // Include the time so a weekday ("Tuesday") is actually referenceable — there
+        // are many Tuesdays (#89/#63). e.g. "Tuesday 3:45 PM".
+        return date.formatted(.dateTime.weekday(.wide).hour().minute())
     } else {
-        return date.formatted(date: .abbreviated, time: .omitted)
+        // Older messages: full date + time so they can be pinpointed, e.g.
+        // "Jul 3, 2026, 3:45 PM".
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 

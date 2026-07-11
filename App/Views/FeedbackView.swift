@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import SafariServices
 import Speech
 import AVFoundation
@@ -186,6 +187,13 @@ struct FeedbackComposeView: View {
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: { Text(errorMessage ?? "") }
         }
+        // Keep the screen awake while dictating feedback. The feedback recorder is its
+        // own path, separate from the chat recorder (which already does this) — without
+        // it the display auto-locks mid-dictation and it's unclear recording continues (#64).
+        .onChange(of: isRecording) { recording in
+            UIApplication.shared.isIdleTimerDisabled = recording
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
     private func toggleRecording() async {
