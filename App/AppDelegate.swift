@@ -34,6 +34,25 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    // A new-message push (content-available:1) woke us in the background. Prefetch the message
+    // into the chat cache so opening that chat is instant, then report the result so iOS keeps
+    // scheduling our wakes. Best-effort — iOS throttles background execution.
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        guard let bookIdStr = userInfo["bookId"] as? String,
+              let bookId = UUID(uuidString: bookIdStr) else {
+            completionHandler(.noData)
+            return
+        }
+        Task {
+            let gotNewData = await MessagePrefetcher.shared.prefetch(bookId: bookId)
+            completionHandler(gotNewData ? .newData : .noData)
+        }
+    }
+
     // The system relaunched us (or woke us) to finish delivering background upload events.
     // Hand the completion handler to the service; it's called once all events are delivered.
     func application(

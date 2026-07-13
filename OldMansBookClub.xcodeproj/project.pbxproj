@@ -22,9 +22,11 @@
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A518484880F73D42F012B0EA /* FeedbackView.swift */; };
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
+		54E906D217E3615C95F93FD4 /* MessagePrefetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */; };
 		57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22282622C7A5BEAAEE8961CE /* AudioCue.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
 		59ECDF29F8EB5F808607ADAC /* BackgroundTaskBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */; };
+		5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */; };
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
 		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
@@ -70,6 +72,7 @@
 		3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
 		40CB6C91B09B06C1D5531269 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSendQueue.swift; sourceTree = "<group>"; };
+		4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePrefetcher.swift; sourceTree = "<group>"; };
 		59E0F879AC20F63014F28CB5 /* BookDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailView.swift; sourceTree = "<group>"; };
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
 		62112635C861D78687D704A9 /* BrowseClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseClubsView.swift; sourceTree = "<group>"; };
@@ -93,6 +96,7 @@
 		CD42813D21DFB8362B19ACCF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D395542233ADC1273F05370D /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		D69018BA34CF925339F43265 /* AdminView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminView.swift; sourceTree = "<group>"; };
+		DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatCache.swift; sourceTree = "<group>"; };
 		DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		DEE74273F3039AFB33F97C01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E03A3E7B2C78427DBBADED06 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
@@ -141,8 +145,10 @@
 				3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */,
 				785A72030A13869F8B069614 /* BackgroundUploadService.swift */,
 				8994D3123C1F58B7C697E408 /* CacheService.swift */,
+				DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */,
 				EF8FBEB2C7086C94FA433207 /* ChatService.swift */,
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
+				4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 				C05DE224CB1318D203D6469B /* TranscriptStore.swift */,
@@ -317,6 +323,7 @@
 				301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */,
 				DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */,
 				3CC240C8A15A7B6730EBC4E1 /* CarPlaySceneDelegate.swift in Sources */,
+				5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */,
 				958AF33D661E4DE915A5862A /* ChatService.swift in Sources */,
 				F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */,
 				CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */,
@@ -330,6 +337,7 @@
 				BCA5F7DF4BA711C8459C0438 /* MediaSendQueue.swift in Sources */,
 				4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */,
 				8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */,
+				54E906D217E3615C95F93FD4 /* MessagePrefetcher.swift in Sources */,
 				3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */,
 				58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */,
 				3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */,

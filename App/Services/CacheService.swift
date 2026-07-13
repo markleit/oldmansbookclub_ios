@@ -34,6 +34,19 @@ final class CacheService {
         }
     }
 
+    // Synchronous variant: blocks until the encode+write finishes, serialized behind any
+    // queued async saves. Used on a background push wake, where returning before the write
+    // lands risks the app being suspended and the data lost.
+    func saveSync<T: Encodable & Sendable>(_ value: T, key: String) {
+        let url = fileURL(key: key)
+        ioQueue.sync {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let data = try? encoder.encode(value) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
         guard let data = try? Data(contentsOf: fileURL(key: key)) else { return nil }
         return try? decoder.decode(type, from: data)
