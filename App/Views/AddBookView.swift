@@ -3,7 +3,20 @@ import SwiftUI
 struct AddBookView: View {
     @Environment(\.dismiss) private var dismiss
     let clubId: UUID
-    var onAdded: (Book) -> Void
+    // Non-nil = edit an existing book (title/author only); nil = add a new book.
+    private let editingBook: Book?
+    var onSaved: (Book) -> Void
+
+    init(clubId: UUID, editingBook: Book? = nil, onSaved: @escaping (Book) -> Void) {
+        self.clubId = clubId
+        self.editingBook = editingBook
+        self.onSaved = onSaved
+        _title = State(initialValue: editingBook?.title ?? "")
+        _author = State(initialValue: editingBook?.author ?? "")
+        _coverUrl = State(initialValue: editingBook?.coverBlobUrl)
+    }
+
+    private var isEditing: Bool { editingBook != nil }
 
     @State private var title = ""
     @State private var author = ""
@@ -24,13 +37,18 @@ struct AddBookView: View {
                 Section {
                     TextField("e.g. Dune", text: $title)
                         .onChange(of: title) { _ in
+                            // Editing an existing book is manual only — no live search
+                            // clobbering the title/author/cover the admin is correcting.
+                            guard !isEditing else { return }
                             if suppressSearch { suppressSearch = false; return }
                             scheduleSearch()
                         }
                 } header: {
                     Text("Title")
                 } footer: {
-                    Text("Start typing to search for cover art and author.")
+                    if !isEditing {
+                        Text("Start typing to search for cover art and author.")
+                    }
                 }
 
                 if isSearching || coverUrl != nil {
@@ -78,7 +96,7 @@ struct AddBookView: View {
                     }
                 }
             }
-            .navigationTitle("Add Book")
+            .navigationTitle(isEditing ? "Edit Book" : "Add Book")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -88,7 +106,7 @@ struct AddBookView: View {
                     if isLoading {
                         ProgressView()
                     } else {
-                        Button("Add") { Task { await add() } }
+                        Button(isEditing ? "Save" : "Add") { Task { await save() } }
                             .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
@@ -143,20 +161,22 @@ struct AddBookView: View {
         coverUrl = result.coverUrl
     }
 
-    private func add() async {
+    private func save() async {
         isLoading = true
         errorMessage = nil
+        let t = title.trimmingCharacters(in: .whitespaces)
+        let a = author.trimmingCharacters(in: .whitespaces)
         do {
-            let book = try await APIClient.shared.createBook(
-                clubId: clubId,
-                title: title.trimmingCharacters(in: .whitespaces),
-                author: author.trimmingCharacters(in: .whitespaces),
-                coverUrl: coverUrl
-            )
-            onAdded(book)
+            let book: Book
+            if let editing = editingBook {
+                book = try await APIClient.shared.updateBook(bookId: editing.id, title: t, author: a)
+            } else {
+                book = try await APIClient.shared.createBook(clubId: clubId, title: t, author: a, coverUrl: coverUrl)
+            }
+            onSaved(book)
             dismiss()
         } catch {
-            errorMessage = "Failed to add book. Please try again."
+            errorMessage = isEditing ? "Failed to save changes. Please try again." : "Failed to add book. Please try again."
         }
         isLoading = false
     }

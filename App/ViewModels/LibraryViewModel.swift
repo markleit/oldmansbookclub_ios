@@ -145,6 +145,14 @@ final class LibraryViewModel: ObservableObject {
         saveCache(books)
     }
 
+    func bookUpdated(_ book: Book) {
+        if let idx = books.firstIndex(where: { $0.id == book.id }) {
+            books[idx].title = book.title
+            books[idx].author = book.author
+            saveCache(books)
+        }
+    }
+
     func bookStatusChanged(_ book: Book, status: BookStatus) {
         if let idx = books.firstIndex(where: { $0.id == book.id }) {
             books[idx].status = status

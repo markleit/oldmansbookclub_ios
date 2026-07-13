@@ -913,6 +913,13 @@ final class BookViewModel: ObservableObject {
         }
     }
 
+    // Reflect an "Edit Book" save locally — only title/author change; keep the rest
+    // (status, unread count, cover, metadata) as-is.
+    func applyEdit(_ updated: Book) {
+        book.title = updated.title
+        book.author = updated.author
+    }
+
     func setStatus(_ status: BookStatus) async {
         do {
             try await APIClient.shared.setBookStatus(bookId: book.id, status: status)

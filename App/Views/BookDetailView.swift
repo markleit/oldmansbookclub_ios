@@ -18,6 +18,7 @@ struct BookDetailView: View {
     @ObservedObject private var transcripts = TranscriptStore.shared
     @State private var showingDeleteConfirm = false
     @State private var showingDetails = false
+    @State private var showingEdit = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
     // Tracks rows currently rendered by LazyVStack (slight superset of the visible
     // viewport since LazyVStack keeps a small buffer). Used only to auto-dismiss
@@ -32,11 +33,13 @@ struct BookDetailView: View {
     @State private var targetMessageId: UUID? = nil
     var onDeleted: (() -> Void)?
     var onStatusChanged: ((BookStatus) -> Void)?
+    var onUpdated: ((Book) -> Void)?
 
-    init(book: Book, onDeleted: (() -> Void)? = nil, onStatusChanged: ((BookStatus) -> Void)? = nil) {
+    init(book: Book, onDeleted: (() -> Void)? = nil, onStatusChanged: ((BookStatus) -> Void)? = nil, onUpdated: ((Book) -> Void)? = nil) {
         _viewModel = StateObject(wrappedValue: BookViewModel(book: book))
         self.onDeleted = onDeleted
         self.onStatusChanged = onStatusChanged
+        self.onUpdated = onUpdated
     }
 
     var body: some View {
@@ -347,6 +350,12 @@ struct BookDetailView: View {
         .sheet(isPresented: $showingDetails) {
             BookDetailsView(book: viewModel.book)
         }
+        .sheet(isPresented: $showingEdit) {
+            AddBookView(clubId: viewModel.book.clubId, editingBook: viewModel.book) { updated in
+                viewModel.applyEdit(updated)
+                onUpdated?(updated)
+            }
+        }
         .overlay(alignment: .top) {
             if viewModel.messageSaved {
                 Label("Message saved", systemImage: "bookmark.fill")
@@ -432,6 +441,9 @@ struct BookDetailView: View {
     private var bookMenuItems: some View {
         Button { showingDetails = true } label: {
             Label("Details", systemImage: "info.circle")
+        }
+        Button { showingEdit = true } label: {
+            Label("Edit Book", systemImage: "pencil")
         }
         Divider()
         if (unreadStore.counts[viewModel.book.id] ?? 0) > 0 {

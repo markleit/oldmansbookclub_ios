@@ -96,7 +96,8 @@ struct LibraryView: View {
                 BookDetailView(
                     book: book,
                     onDeleted: { viewModel.bookDeleted(book) },
-                    onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) }
+                    onStatusChanged: { viewModel.bookStatusChanged(book, status: $0) },
+                    onUpdated: { viewModel.bookUpdated($0) }
                 )
                 // Distinct identity per book so a deep link that swaps one book for
                 // another at the same stack depth rebuilds the view (and its

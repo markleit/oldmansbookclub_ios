@@ -222,6 +222,27 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
     }
 
+    // Edit a book's title/author (backs the "Edit Book" action). Club-admin only, like
+    // create/delete. Cover + metadata are left untouched.
+    [HttpPatch("{bookId}")]
+    public async Task<ActionResult<BookDto>> UpdateBook(Guid bookId, [FromBody] UpdateBookRequest request)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
+
+        var title = request.Title?.Trim();
+        if (string.IsNullOrEmpty(title)) return BadRequest("Title is required.");
+        book.Title = title;
+        book.Author = request.Author?.Trim() ?? "";
+        await db.SaveChangesAsync();
+
+        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
+    }
+
     [HttpDelete("{bookId}")]
     public async Task<IActionResult> DeleteBook(Guid bookId)
     {

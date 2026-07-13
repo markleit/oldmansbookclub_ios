@@ -271,6 +271,15 @@ final class APIClient {
         return try await post(path: "/books", body: body, authenticated: true)
     }
 
+    struct UpdateBookRequest: Encodable {
+        let title: String
+        let author: String
+    }
+
+    func updateBook(bookId: UUID, title: String, author: String) async throws -> Book {
+        try await patch(path: "/books/\(bookId.uuidString)", body: UpdateBookRequest(title: title, author: author))
+    }
+
     struct BookSearchResult: Identifiable, Decodable {
         let id = UUID()
         let title: String

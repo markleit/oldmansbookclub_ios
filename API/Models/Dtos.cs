@@ -72,6 +72,7 @@ public record SetRoleRequest(bool IsAdmin);
 public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, string? SenderName = null);
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status, string? Description, int? PublishedYear, int? PageCount, int UnreadCount = 0);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl);
+public record UpdateBookRequest(string Title, string Author);
 public record SetBookStatusRequest(string Status);
 public record SetTranscriptRequest(string Transcript);
 public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);
