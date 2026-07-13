@@ -147,8 +147,6 @@ final class BookViewModel: ObservableObject {
             avatarUrl: p.avatarUrl, lastSeenMessageId: lastSeen, heardMessageIds: Array(heard)))
     }
 
-    private var cacheKey: String { "messages_\(book.id)" }
-
     // Optimistic text messages awaiting their server echo, tracked by clientId (the
     // server echoes it back). Keyed by id — not body — so identical consecutive sends
     // don't clobber each other (#35).
@@ -168,20 +166,17 @@ final class BookViewModel: ObservableObject {
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
     private let maxAutoRetries = 5
-    private let maxCachedMessages = 1000  // ~weeks of normal chat at modest disk cost
 
     init(book: Book) {
         self.book = book
     }
 
     func load() async {
-        let hasCachedState: Bool
-        if let cached = CacheService.shared.load([Message].self, key: cacheKey) {
-            messages = cached
-            hasCachedState = true
-        } else {
-            hasCachedState = false
-        }
+        // A background push wake may have warmed this cache already, so the chat renders
+        // instantly instead of waiting on the fetch below.
+        let cached = ChatCache.load(bookId: book.id)
+        let hasCachedState = !cached.isEmpty
+        if hasCachedState { messages = cached }
         isOffline = false
         isLoadingMessages = !hasCachedState
         reachedBeginning = false
@@ -195,27 +190,17 @@ final class BookViewModel: ObservableObject {
 
         do {
             let fetched = try await messagesFetch
-            // Merge by id so previously-paginated older messages and unconfirmed
-            // optimistic entries survive across refresh. Fresh fetch wins on
-            // overlapping ids (server-side edits propagate).
-            var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-            let myId = TokenStore.shared.userId
-            for msg in fetched {
-                // Reconcile a confirmed server message with its optimistic copy when the
-                // live SignalR echo was missed (app backgrounded/killed mid-send). The
-                // optimistic entry's id equals our clientId. Clear the queue/pending entry
-                // even when the optimistic copy ISN'T in memory — on a cold launch the cache
-                // excludes pending sends, so byId[cid] is nil and the entry would otherwise
-                // survive: restorePendingMediaBubbles would resurrect it as a ghost that can
-                // never reconcile (its re-send echo is dropped because the server id is
-                // already loaded here) and stick permanently on .failed.
-                if let cid = msg.clientId, msg.senderId == myId {
-                    byId.removeValue(forKey: cid)
-                    clearPendingSend(clientId: cid)
-                }
-                byId[msg.id] = msg
-            }
-            messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
+            // Merge by id so previously-paginated older messages and unconfirmed optimistic
+            // entries survive across refresh; fresh fetch wins on overlapping ids (server-side
+            // edits propagate). Reconciled client ids are the confirmed sends whose optimistic
+            // copy was dropped — clear each one's queue/pending entry even when the optimistic
+            // copy ISN'T in memory: on a cold launch the cache excludes pending sends, so the
+            // entry would otherwise survive and restorePendingMediaBubbles would resurrect it as
+            // a ghost that can never reconcile (its re-send echo is dropped because the server id
+            // is already loaded here) and stick permanently on .failed.
+            let merged = ChatCache.merge(existing: messages, incoming: fetched, myUserId: TokenStore.shared.userId)
+            messages = merged.messages
+            for cid in merged.reconciledClientIds { clearPendingSend(clientId: cid) }
             saveMessagesCache()
             prefetchRecentVoiceAudio()
 
@@ -793,11 +778,8 @@ final class BookViewModel: ObservableObject {
     // relaunch doesn't show ghost messages that never actually got delivered.
     private func saveMessagesCache() {
         let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
-        let confirmed = messages.filter {
-            !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)
-        }
-        let bounded = Array(confirmed.prefix(maxCachedMessages))
-        CacheService.shared.save(bounded, key: cacheKey)
+        let pending = pendingTextIds.union(pendingMediaIds)
+        ChatCache.save(messages, bookId: book.id, excludingPending: pending)
     }
 
     // Safety net for silent SignalR failures: if invoke() returns success but the

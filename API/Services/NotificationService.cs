@@ -125,13 +125,18 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
                 : $"{message.SenderName}: {message.Body}"
         };
 
+        // content-available:1 wakes the client in the background to prefetch the message into its
+        // chat cache (instant open). Kept alongside the visible alert as a combined push, so the
+        // banner still shows; background execution is best-effort (iOS throttles it). A Dictionary
+        // is used for aps because the key literally contains a hyphen.
         var payload = JsonSerializer.Serialize(new
         {
-            aps = new
+            aps = new Dictionary<string, object>
             {
-                alert = new { title = bookTitle, body = alertBody },
-                sound = "default",
-                badge
+                ["alert"] = new { title = bookTitle, body = alertBody },
+                ["sound"] = "default",
+                ["badge"] = badge,
+                ["content-available"] = 1
             },
             clubId = message.ClubId.ToString(),
             bookId = bookId.ToString(),

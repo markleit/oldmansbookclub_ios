@@ -27,9 +27,12 @@
     <!-- Required so audio keeps playing (un-throttled) while the phone is locked/backgrounded
          during CarPlay. Without it iOS throttles the app in the background → audio skips/
          stutters (was masked by the debugger, which suppresses background throttling). -->
+    <!-- remote-notification lets a new-message push (content-available:1) wake the app in the
+         background to prefetch the message into the chat cache, so opening the chat is instant. -->
     <key>UIBackgroundModes</key>
     <array>
         <string>audio</string>
+        <string>remote-notification</string>
     </array>
     <key>UIApplicationSceneManifest</key>
     <dict>
