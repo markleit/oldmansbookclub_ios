@@ -172,6 +172,9 @@ final class BookViewModel: ObservableObject {
     }
 
     func load() async {
+        // This chat now owns its unread count (see UnreadStore.setActiveBook); a concurrent
+        // foreground library reload must not clobber it with lagging server truth.
+        UnreadStore.shared.setActiveBook(book.id)
         // A background push wake may have warmed this cache already, so the chat renders
         // instantly instead of waiting on the fetch below.
         let cached = ChatCache.load(bookId: book.id)
@@ -929,6 +932,8 @@ final class BookViewModel: ObservableObject {
         networkMonitor = nil
         cancelEchoTimeouts()
         stopLifecycleObservers()
+        // Hand unread authority back to server truth (library reloads may now update this book).
+        if UnreadStore.shared.activeBookIdIsCurrent(book.id) { UnreadStore.shared.setActiveBook(nil) }
         Task { await ChatService.shared.disconnect() }
     }
 
