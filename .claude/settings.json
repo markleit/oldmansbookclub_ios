@@ -7,6 +7,8 @@
       "Bash(lsof -i :*)",
       "Bash(az account show *)",
       "Bash(az webapp log tail *)",
+      "Bash(az webapp log download *)",
+      "Bash(az webapp show *)",
       "Bash(xcode-select -p)"
     ]
   }
