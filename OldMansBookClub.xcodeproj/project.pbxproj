@@ -17,6 +17,7 @@
 		301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8994D3123C1F58B7C697E408 /* CacheService.swift */; };
 		363A0B3B09A3515D08C1476D /* ManageClubsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 345BF07C510F9CAACFA8BD0C /* ManageClubsView.swift */; };
 		3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */; };
+		398B5A1A34560D1CC2DC71C1 /* UnreadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5A48CCFD136D8940110FEF /* UnreadStore.swift */; };
 		3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */; };
 		3CC240C8A15A7B6730EBC4E1 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
@@ -100,6 +101,7 @@
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
+		FF5A48CCFD136D8940110FEF /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -146,6 +148,7 @@
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 				C05DE224CB1318D203D6469B /* TranscriptStore.swift */,
+				FF5A48CCFD136D8940110FEF /* UnreadStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -340,6 +343,7 @@
 				C1446459207EFE368581046D /* SettingsView.swift in Sources */,
 				D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */,
 				BE17F4E08A9013771FDE6A47 /* TranscriptStore.swift in Sources */,
+				398B5A1A34560D1CC2DC71C1 /* UnreadStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

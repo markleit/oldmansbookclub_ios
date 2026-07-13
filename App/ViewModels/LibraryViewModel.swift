@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import UserNotifications
 
 @MainActor
 final class LibraryViewModel: ObservableObject {
@@ -103,9 +102,11 @@ final class LibraryViewModel: ObservableObject {
             // "flicker"), even when nothing changed.
             let coversAfter = fetched.map { "\($0.id)|\($0.coverBlobUrl ?? "")" }
             if coversBefore != coversAfter { imageRefreshToken = UUID() }
-            // Keep the app icon badge in sync with total unread on every load
-            // (initial, pull-to-refresh, foreground). Pushes set it while backgrounded.
-            try? await UNUserNotificationCenter.current().setBadgeCount(fetched.reduce(0) { $0 + $1.unreadCount })
+            // Reconcile the shared unread store (and the app icon badge, which it owns)
+            // to server truth on every load (initial, pull-to-refresh, foreground). This
+            // is the convergence point that heals any optimistic local drift; pushes set
+            // the badge while backgrounded.
+            UnreadStore.shared.seed(from: fetched)
         } catch let error where error.isCancellation {
             isLoading = false
             return

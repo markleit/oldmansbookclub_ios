@@ -51,6 +51,23 @@ final class BookViewModel: ObservableObject {
         messages.filter { !blockedUserIds.contains($0.senderId) }
     }
 
+    // This book's unread count computed from local state, matching the server's
+    // UnreadCalculator definition. While the chat is open we mark everything read on
+    // open and on each receipt (markRead → last-seen = newest), so non-voice always
+    // resolves to read; the remaining unread is unheard voice from others. Written
+    // through to the shared UnreadStore so the club-view + icon badges stay live.
+    var localUnreadCount: Int {
+        visibleMessages.filter {
+            $0.type == .voice && !$0.isDeleted
+                && $0.senderId != TokenStore.shared.userId
+                && !PlaybackProgressStore.shared.isCompleted($0.id)
+        }.count
+    }
+
+    func syncUnread() {
+        UnreadStore.shared.set(bookId: book.id, count: localUnreadCount)
+    }
+
     private func recomputeReadFrontiers() {
         let sentById = Dictionary(messages.map { ($0.id, $0.sentAt) }, uniquingKeysWith: { first, _ in first })
         var map: [UUID: Date] = [:]
@@ -231,6 +248,9 @@ final class BookViewModel: ObservableObject {
         if let id = latestId {
             try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
         }
+        // Reflect the just-read state to every surface (non-voice now read; remaining
+        // unread is unheard voice).
+        syncUnread()
 
         await ChatService.shared.setOnMessageReceived { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
@@ -271,6 +291,9 @@ final class BookViewModel: ObservableObject {
             self.messages.insert(message, at: 0)
             self.saveMessagesCache()
             Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
+            // An incoming voice message from another member bumps this book's unread;
+            // non-voice is immediately marked read above, so it nets to zero.
+            self.syncUnread()
         }
 
         await ChatService.shared.setOnMessageDeleted { [weak self] messageId in
