@@ -74,6 +74,14 @@ final class AudioPlayerService: ObservableObject {
     private var player: AVPlayer?
     private var timerCancellable: AnyCancellable?
     private var bufferCancellable: AnyCancellable?
+    // Authoritative end-of-item + load-failure signals for the item currently playing. The polling
+    // clock in tick() is the primary completion path; these are the backstops that keep the
+    // auto-advance queue moving if the clock misses the end or the item can't load (#93).
+    private var endCancellable: AnyCancellable?
+    private var failCancellable: AnyCancellable?
+    // The item we've already advanced past — dedupes the clock, the didPlayToEnd notification, and a
+    // load failure so they can't advance more than once for the same item.
+    private weak var lastResolvedItem: AVPlayerItem?
     // Set when an explicit reposition happens (new message, resume seek, user seek/skip) so the
     // next tick may accept a backward time. Otherwise tick rejects backward jumps, which are the
     // reused player reporting a stale ~0 time after replaceCurrentItem (the timer "restart").
@@ -318,6 +326,45 @@ final class AudioPlayerService: ObservableObject {
                     }
                 }
             }
+        // Authoritative "this item is done" signal. tick()'s polling clock is the primary path, but
+        // if it misses the end (timer starvation / a pause-at-end race) this still advances the queue.
+        endCancellable = NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: item)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.advancePast(item, heard: true) }
+        // The item couldn't load (e.g. a stale streaming URL) or failed mid-playback. Skip past it
+        // instead of spinning forever on `guard item.status == .readyToPlay` in tick() (#93). A
+        // skipped item is NOT marked heard, so it stays unheard and can be retried after a refresh.
+        failCancellable = Publishers.Merge(
+            item.publisher(for: \.status).filter { $0 == .failed }.map { _ in () },
+            NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime, object: item).map { _ in () }
+        )
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] _ in self?.advancePast(item, heard: false) }
+    }
+
+    // Single funnel for leaving the current item — whether it finished cleanly (heard) or failed to
+    // load/play (skip). Guarded by item identity so the polling clock, the didPlayToEnd
+    // notification, and a load failure can't advance more than once for the same item.
+    private func advancePast(_ item: AVPlayerItem?, heard: Bool) {
+        guard let item, item === player?.currentItem, item !== lastResolvedItem else { return }
+        lastResolvedItem = item
+        guard let finishedId = playingMessageId else { return }
+        if heard {
+            saveCurrentPosition(completed: true)   // mark fully played (green)
+            onPlaybackCompleted?(finishedId)       // mark-heard / UI side effects (CarPlay advance too)
+        } else {
+            Self.alog("🔊 item failed/stalled id=\(finishedId) — skipping to next")
+        }
+        // Reuse the player for the next message (replaceCurrentItem) to keep the wireless CarPlay
+        // transport stream alive across the boundary.
+        if playingMessageId == finishedId, let next = nextToPlay?(finishedId) {
+            play(message: next)
+        }
+        // Nothing advanced (end of queue) — now tear down + release the session.
+        if playingMessageId == finishedId {
+            stopCurrentPlayer(deactivateSession: false)
+            deactivateAudioSession()
+        }
     }
 
     private func stopCurrentPlayer(deactivateSession: Bool = true) {
@@ -325,6 +372,8 @@ final class AudioPlayerService: ObservableObject {
         isUserInitiatedPause = true
         timerCancellable?.cancel()
         bufferCancellable?.cancel()
+        endCancellable?.cancel()
+        failCancellable?.cancel()
         player?.pause()
         player = nil
         playingMessageId = nil
@@ -371,21 +420,7 @@ final class AudioPlayerService: ObservableObject {
         progress = min(current / displayTotal, 1.0)
         currentSeconds = min(Int(current), playingDurationSeconds > 0 ? playingDurationSeconds : Int(duration))
         if current >= duration - 0.05 {
-            let completedId = playingMessageId
-            saveCurrentPosition(completed: true)   // mark fully played (green)
-            // Do NOT tear down the player here — the next message reuses it (replaceCurrentItem)
-            // to keep the wireless CarPlay transport stream alive across the boundary.
-            if let id = completedId {
-                onPlaybackCompleted?(id)        // CarPlay advance() may start the next (reuses player)
-                if playingMessageId == id, let next = nextToPlay?(id) {
-                    play(message: next)         // phone continuous — reuses the player
-                }
-            }
-            // Nothing advanced (end of queue) — now tear down + release the session.
-            if playingMessageId == completedId {
-                stopCurrentPlayer(deactivateSession: false)
-                deactivateAudioSession()
-            }
+            advancePast(item, heard: true)
         }
     }
 
