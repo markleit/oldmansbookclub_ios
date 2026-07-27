@@ -262,8 +262,24 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             guard let self, let template else { return }
             await self.loadClubs(into: template)
         }
-        let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
-        let books = (try? await APIClient.shared.getMyBooks()) ?? []
+        // Instant-paint the root from the phone's cached books (#101) before the network returns,
+        // for the common single-club case (which skips the club chooser and shows books directly).
+        // Only on the first paint (template still empty) so a reappear-refresh doesn't flicker;
+        // multi-club needs club names we don't cache, so it waits for the network below. The
+        // network fetch + seed() reconcile everything to server truth a moment later.
+        if template.sections.isEmpty {
+            let cachedBooks = LibraryViewModel.cachedBooks()
+            if !cachedBooks.isEmpty, Set(cachedBooks.map { $0.clubId }).count == 1 {
+                UnreadStore.shared.seed(from: cachedBooks)
+                template.updateSections(bookSections(cachedBooks))
+            }
+        }
+        // Fetch clubs and books concurrently (#101): they're independent, so awaiting them in
+        // series made the root list wait on two full round-trips before painting.
+        async let clubsReq = APIClient.shared.getMyClubs()
+        async let booksReq = APIClient.shared.getMyBooks()
+        let clubs = (try? await clubsReq) ?? []
+        let books = (try? await booksReq) ?? []
         // Feed the shared UnreadStore so CarPlay and the phone read the SAME counts (#53). The
         // phone displays UnreadStore.counts (which it also mutates locally as you read/hear
         // messages); CarPlay previously showed raw book.unreadCount from its own fetch, so the
@@ -359,6 +375,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             .debounce(for: .seconds(1.5), scheduler: RunLoop.main)
             .sink { _ in Task { await refresh() } }
         interfaceController?.pushTemplate(template, animated: true, completion: nil)
+        // Instant paint from the phone's on-disk message cache (#101) so the list shows
+        // immediately instead of a "Loading…" spinner while the network round-trips. refresh()
+        // then reconciles to server truth. Falls back to "Loading…" if nothing's cached yet.
+        let cached = ChatCache.load(bookId: book.id)
+        if !cached.isEmpty { template.updateSections(messageSections(book: book, messages: cached)) }
         await refresh()   // initial populate; templateWillAppear refreshes on re-entry
     }
 
