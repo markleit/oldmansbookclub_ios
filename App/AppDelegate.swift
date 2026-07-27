@@ -47,11 +47,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             completionHandler(.noData)
             return
         }
+        // Message pushes carry BOTH an alert and content-available:1, so in the foreground this
+        // handler fires ALONGSIDE willPresent — bumping here too would double-count (#96). Only
+        // bump from here when we're actually in the background, where willPresent doesn't fire.
+        let inBackground = application.applicationState == .background
         Task {
             // Live-update the Library badge for a book you're not viewing (#96): a new-message
             // push is the only signal for a non-open book, so bump its unread count optimistically
             // (the next LibraryViewModel.load() → seed() reconciles to server truth).
-            if await ChatService.shared.activeBookId != bookId { await bumpUnread(bookId: bookId) }
+            if inBackground, await ChatService.shared.activeBookId != bookId {
+                await bumpUnread(bookId: bookId)
+            }
             let gotNewData = await MessagePrefetcher.shared.prefetch(bookId: bookId)
             completionHandler(gotNewData ? .newData : .noData)
         }
