@@ -962,7 +962,7 @@ struct VoiceMessageBubble: View {
 
     // All three play/pause controls share one circle "chip" of the same size: a light
     // chip with a dark/accent icon. White chip on own (blue) bubbles and while playing
-    // (black bubble); grey chip on others' (grey) bubbles.
+    // (the active blue bubble); grey chip on others' (grey) bubbles.
     private var chipBackground: Color {
         if isPlaying { return .white }
         // Soft white (not pure white) on own bubbles so the chip doesn't irradiate
@@ -972,7 +972,10 @@ struct VoiceMessageBubble: View {
     }
     private var chipIconColor: Color {
         if isPlaying { return .black }
-        return isMe ? myBlue : Color(.darkGray)
+        // .primary (not the fixed UIColor.darkGray, which doesn't adapt) so the play glyph on
+        // others' grey bubbles stays high-contrast in dark mode too — dark on the light-mode
+        // chip, light on the dark-mode chip, instead of a dark-grey icon vanishing into it.
+        return isMe ? myBlue : .primary
     }
     // Live position while playing; otherwise the persisted resume position.
     private var displayFraction: Double {
@@ -981,10 +984,12 @@ struct VoiceMessageBubble: View {
         return min(store.position(for: message.id) / Double(totalSeconds), 1)
     }
     // Progress bar / thumb color, matched to the play control: white while playing
-    // (black bubble) and on own (blue) bubbles, dark grey on others' (grey) bubbles.
+    // (blue bubble) and on own (blue) bubbles, adaptive on others' (grey) bubbles.
     private var barColor: Color {
         if isPlaying { return .white }
-        return isMe ? .softWhite : Color(.darkGray)
+        // .secondary (not the fixed UIColor.darkGray) so the track stays visible on others'
+        // grey bubbles in dark mode instead of fading into them.
+        return isMe ? .softWhite : .secondary
     }
 
     var body: some View {
