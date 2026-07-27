@@ -3,7 +3,16 @@ import Foundation
 
 @MainActor
 final class AuthViewModel: ObservableObject {
-    @Published var isAuthenticated: Bool
+    @Published var isAuthenticated: Bool {
+        didSet {
+            // Broadcast sign-in/sign-out so out-of-SwiftUI surfaces can react — notably CarPlay
+            // (#59), which observes this to reload its root when you sign in/out on the phone
+            // while the car is connected. didSet doesn't fire for the init assignments, only
+            // real transitions (signIn/signOut/onUnauthorized).
+            guard oldValue != isAuthenticated else { return }
+            NotificationCenter.default.post(name: .authStateDidChange, object: nil)
+        }
+    }
     @Published var needsClubSetup = false
     @Published var pendingApprovalClubName: String?
     @Published var declinedClubName: String?
@@ -228,4 +237,9 @@ final class AuthViewModel: ObservableObject {
         }
     }
     #endif
+}
+
+extension Notification.Name {
+    // Posted when the signed-in/signed-out state changes (see AuthViewModel.isAuthenticated).
+    static let authStateDidChange = Notification.Name("authStateDidChange")
 }

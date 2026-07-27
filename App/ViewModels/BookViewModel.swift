@@ -641,7 +641,10 @@ final class BookViewModel: ObservableObject {
         // uploadedMediaUrl set to run the invoke (which can't happen while suspended anyway).
         guard let mediaUrl = item.uploadedMediaUrl else {
             if await BackgroundUploadService.shared.hasInflightUpload(itemId: item.id) {
-                return  // already uploading in the background; its completion will drive the rest
+                // Already uploading in the background; its completion will drive the rest. Arm the
+                // upload watchdog so a silently-broken completion→invoke chain can't spin forever.
+                scheduleUploadWatchdog(for: item.id)
+                return
             }
             do {
                 let ext = (item.fileName as NSString).pathExtension
@@ -651,7 +654,9 @@ final class BookViewModel: ObservableObject {
                     itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
                     mediaUrl: response.mediaUrl, contentType: item.contentType)
                 // Leave the bubble in .sending; it clears when the upload completes and the
-                // invoke (below, on re-entry) lands the server echo.
+                // invoke (below, on re-entry) lands the server echo. Arm the upload watchdog as a
+                // safety net for that chain (#91) so a stuck send eventually becomes retryable.
+                scheduleUploadWatchdog(for: item.id)
             } catch {
                 MediaSendQueue.shared.incrementRetry(id: item.id)
                 if let idx = messages.firstIndex(where: { $0.id == item.id }) {
@@ -807,6 +812,37 @@ final class BookViewModel: ObservableObject {
             if self.messages[idx].sendState == nil {
                 self.messages[idx].sendState = .failed
             }
+        }
+    }
+
+    // Upload-phase safety net (#91): a media send hands its blob to the background upload and
+    // leaves the bubble .sending, relying on the upload-completion → invoke → echo chain to
+    // finish it. If any link in that chain silently breaks (a missed completion callback, a
+    // dropped connection on re-entry), the bubble would spin forever — which is the reported
+    // "voice message stuck spinning, later messages went through". This flips a genuinely-stuck
+    // item to .failed so the user can retry.
+    //
+    // Guarded so it can't false-fail a legitimately slow transfer: if the upload is still in
+    // flight when it fires, it re-arms instead of failing. The invoke phase's own
+    // scheduleEchoTimeout supersedes this (both key echoTimeoutTasks by id), and backgrounding
+    // cancels it (cancelEchoTimeouts) so a suspended wall-clock can't fire it on resume.
+    private func scheduleUploadWatchdog(for itemId: UUID, after seconds: TimeInterval = 90) {
+        echoTimeoutTasks[itemId]?.cancel()
+        echoTimeoutTasks[itemId] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard let self, !Task.isCancelled else { return }
+            // Still uploading — give it more time rather than failing an in-progress transfer.
+            if await BackgroundUploadService.shared.hasInflightUpload(itemId: itemId) {
+                self.scheduleUploadWatchdog(for: itemId, after: seconds)
+                return
+            }
+            self.echoTimeoutTasks[itemId] = nil
+            // Only fail an item that's still an un-echoed optimistic send stuck in .sending
+            // (the echo would have removed it from the queue and reconciled the bubble's id).
+            guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }),
+                  let idx = self.messages.firstIndex(where: { $0.id == itemId }),
+                  self.messages[idx].sendState == .sending else { return }
+            self.messages[idx].sendState = .failed
         }
     }
 

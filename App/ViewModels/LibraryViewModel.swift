@@ -29,9 +29,15 @@ final class LibraryViewModel: ObservableObject {
     private let minReloadInterval: TimeInterval = 30
 
     private func loadCache() {
-        guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
-              let cached = try? Self.decoder.decode([Book].self, from: data) else { return }
-        books = cached
+        books = Self.cachedBooks()
+    }
+
+    // Read-only access to the persisted book list, so CarPlay can instant-paint its root from the
+    // phone's cache before the network returns (#101) instead of sitting on "Loading…".
+    static func cachedBooks() -> [Book] {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey),
+              let cached = try? decoder.decode([Book].self, from: data) else { return [] }
+        return cached
     }
 
     private func saveCache(_ books: [Book]) {

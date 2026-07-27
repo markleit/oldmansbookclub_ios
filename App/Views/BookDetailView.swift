@@ -17,6 +17,15 @@ struct BookDetailView: View {
     // Observed so the reply banner's voice transcript appears when it finishes.
     @ObservedObject private var transcripts = TranscriptStore.shared
     @State private var showingDeleteConfirm = false
+    // #58: deleting a book is destructive (removes all its messages, unrecoverable), so we
+    // require the user to type the book's title to confirm — accidental taps can't delete.
+    @State private var deleteConfirmText = ""
+    // Forgiving match for the delete-confirmation: trims surrounding whitespace and ignores
+    // case so the confirmation isn't frustrating, while still requiring a deliberate action.
+    private func titleMatches(_ typed: String) -> Bool {
+        typed.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(viewModel.book.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
     @State private var showingDetails = false
     @State private var showingEdit = false
     @AppStorage("tapToTalkEnabled") private var tapToTalk = false
@@ -313,18 +322,24 @@ struct BookDetailView: View {
                 }
             }
         }
-        .confirmationDialog(
-            "Delete \"\(viewModel.book.title)\"?",
-            isPresented: $showingDeleteConfirm,
-            titleVisibility: .visible
-        ) {
+        .alert("Delete \"\(viewModel.book.title)\"?", isPresented: $showingDeleteConfirm) {
+            TextField("Type the book title", text: $deleteConfirmText)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Cancel", role: .cancel) { deleteConfirmText = "" }
             Button("Delete", role: .destructive) {
+                let text = deleteConfirmText
+                deleteConfirmText = ""
+                guard titleMatches(text) else { return }
                 Task {
                     try? await viewModel.deleteBook()
                     onDeleted?()
                     dismiss()
                 }
             }
+            .disabled(!titleMatches(deleteConfirmText))
+        } message: {
+            Text("This permanently deletes the book and all of its messages. This can't be undone.\n\nType the book title to confirm.")
         }
         .alert("Error", isPresented: Binding(
             get: { viewModel.errorMessage != nil },
@@ -488,7 +503,10 @@ struct BookDetailView: View {
             }
         }
         Divider()
-        Button("Delete Book", role: .destructive) { showingDeleteConfirm = true }
+        Button("Delete Book", role: .destructive) {
+            deleteConfirmText = ""
+            showingDeleteConfirm = true
+        }
     }
 
     // Scroll to a specific message (the one a notification was tapped for) and, if it's
@@ -873,6 +891,10 @@ extension Color {
     // Slightly dimmed white for the "my" play chip + progress bar/dot, so they don't
     // irradiate against the blue bubble and read as oversized.
     static let softWhite = Color(white: 0.90)
+    // The "now playing" voice bubble. Was pure black, which vanished against the dark-mode
+    // chat background (#56). A vivid, saturated blue reads clearly in both light and dark
+    // mode, and the white chip / bar / text already contrast strongly against it.
+    static let activePlaying = Color(red: 0.10, green: 0.45, blue: 0.95)
 }
 
 // Simple multiline editor for editing a sent text message.
@@ -940,7 +962,7 @@ struct VoiceMessageBubble: View {
 
     // All three play/pause controls share one circle "chip" of the same size: a light
     // chip with a dark/accent icon. White chip on own (blue) bubbles and while playing
-    // (black bubble); grey chip on others' (grey) bubbles.
+    // (the active blue bubble); grey chip on others' (grey) bubbles.
     private var chipBackground: Color {
         if isPlaying { return .white }
         // Soft white (not pure white) on own bubbles so the chip doesn't irradiate
@@ -950,7 +972,10 @@ struct VoiceMessageBubble: View {
     }
     private var chipIconColor: Color {
         if isPlaying { return .black }
-        return isMe ? myBlue : Color(.darkGray)
+        // .primary (not the fixed UIColor.darkGray, which doesn't adapt) so the play glyph on
+        // others' grey bubbles stays high-contrast in dark mode too — dark on the light-mode
+        // chip, light on the dark-mode chip, instead of a dark-grey icon vanishing into it.
+        return isMe ? myBlue : .primary
     }
     // Live position while playing; otherwise the persisted resume position.
     private var displayFraction: Double {
@@ -959,10 +984,12 @@ struct VoiceMessageBubble: View {
         return min(store.position(for: message.id) / Double(totalSeconds), 1)
     }
     // Progress bar / thumb color, matched to the play control: white while playing
-    // (black bubble) and on own (blue) bubbles, dark grey on others' (grey) bubbles.
+    // (blue bubble) and on own (blue) bubbles, adaptive on others' (grey) bubbles.
     private var barColor: Color {
         if isPlaying { return .white }
-        return isMe ? .softWhite : Color(.darkGray)
+        // .secondary (not the fixed UIColor.darkGray) so the track stays visible on others'
+        // grey bubbles in dark mode instead of fading into them.
+        return isMe ? .softWhite : .secondary
     }
 
     var body: some View {
@@ -991,7 +1018,7 @@ struct VoiceMessageBubble: View {
         .padding(.vertical, 10)
         // Softer, slightly muted blue (vs the vivid system blue) so the white play
         // chip doesn't contrast so hard that the control looks oversized.
-        .background(isPlaying ? Color.black : (isMe ? myBlue : Color(.systemGray5)))
+        .background(isPlaying ? Color.activePlaying : (isMe ? myBlue : Color(.systemGray5)))
         .foregroundColor(isPlaying || isMe ? .white : .primary)
         .cornerRadius(16)
         .frame(maxWidth: isPlaying || showTranscription ? .infinity : 180)
