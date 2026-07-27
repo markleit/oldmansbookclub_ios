@@ -13,6 +13,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                                   CPInterfaceControllerDelegate, AVSpeechSynthesizerDelegate,
                                   AVAudioPlayerDelegate {
     private var interfaceController: CPInterfaceController?
+    // The CarPlay scene, kept to read its activationState (#60): distinguishes a genuine in-app
+    // back-press out of Now Playing (scene still foregroundActive → stop) from the app being
+    // backgrounded by Maps / the CarPlay home / another audio app (→ keep playing).
+    private weak var templateScene: CPTemplateApplicationScene?
     private let synthesizer = AVSpeechSynthesizer()
     // Offline TTS rendering only (AVSpeechSynthesizer.write → file). The LIVE synthesizer engine
     // speaking over the wireless CarPlay route reconfigures the shared audio path and wedges it
@@ -72,17 +76,28 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Playing so the system doesn't extrapolate the scrubber forward and then snap it back to 0
     // when real audio starts (the visible "timer restart"). Flip to rate 1 once it's advancing.
     private var advancingObserver: AnyCancellable?
+    // Observe sign-in/sign-out on the phone (#59). If the user signs in/out while CarPlay is
+    // connected — e.g. sitting on the "Not signed in" root — pop back to root and reload so the
+    // list reflects the new auth state without needing to navigate within CarPlay first.
+    private var authObserver: AnyCancellable?
+    // The root clubs/books template, kept so an auth change can pop back to it and reload.
+    private weak var rootTemplate: CPListTemplate?
 
     // MARK: - Scene lifecycle
 
     func templateApplicationScene(_ scene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController) {
         self.interfaceController = interfaceController
+        self.templateScene = scene
         interfaceController.delegate = self
         synthesizer.delegate = self
         let root = CPListTemplate(title: "Old Man's Book Club", sections: [])
         root.emptyViewTitleVariants = ["Loading…"]
+        rootTemplate = root
         interfaceController.setRootTemplate(root, animated: false, completion: nil)
+        authObserver = NotificationCenter.default.publisher(for: .authStateDidChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.handleAuthStateChange() }
         playbackObserver = AudioPlayerService.shared.$playingMessageId
             .receive(on: DispatchQueue.main)
             .sink { [weak self] id in self?.syncNowPlayingState(playingId: id) }
@@ -203,12 +218,31 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         playbackObserver = nil
         progressObserver = nil
         advancingObserver = nil
+        authObserver = nil
     }
 
-    // Back out of Now Playing → stop playback.
+    // Sign-in/sign-out happened on the phone while CarPlay is connected (#59). Signing out
+    // invalidates the queue, so stop playback; then pop back to the root and reload it so the
+    // list shows the right state (clubs when signed in, the sign-in prompt when signed out).
+    private func handleAuthStateChange() {
+        if TokenStore.shared.token == nil { stopPlayback() }
+        guard let ic = interfaceController, let root = rootTemplate else { return }
+        if ic.topTemplate !== root {
+            ic.pop(to: root, animated: true, completion: nil)
+        }
+        Task { await loadClubs(into: root) }
+    }
+
+    // Now Playing disappeared. This fires for TWO cases we must distinguish (#60):
+    //  • the user tapped BACK out of Now Playing (navigating within our app) → stop playback;
+    //  • the app got BACKGROUNDED (Maps / CarPlay home / another audio app covered our scene)
+    //    → a CarPlay audio app must KEEP playing, like Spotify/Podcasts.
+    // The scene is still .foregroundActive only in the first case; when backgrounded it's
+    // .foregroundInactive/.background. So stop only while foreground-active.
     nonisolated func templateDidDisappear(_ aTemplate: CPTemplate, animated: Bool) {
         Task { @MainActor in
-            if aTemplate === CPNowPlayingTemplate.shared { self.stopPlayback() }
+            guard aTemplate === CPNowPlayingTemplate.shared else { return }
+            if self.templateScene?.activationState == .foregroundActive { self.stopPlayback() }
         }
     }
 
@@ -230,6 +264,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         }
         let clubs = (try? await APIClient.shared.getMyClubs()) ?? []
         let books = (try? await APIClient.shared.getMyBooks()) ?? []
+        // Feed the shared UnreadStore so CarPlay and the phone read the SAME counts (#53). The
+        // phone displays UnreadStore.counts (which it also mutates locally as you read/hear
+        // messages); CarPlay previously showed raw book.unreadCount from its own fetch, so the
+        // two drifted. Seeding here + reading via unreadCount(for:) keeps them identical.
+        if !books.isEmpty { UnreadStore.shared.seed(from: books) }
         guard !clubs.isEmpty else {
             // Set BOTH title + subtitle (otherwise the title stays "Loading…" → looks blank /
             // stuck). Distinguish genuinely signed-out from signed-in-but-no-clubs.
@@ -249,12 +288,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             refreshers[ObjectIdentifier(template)] = { [weak self, weak template] in
                 guard let self, let template else { return }
                 let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
+                if !fresh.isEmpty { UnreadStore.shared.seed(from: fresh) }
                 template.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
             }
             return
         }
         let items = clubs.map { club -> CPListItem in
-            let count = books.filter { $0.clubId == club.id }.reduce(0) { $0 + $1.unreadCount }
+            let count = books.filter { $0.clubId == club.id }.reduce(0) { $0 + self.unreadCount(for: $1) }
             let item = CPListItem(text: club.name, detailText: count > 0 ? "\(count) new" : nil)
             item.handler = { [weak self] _, completion in
                 guard let self else { completion(); return }
@@ -263,6 +303,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 self.refreshers[ObjectIdentifier(t)] = { [weak self, weak t] in
                     guard let self, let t else { return }
                     let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
+                    if !fresh.isEmpty { UnreadStore.shared.seed(from: fresh) }
                     t.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
                 }
                 self.interfaceController?.pushTemplate(t, animated: true, completion: nil)
@@ -281,10 +322,17 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         withConfiguration: UIImage.SymbolConfiguration(pointSize: 36, weight: .regular))?
         .withRenderingMode(.alwaysTemplate)
 
+    // Unread count for a book, read from the shared UnreadStore so it matches the phone exactly
+    // (#53); falls back to the book's own server value if the store hasn't been seeded yet.
+    private func unreadCount(for book: Book) -> Int {
+        UnreadStore.shared.counts[book.id] ?? book.unreadCount
+    }
+
     private func bookSections(_ books: [Book]) -> [CPListSection] {
         let items = books.map { book -> CPListItem in
+            let count = unreadCount(for: book)
             let item = CPListItem(text: book.title,
-                                  detailText: book.unreadCount > 0 ? "\(book.unreadCount) new" : nil,
+                                  detailText: count > 0 ? "\(count) new" : nil,
                                   image: Self.bookRowIcon)
             item.handler = { [weak self] _, completion in
                 Task { await self?.openBook(book); completion() }
