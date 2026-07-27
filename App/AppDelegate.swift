@@ -48,9 +48,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             return
         }
         Task {
+            // Live-update the Library badge for a book you're not viewing (#96): a new-message
+            // push is the only signal for a non-open book, so bump its unread count optimistically
+            // (the next LibraryViewModel.load() → seed() reconciles to server truth).
+            if await ChatService.shared.activeBookId != bookId { await bumpUnread(bookId: bookId) }
             let gotNewData = await MessagePrefetcher.shared.prefetch(bookId: bookId)
             completionHandler(gotNewData ? .newData : .noData)
         }
+    }
+
+    // Optimistically increment a book's unread count on a delivered message push, so Library
+    // badges move live instead of only on pull-to-refresh / foreground (#96). Guarded to signed-in
+    // only; the caller skips the currently-open book (it owns its own count while on screen, #87).
+    // seed() heals any drift on the next load, so an occasional over/under-count self-corrects.
+    @MainActor
+    private func bumpUnread(bookId: UUID) {
+        guard TokenStore.shared.token != nil else { return }
+        UnreadStore.shared.bump(bookId: bookId, by: 1)
     }
 
     // The system relaunched us (or woke us) to finish delivering background upload events.
@@ -108,8 +122,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             return
         }
         Task {
-            let active = await ChatService.shared.activeBookId
-            completionHandler(active == bookId ? [] : [.banner, .list, .sound, .badge])
+            let isOpen = await ChatService.shared.activeBookId == bookId
+            completionHandler(isOpen ? [] : [.banner, .list, .sound, .badge])
+            // Foreground push for a book you're not viewing → move its Library badge live (#96).
+            if !isOpen { await bumpUnread(bookId: bookId) }
         }
     }
 }
