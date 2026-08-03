@@ -29,8 +29,11 @@ public class BlobService
         var ext = (extension ?? "m4a").TrimStart('.');
         if (!AllowedExtensions.Contains(ext)) ext = "m4a";  // safe default, container doesn't care
         var blobName = $"{clubId}/{Guid.NewGuid()}.{ext.ToLowerInvariant()}";
+        // 60 min (was 10): large videos upload phone→blob via a background URLSession that iOS can
+        // delay/suspend; a big clip on cellular can exceed a short window and 403 mid-upload. The
+        // container is private and blob names are random GUIDs, so a longer write window is low-risk.
         var uploadUrl = await GenerateUserDelegationSasAsync(MediaContainer, blobName,
-            BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(10));
+            BlobSasPermissions.Write | BlobSasPermissions.Create, TimeSpan.FromMinutes(60));
         // Plain URL — SAS is added fresh when serving messages, so it never expires in the DB
         var plainUrl = _client.GetBlobContainerClient(MediaContainer).GetBlobClient(blobName).Uri.ToString();
         return (uploadUrl, plainUrl);
