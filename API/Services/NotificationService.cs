@@ -1,15 +1,18 @@
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
+using BookClubApi.Data;
 using BookClubApi.Models;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 namespace BookClubApi.Services;
 
-public class NotificationService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<NotificationService> logger)
+public class NotificationService(IConfiguration config, IHttpClientFactory httpClientFactory, IServiceScopeFactory scopeFactory, ILogger<NotificationService> logger)
 {
     private readonly string _keyId = config["Apns:KeyId"]
         ?? throw new InvalidOperationException("Apns:KeyId not configured");
@@ -152,39 +155,64 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         var prodClient = httpClientFactory.CreateClient("apns");
         var sandboxClient = httpClientFactory.CreateClient("apns-sandbox");
 
+        // Tokens APNs told us are permanently invalid (uninstalled / bad token on both
+        // environments). Collected here, then pruned from the DB after all sends finish so a
+        // dead token stops being retried on every message (self-cleaning). #25.
+        var deadTokens = new ConcurrentBag<string>();
+
         var tasks = deviceTokens.Select(async deviceToken =>
         {
             try
             {
                 var response = await SendWithRetryAsync(prodClient, bearerToken, deviceToken, payload);
-                if (!response.IsSuccessStatusCode)
+                if (response.IsSuccessStatusCode)
                 {
-                    var body = await response.Content.ReadAsStringAsync();
-                    if ((int)response.StatusCode == 400 && body.Contains("BadDeviceToken"))
+                    logger.LogWarning("APNs push delivered to {Token}", deviceToken[..8]);
+                    return;
+                }
+
+                var body = await response.Content.ReadAsStringAsync();
+                var status = (int)response.StatusCode;
+
+                // 410 Unregistered = a valid PRODUCTION token whose app was uninstalled → prune.
+                if (status == 410)
+                {
+                    deadTokens.Add(deviceToken);
+                    logger.LogWarning("APNs token unregistered (prod) {Token} — pruning", deviceToken[..8]);
+                    return;
+                }
+
+                // 400 BadDeviceToken on prod usually just means it's a SANDBOX (dev-build) token —
+                // retry on the sandbox endpoint before deciding it's dead.
+                if (status == 400 && body.Contains("BadDeviceToken"))
+                {
+                    var sandboxResponse = await SendWithRetryAsync(sandboxClient, bearerToken, deviceToken, payload);
+                    if (sandboxResponse.IsSuccessStatusCode)
                     {
-                        // Sandbox token — try sandbox endpoint
-                        var sandboxResponse = await SendWithRetryAsync(sandboxClient, bearerToken, deviceToken, payload);
-                        if (!sandboxResponse.IsSuccessStatusCode)
-                        {
-                            var sandboxBody = await sandboxResponse.Content.ReadAsStringAsync();
-                            logger.LogWarning("APNs sandbox push failed {Token}: {Status} {Body}",
-                                deviceToken[..8], (int)sandboxResponse.StatusCode, sandboxBody);
-                        }
-                        else
-                        {
-                            logger.LogWarning("APNs sandbox push delivered to {Token}", deviceToken[..8]);
-                        }
+                        logger.LogWarning("APNs sandbox push delivered to {Token}", deviceToken[..8]);
+                        return;
+                    }
+
+                    var sandboxBody = await sandboxResponse.Content.ReadAsStringAsync();
+                    var sandboxStatus = (int)sandboxResponse.StatusCode;
+                    // Dead on BOTH environments (uninstalled sandbox app, or a genuinely malformed
+                    // token) → prune. Other sandbox failures are treated as transient.
+                    if (sandboxStatus == 410 || (sandboxStatus == 400 && sandboxBody.Contains("BadDeviceToken")))
+                    {
+                        deadTokens.Add(deviceToken);
+                        logger.LogWarning("APNs token dead on prod+sandbox {Token}: {Status} {Body} — pruning",
+                            deviceToken[..8], sandboxStatus, sandboxBody);
                     }
                     else
                     {
-                        logger.LogWarning("APNs push failed {Token}: {Status} {Body}",
-                            deviceToken[..8], (int)response.StatusCode, body);
+                        logger.LogWarning("APNs sandbox push failed {Token}: {Status} {Body}",
+                            deviceToken[..8], sandboxStatus, sandboxBody);
                     }
+                    return;
                 }
-                else
-                {
-                    logger.LogWarning("APNs push delivered to {Token}", deviceToken[..8]);
-                }
+
+                // Everything else (403 auth, 429 throttle, 5xx) is transient — don't prune.
+                logger.LogWarning("APNs push failed {Token}: {Status} {Body}", deviceToken[..8], status, body);
             }
             catch (Exception ex)
             {
@@ -193,5 +221,29 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         });
 
         await Task.WhenAll(tasks);
+
+        if (!deadTokens.IsEmpty)
+            await PruneDeadTokensAsync(deadTokens.Distinct().ToList());
+    }
+
+    // Null out any User rows still holding a dead token. The DeviceToken == token guard makes this
+    // race-safe: if the device has already re-registered a fresh token, the row won't match and is
+    // left alone. NotificationService is a singleton, so we resolve a scoped DbContext per prune.
+    private async Task PruneDeadTokensAsync(List<string> deadTokens)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var pruned = await db.Users
+                .Where(u => u.DeviceToken != null && deadTokens.Contains(u.DeviceToken))
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.DeviceToken, (string?)null));
+            if (pruned > 0)
+                logger.LogWarning("Pruned {Count} dead device token(s)", pruned);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to prune dead device tokens");
+        }
     }
 }
