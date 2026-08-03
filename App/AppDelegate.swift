@@ -89,7 +89,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     ) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
         Task {
-            try? await APIClient.shared.registerDevice(token: token)
+            // Retry a few times so a transient network blip doesn't leave the server with a stale
+            // token until the next foreground (#25).
+            for attempt in 0..<3 {
+                do { try await APIClient.shared.registerDevice(token: token); return }
+                catch {
+                    if attempt == 2 { return }
+                    try? await Task.sleep(for: .seconds(2))
+                }
+            }
         }
     }
 
