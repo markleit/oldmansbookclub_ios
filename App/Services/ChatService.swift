@@ -104,10 +104,11 @@ actor ChatService {
     }
 
     private func _startConnection(bookId: UUID) async {
-        // Refresh access token if near expiry — SignalR's `?access_token=` is bound
-        // at handshake, and a mid-stream 401 won't auto-recover.
-        _ = await APIClient.shared.ensureFreshToken()
-        guard let token = TokenStore.shared.token else { return }
+        // Don't connect while signed out. The access token is NOT baked into the URL anymore —
+        // it's supplied per-(re)connect by the accessTokenFactory below, which refreshes it. So an
+        // automatic reconnect after the ~1h access token expires fetches a FRESH token instead of
+        // reusing the stale one, which previously killed sends until an app relaunch (#103).
+        guard TokenStore.shared.token != nil else { return }
 
         currentBookId = bookId
 
@@ -116,10 +117,18 @@ actor ChatService {
         #else
         let baseUrl = "https://oldmansbookclub-api.azurewebsites.net"
         #endif
-        let url = "\(baseUrl)/hubs/chat?access_token=\(token)"
+        let url = "\(baseUrl)/hubs/chat"
+
+        // Called on every negotiate (including auto-reconnect) and on a 401 — refresh, then hand
+        // over the current token. The client appends it as `access_token` on the transport URL.
+        var options = HttpConnectionOptions()
+        options.accessTokenFactory = {
+            _ = await APIClient.shared.ensureFreshToken()
+            return TokenStore.shared.token
+        }
 
         let conn = HubConnectionBuilder()
-            .withUrl(url: url)
+            .withUrl(url: url, options: options)
             .withAutomaticReconnect(retryDelays: [2, 5, 10, 30])
             .withKeepAliveInterval(keepAliveInterval: 5)
             .build()
