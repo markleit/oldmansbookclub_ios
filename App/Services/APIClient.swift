@@ -396,6 +396,12 @@ final class APIClient {
         try await get(path: "/books/\(bookId)/reads")
     }
 
+    // The caller's own server-recorded heard voice-message IDs — used to seed the local heard
+    // cache on load so heard/unread state is consistent across devices (#102).
+    func myHeardMessageIds(bookId: UUID) async throws -> [UUID] {
+        try await get(path: "/books/\(bookId)/my-heard")
+    }
+
     // MARK: - Feedback (admin / club-admin only; backed by GitHub issues)
 
     struct FeedbackDto: Decodable, Identifiable {

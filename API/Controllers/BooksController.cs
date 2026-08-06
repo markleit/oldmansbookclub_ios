@@ -102,6 +102,24 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return Ok();
     }
 
+    // The caller's OWN heard voice-message IDs for a book. The /reads endpoint deliberately
+    // excludes self (it powers "read by others"), so this exposes the caller's heard state.
+    // The client seeds its local heard cache (PlaybackProgressStore) from this on load, so
+    // heard/unread state is per-account and consistent across devices (#102).
+    [HttpGet("{bookId}/my-heard")]
+    public async Task<ActionResult<List<Guid>>> MyHeardMessageIds(Guid bookId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+        if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
+
+        return await db.Messages
+            .Where(m => m.BookId == bookId && m.Type == MessageType.Voice
+                && db.MessageHeards.Any(h => h.UserId == UserId && h.MessageId == m.Id))
+            .Select(m => m.Id)
+            .ToListAsync();
+    }
+
     [HttpGet("search")]
     public async Task<IEnumerable<BookSearchResult>> SearchBooks([FromQuery] string q)
     {

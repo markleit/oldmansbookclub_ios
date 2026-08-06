@@ -190,6 +190,9 @@ final class BookViewModel: ObservableObject {
         async let messagesFetch = APIClient.shared.getMessages(bookId: bookId)
         async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
         async let readsFetch = APIClient.shared.getReads(bookId: bookId)
+        // The server's per-account heard state — seed the device-local heard cache from it so a
+        // voice heard on another device shows as heard here too, and counts match (#102).
+        async let myHeardFetch = APIClient.shared.myHeardMessageIds(bookId: bookId)
 
         do {
             let fetched = try await messagesFetch
@@ -231,6 +234,18 @@ final class BookViewModel: ObservableObject {
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
         if let fetched = try? await readsFetch { reads = fetched }
+
+        // Seed the local heard cache from the server's per-account heard state (#102), so voices
+        // heard on another device read as heard here. Sticky/additive — only marks, never unmarks,
+        // and skips anything already heard locally so it can't disturb an in-progress playback.
+        if let heardIds = try? await myHeardFetch {
+            let durationById = Dictionary(messages.map { ($0.id, $0.durationSeconds ?? 0) },
+                                          uniquingKeysWith: { first, _ in first })
+            let toSeed = heardIds
+                .filter { !PlaybackProgressStore.shared.isCompleted($0) }
+                .map { (id: $0, duration: durationById[$0] ?? 0) }
+            if !toSeed.isEmpty { PlaybackProgressStore.shared.markHeard(toSeed) }
+        }
 
         // markRead fires after messages resolved (needs latestId)
         if let id = latestId {
