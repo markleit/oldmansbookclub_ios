@@ -305,14 +305,8 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/status")!)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try encoder.encode(SetStatusRequest(status: status.rawValue))
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     // MARK: - Media
@@ -432,14 +426,8 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try? JSONEncoder().encode(messageId)
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     // Mark a voice message heard (sticky, server-side). Fired on full playback or a
@@ -460,14 +448,8 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/transcript")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try? JSONEncoder().encode(Body(transcript: text))
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func getSavedMessages() async throws -> [SavedMessage] {
@@ -477,37 +459,19 @@ final class APIClient {
     func saveMessage(messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/save")!)
         request.httpMethod = "POST"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func unsaveMessage(messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/save")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func reportMessage(messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/messages/\(messageId)/report")!)
         request.httpMethod = "POST"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func fetchBlockedUserIds() async throws -> [UUID] {
@@ -521,25 +485,13 @@ final class APIClient {
     func blockUser(userId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/users/\(userId)/block")!)
         request.httpMethod = "POST"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func unblockUser(userId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/users/\(userId)/block")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     private struct EmptyRequest: Encodable {}
@@ -554,26 +506,14 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/notifications/register")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try encoder.encode(RegisterDeviceRequest(deviceToken: token))
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func deleteBook(bookId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     // MARK: - Admin
@@ -607,37 +547,19 @@ final class APIClient {
     func dismissReport(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/reports/\(id)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func deleteMessage(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/messages/\(id)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func approveUser(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)/approve")!)
         request.httpMethod = "POST"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     struct SetRoleRequest: Encodable { let isAdmin: Bool }
@@ -646,50 +568,26 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)/set-role")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try encoder.encode(SetRoleRequest(isAdmin: isAdmin))
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func deleteUser(id: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/users/\(id)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func leaveClub(clubId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/clubs/\(clubId)/members/me")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func deleteClub(clubId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     struct SetClubAdminRequest: Encodable { let isClubAdmin: Bool }
@@ -698,38 +596,20 @@ final class APIClient {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)/members/\(userId)/set-club-admin")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.httpBody = try encoder.encode(SetClubAdminRequest(isClubAdmin: isClubAdmin))
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func removeMember(userId: UUID, clubId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/admin/clubs/\(clubId)/members/\(userId)")!)
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     func deleteMyAccount() async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("/auth/me"))
         request.httpMethod = "DELETE"
-        if let token = TokenStore.shared.token {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        let (_, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
+        try await sendAuthorized(request)
     }
 
     private struct EmptyResponse: Decodable {}
@@ -813,6 +693,32 @@ final class APIClient {
         TokenStore.shared.token = nil
         TokenStore.shared.refreshToken = nil
         onUnauthorized?()
+    }
+
+    // Sends a request that needs auth, with the same 401 -> refresh -> retry-once behavior as
+    // get/post — so the hand-rolled endpoints below don't silently fail on an expired access
+    // token (#104). Pass the request WITHOUT an Authorization header; a fresh Bearer is applied
+    // on each attempt (so the retry uses the refreshed token, not the stale one).
+    @discardableResult
+    private func sendAuthorized(_ request: URLRequest, retried: Bool = false) async throws -> Data {
+        var req = request
+        if let token = TokenStore.shared.token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 {
+            if !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await sendAuthorized(request, retried: true)
+                case .transient: throw URLError(.timedOut)
+                case .rejected: break
+                }
+            }
+            handleAuthFailure(); throw URLError(.userAuthenticationRequired)
+        }
+        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        return data
     }
 
     private func get<Response: Decodable>(path: String, retried: Bool = false) async throws -> Response {
