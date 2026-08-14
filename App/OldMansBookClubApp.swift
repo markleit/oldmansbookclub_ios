@@ -26,13 +26,30 @@ struct RootView: View {
     @AppStorage("hasAcceptedEULA_v2") private var hasAcceptedEULA = false
     @Environment(\.scenePhase) private var scenePhase
     @State private var notificationsDenied = false
+    // Dismissing the "notifications off" banner snoozes it; it reappears after this
+    // interval if notifications are still off — a periodic reminder, not a constant band. (#25)
+    @AppStorage("notifBannerSnoozedUntil") private var notifBannerSnoozedUntil: Double = 0
+    private let notifBannerSnoozeInterval: TimeInterval = 14 * 24 * 60 * 60  // 2 weeks
+
+    private var showNotificationsBanner: Bool {
+        notificationsDenied && Date().timeIntervalSince1970 >= notifBannerSnoozedUntil
+    }
 
     var body: some View {
         Group {
             if auth.isAuthenticated {
                 ContentView()
-                    .safeAreaInset(edge: .top) {
-                        if notificationsDenied { NotificationsOffBanner() }
+                    .overlay(alignment: .top) {
+                        if showNotificationsBanner {
+                            NotificationsOffBanner {
+                                withAnimation {
+                                    notifBannerSnoozedUntil = Date().addingTimeInterval(notifBannerSnoozeInterval).timeIntervalSince1970
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.top, 4)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
                     }
                     .task { await ensurePushRegistration() }
                     .onChange(of: scenePhase) { phase in
@@ -101,24 +118,51 @@ struct RootView: View {
 }
 
 // Shown when notifications are turned off in Settings — otherwise the user silently gets no
-// new-message alerts (the "Jeffrey" case). Tapping opens Settings; returning re-checks status.
+// new-message alerts (the "Jeffrey" case). "Turn On" opens Settings; "✕" snoozes it (reminder,
+// not a permanent band); returning to the app re-checks status. (#25)
 struct NotificationsOffBanner: View {
+    var onDismiss: () -> Void
+
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Image(systemName: "bell.slash.fill")
-            Text("Notifications are off — you won't be alerted to new messages.")
                 .font(.footnote)
-            Spacer(minLength: 8)
+            Text("Notifications are off — you won't get new-message alerts.")
+                .font(.footnote)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 6)
             Button("Turn On") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             }
             .font(.footnote.weight(.semibold))
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Dismiss reminder")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .background(Color.orange.opacity(0.16))
+        // Floating card: opaque material so content underneath doesn't bleed through,
+        // orange tint for the warning, rounded corners + shadow so it reads as a toast.
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.orange.opacity(0.18))
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
     }
 }
