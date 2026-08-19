@@ -21,9 +21,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // #36 — natural composite PK replaces the artificial Id (also enforces uniqueness).
         modelBuilder.Entity<Membership>()
-            .HasIndex(m => new { m.UserId, m.ClubId })
-            .IsUnique();
+            .HasKey(m => new { m.UserId, m.ClubId });
 
         modelBuilder.Entity<Message>()
             .HasIndex(m => new { m.ClubId, m.SentAt });
@@ -57,6 +57,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<User>()
             .HasIndex(u => u.AppleSubject)
             .IsUnique();
+
+        // #36 — enforce email uniqueness; filtered so the multiple null-email accounts
+        // (Apple hidden-email sign-ins) don't collide.
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique()
+            .HasFilter("[Email] IS NOT NULL");
 
         modelBuilder.Entity<User>()
             .OwnsOne(u => u.Preferences, b => b.ToJson());

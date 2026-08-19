@@ -44,7 +44,8 @@ public class Club
 
 public class Membership
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
+    // #36 — natural composite PK (UserId, ClubId); the artificial Id was unused (nothing read
+    // it, no FKs referenced it).
     public Guid UserId { get; set; }
     public User User { get; set; } = null!;
     public Guid ClubId { get; set; }
@@ -58,7 +59,7 @@ public class Message
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ClubId { get; set; }
     public Club Club { get; set; } = null!;
-    public Guid? BookId { get; set; }
+    public Guid BookId { get; set; }   // #36 — always set in practice; now non-nullable
     public Book? Book { get; set; }
     public Guid SenderId { get; set; }
     public User Sender { get; set; } = null!;
