@@ -6,7 +6,9 @@ import Network
 @MainActor
 final class BookViewModel: ObservableObject {
     @Published var book: Book
-    @Published var messages: [Message] = []
+    @Published var messages: [Message] = [] {
+        didSet { recomputeVisibleMessages() }   // #9
+    }
     @Published var isLoadingMessages = false
     @Published var isLoadingOlderMessages = false
     @Published var reachedBeginning = false
@@ -22,7 +24,9 @@ final class BookViewModel: ObservableObject {
     private var recordingTypingTimer: Timer?
     @Published var errorMessage: String?
     @Published var showMicDeniedAlert = false
-    @Published var blockedUserIds: Set<UUID> = []
+    @Published var blockedUserIds: Set<UUID> = [] {
+        didSet { recomputeVisibleMessages() }   // #9
+    }
     @Published var pendingImage: UIImage?
     @Published var pendingVideo: URL?
     @Published var isRecording = false {
@@ -47,8 +51,13 @@ final class BookViewModel: ObservableObject {
     // member userId -> sentAt of their last-seen message, for read receipts.
     private var readFrontierByUser: [UUID: Date] = [:]
 
-    var visibleMessages: [Message] {
-        messages.filter { !blockedUserIds.contains($0.senderId) }
+    // #9: memoized — BookDetailView reads visibleMessages 20+ times per render, so recomputing
+    // the filter on every access was pure waste. Now refreshed only when its inputs (messages /
+    // blockedUserIds) change, via their didSet.
+    @Published private(set) var visibleMessages: [Message] = []
+
+    private func recomputeVisibleMessages() {
+        visibleMessages = messages.filter { !blockedUserIds.contains($0.senderId) }
     }
 
     // This book's unread count computed from local state, matching the server's
