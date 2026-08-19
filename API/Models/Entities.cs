@@ -146,6 +146,18 @@ public class MessageHeard
     public DateTime HeardAt { get; set; } = DateTime.UtcNow;
 }
 
+// #47 — one emoji reaction per user per message (composite PK). Switching emoji updates the
+// Emoji on the existing row; removing deletes it.
+public class MessageReaction
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public string Emoji { get; set; } = "";
+    public DateTime ReactedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class RefreshToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();

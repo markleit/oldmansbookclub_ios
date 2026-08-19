@@ -359,7 +359,89 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             }
         }
 
+        // #47 — attach per-user reactions so the client can derive counts/"mine" and apply
+        // live receipts against them.
+        var msgIds = messages.Select(m => m.Id).ToList();
+        var reactionRows = await db.MessageReactions
+            .Where(r => msgIds.Contains(r.MessageId))
+            .Select(r => new { r.MessageId, r.UserId, r.Emoji })
+            .ToListAsync();
+        if (reactionRows.Count > 0)
+        {
+            var byMsg = reactionRows
+                .GroupBy(r => r.MessageId)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<MessageReactionDto>)g
+                    .Select(r => new MessageReactionDto(r.UserId, r.Emoji)).ToList());
+            messages = messages
+                .Select(m => byMsg.TryGetValue(m.Id, out var rs) ? m with { Reactions = rs } : m)
+                .ToList();
+        }
+
         return messages;
+    }
+
+    // #47 — set or switch the caller's reaction on a message (one per user per message),
+    // then broadcast so everyone viewing the book updates live.
+    [HttpPost("{bookId}/messages/{messageId}/reactions")]
+    public async Task<IActionResult> SetReaction(Guid bookId, Guid messageId, [FromBody] SetReactionRequest req)
+    {
+        var emoji = (req.Emoji ?? "").Trim();
+        if (emoji.Length == 0 || emoji.Length > 16) return BadRequest("Invalid emoji.");
+        if (!await IsBookMemberAsync(bookId)) return Forbid();
+        if (!await db.Messages.AnyAsync(m => m.Id == messageId && m.BookId == bookId && m.DeletedAt == null))
+            return NotFound();
+
+        var existing = await db.MessageReactions.FirstOrDefaultAsync(r => r.UserId == UserId && r.MessageId == messageId);
+        if (existing is null)
+            db.MessageReactions.Add(new MessageReaction { UserId = UserId, MessageId = messageId, Emoji = emoji });
+        else
+        {
+            existing.Emoji = emoji;
+            existing.ReactedAt = DateTime.UtcNow;
+        }
+        await db.SaveChangesAsync();
+        await BroadcastReactionAsync(bookId, messageId, emoji);
+        return NoContent();
+    }
+
+    // #47 — remove the caller's reaction from a message.
+    [HttpDelete("{bookId}/messages/{messageId}/reactions")]
+    public async Task<IActionResult> RemoveReaction(Guid bookId, Guid messageId)
+    {
+        if (!await IsBookMemberAsync(bookId)) return Forbid();
+        var existing = await db.MessageReactions.FirstOrDefaultAsync(r => r.UserId == UserId && r.MessageId == messageId);
+        if (existing is not null)
+        {
+            db.MessageReactions.Remove(existing);
+            await db.SaveChangesAsync();
+            await BroadcastReactionAsync(bookId, messageId, null);
+        }
+        return NoContent();
+    }
+
+    // #47 — who reacted with what on a message (backs the tap-to-see-who popup).
+    [HttpGet("{bookId}/messages/{messageId}/reactions")]
+    public async Task<ActionResult<IEnumerable<ReactionReactorDto>>> GetReactions(Guid bookId, Guid messageId)
+    {
+        if (!await IsBookMemberAsync(bookId)) return Forbid();
+        return await db.MessageReactions
+            .Where(r => r.MessageId == messageId)
+            .OrderBy(r => r.ReactedAt)
+            .Select(r => new ReactionReactorDto(r.UserId, r.User.Nickname ?? r.User.DisplayName, r.Emoji))
+            .ToListAsync();
+    }
+
+    private Task<bool> IsBookMemberAsync(Guid bookId) =>
+        db.Books.Where(b => b.Id == bookId).AnyAsync(b => b.Club.Memberships.Any(m => m.UserId == UserId));
+
+    private async Task BroadcastReactionAsync(Guid bookId, Guid messageId, string? emoji)
+    {
+        var u = await db.Users.Where(x => x.Id == UserId)
+            .Select(x => new { Name = x.Nickname ?? x.DisplayName }).FirstOrDefaultAsync();
+        await hub.Clients.Group(bookId.ToString()).SendAsync("ReactionReceipt", new
+        {
+            bookId, messageId, userId = UserId, displayName = u?.Name ?? "", emoji
+        });
     }
 
     [HttpPost("{bookId}/read")]

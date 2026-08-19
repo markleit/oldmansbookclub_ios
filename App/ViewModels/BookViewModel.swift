@@ -147,6 +147,40 @@ final class BookViewModel: ObservableObject {
             avatarUrl: p.avatarUrl, lastSeenMessageId: lastSeen, heardMessageIds: Array(heard)))
     }
 
+    // #47: apply a live reaction receipt — upsert (or remove) this user's reaction on the
+    // target message. Per-user set, so a switch/remove resolves cleanly.
+    private func applyReactionReceipt(_ p: ReactionReceiptPayload) {
+        guard p.bookId == book.id, let idx = messages.firstIndex(where: { $0.id == p.messageId }) else { return }
+        var reactions = messages[idx].reactions ?? []
+        reactions.removeAll { $0.userId == p.userId }
+        if let emoji = p.emoji { reactions.append(MessageReaction(userId: p.userId, emoji: emoji)) }
+        messages[idx].reactions = reactions.isEmpty ? nil : reactions
+    }
+
+    // #47: toggle the caller's reaction — tapping the current emoji removes it, a different one
+    // switches. Optimistic local update; the server broadcast reconciles everyone (and a failed
+    // call heals on the next load).
+    func toggleReaction(_ emoji: String, on message: Message) {
+        guard let me = TokenStore.shared.userId,
+              let idx = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        let removing = messages[idx].myReactionEmoji == emoji
+        var reactions = messages[idx].reactions ?? []
+        reactions.removeAll { $0.userId == me }
+        if !removing { reactions.append(MessageReaction(userId: me, emoji: emoji)) }
+        messages[idx].reactions = reactions.isEmpty ? nil : reactions
+
+        let bookId = book.id
+        let messageId = message.id
+        Task {
+            do {
+                if removing { try await APIClient.shared.removeReaction(bookId: bookId, messageId: messageId) }
+                else { try await APIClient.shared.setReaction(bookId: bookId, messageId: messageId, emoji: emoji) }
+            } catch {
+                // Best-effort — reconciles on the next load() if the write didn't land.
+            }
+        }
+    }
+
     // #107: a heard receipt from this user's OWN other device. Mirror the #102 seed logic —
     // mark those voice ids heard in the device-local store (sticky/additive, skipping anything
     // already completed so an in-progress playback isn't disturbed), then refresh the unread
@@ -350,6 +384,10 @@ final class BookViewModel: ObservableObject {
             } else {
                 self.applyHeardReceipt(payload)
             }
+        }
+
+        await ChatService.shared.setOnReactionReceipt { [weak self] payload in
+            self?.applyReactionReceipt(payload)
         }
 
         await ChatService.shared.setOnUserTyping { [weak self] payload in

@@ -16,6 +16,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
     public DbSet<ChatRead> ChatReads => Set<ChatRead>();
     public DbSet<MessageHeard> MessageHeards => Set<MessageHeard>();
+    public DbSet<MessageReaction> MessageReactions => Set<MessageReaction>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -148,6 +149,21 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(h => h.Message)
             .WithMany()
             .HasForeignKey(h => h.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<MessageReaction>()
+            .HasKey(r => new { r.UserId, r.MessageId });
+
+        modelBuilder.Entity<MessageReaction>()
+            .HasOne(r => r.User)
+            .WithMany()
+            .HasForeignKey(r => r.UserId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<MessageReaction>()
+            .HasOne(r => r.Message)
+            .WithMany()
+            .HasForeignKey(r => r.MessageId)
             .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<RefreshToken>()

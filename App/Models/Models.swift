@@ -53,6 +53,12 @@ enum MessageSendState: String, Codable {
     case sending, failed
 }
 
+// #47 — one user's reaction on a message (per-user; client derives counts/"mine").
+struct MessageReaction: Codable, Equatable {
+    let userId: UUID
+    let emoji: String
+}
+
 struct Message: Identifiable, Codable {
     let id: UUID
     var clubId: UUID
@@ -74,9 +80,34 @@ struct Message: Identifiable, Codable {
     var parentPreview: String? = nil
     var parentSentAt: Date? = nil
     var transcript: String? = nil   // server-shared on-device transcript for voice messages
+    var reactions: [MessageReaction]? = nil   // #47 — per-user emoji reactions
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt, transcript
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt, transcript, reactions
+    }
+}
+
+// #47 — display helpers derived from the per-user reactions.
+extension Message {
+    struct ReactionTally: Identifiable {
+        let emoji: String
+        let count: Int
+        let mine: Bool
+        var id: String { emoji }
+    }
+
+    // Distinct emoji with counts, most-used first (ties broken by emoji), flagging mine.
+    var reactionTallies: [ReactionTally] {
+        guard let reactions, !reactions.isEmpty else { return [] }
+        let me = TokenStore.shared.userId
+        return Dictionary(grouping: reactions, by: { $0.emoji })
+            .map { emoji, rs in ReactionTally(emoji: emoji, count: rs.count, mine: me != nil && rs.contains { $0.userId == me }) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.emoji < $1.emoji }
+    }
+
+    var myReactionEmoji: String? {
+        guard let me = TokenStore.shared.userId else { return nil }
+        return reactions?.first { $0.userId == me }?.emoji
     }
 }
 
@@ -104,6 +135,7 @@ extension Message {
         parentPreview = try c.decodeIfPresent(String.self, forKey: .parentPreview)
         parentSentAt = try c.decodeIfPresent(Date.self, forKey: .parentSentAt)
         transcript = try c.decodeIfPresent(String.self, forKey: .transcript)
+        reactions = try c.decodeIfPresent([MessageReaction].self, forKey: .reactions)
     }
 }
 

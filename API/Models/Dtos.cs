@@ -48,8 +48,16 @@ public record MessageDto(
     string? ParentSenderName = null,
     string? ParentPreview = null,
     DateTime? ParentSentAt = null,
-    string? Transcript = null
+    string? Transcript = null,
+    IReadOnlyList<MessageReactionDto>? Reactions = null
 );
+
+// #47 — per-user reactions carried on each message; the client derives emoji counts + "mine"
+// and applies live ReactionReceipts against this set. Names for the tap-to-see-who popup come
+// from GET .../reactions (ReactionReactorDto) to keep the message payload light.
+public record MessageReactionDto(Guid UserId, string Emoji);
+public record SetReactionRequest(string Emoji);
+public record ReactionReactorDto(Guid UserId, string DisplayName, string Emoji);
 
 public record SavedMessageDto(
     Guid SavedId,

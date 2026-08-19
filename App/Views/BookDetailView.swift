@@ -532,7 +532,11 @@ struct MessageRow: View {
     @State private var safariItem: SafariItem?
     @State private var showEditSheet = false
     @State private var editText = ""
+    @State private var showReactionsPopup = false   // #47 — tap a pill to see who reacted
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
+
+    // #47 — the fixed reaction set.
+    static let reactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🎉"]
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -563,6 +567,7 @@ struct MessageRow: View {
                         replyChip(parentId: parentId)
                     }
                     messageBubble
+                    reactionPills
                     Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -597,6 +602,20 @@ struct MessageRow: View {
                     Label("Cancel", systemImage: "xmark")
                 }
             } else if !message.isDeleted && message.sendState == nil {
+                // #47 — reaction bar: tap an emoji to react; the current one shows a check and
+                // tapping it again removes it.
+                ForEach(MessageRow.reactionEmojis, id: \.self) { emoji in
+                    Button {
+                        viewModel.toggleReaction(emoji, on: message)
+                    } label: {
+                        if message.myReactionEmoji == emoji {
+                            Label(emoji, systemImage: "checkmark")
+                        } else {
+                            Text(emoji)
+                        }
+                    }
+                }
+                Divider()
                 Button {
                     viewModel.replyingTo = message
                     if message.type == .voice {
@@ -762,6 +781,34 @@ struct MessageRow: View {
             )
     }
 
+    // #47 — reaction pills under the bubble: emoji + count, mine highlighted; tap to see who.
+    @ViewBuilder
+    private var reactionPills: some View {
+        let tallies = message.reactionTallies
+        if !tallies.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(tallies) { t in
+                    Button { showReactionsPopup = true } label: {
+                        HStack(spacing: 3) {
+                            Text(t.emoji).font(.system(size: 13))
+                            Text("\(t.count)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(t.mine ? .white : .secondary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(t.mine ? Color.accentColor : Color(.systemGray5)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 1)
+            .sheet(isPresented: $showReactionsPopup) {
+                ReactionsPopupView(bookId: viewModel.book.id, messageId: message.id)
+            }
+        }
+    }
+
     @ViewBuilder
     private var readReceiptRow: some View {
         // Every message the reader has seen (their last-seen message or any newer one)
@@ -880,6 +927,43 @@ struct MessageRow: View {
             }
         case .unknown:
             EmptyView()
+        }
+    }
+}
+
+// #47 — who reacted with what, loaded on demand when a reaction pill is tapped.
+struct ReactionsPopupView: View {
+    let bookId: UUID
+    let messageId: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var reactors: [APIClient.ReactionReactor] = []
+    @State private var loading = true
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if loading {
+                    ProgressView()
+                } else if reactors.isEmpty {
+                    Text("No reactions").foregroundColor(.secondary)
+                } else {
+                    List(reactors) { r in
+                        HStack(spacing: 10) {
+                            Text(r.emoji).font(.title3)
+                            Text(r.displayName)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Reactions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
+        .task {
+            reactors = (try? await APIClient.shared.reactionReactors(bookId: bookId, messageId: messageId)) ?? []
+            loading = false
         }
     }
 }

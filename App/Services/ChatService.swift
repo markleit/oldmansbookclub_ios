@@ -35,6 +35,7 @@ actor ChatService {
     private var onMessageEdited: ((EditedPayload) -> Void)?
     private var onReadReceipt: ((ReadReceiptPayload) -> Void)?
     private var onHeardReceipt: ((HeardReceiptPayload) -> Void)?
+    private var onReactionReceipt: ((ReactionReceiptPayload) -> Void)?
     private var onUserTyping: ((UserTypingPayload) -> Void)?
 
     private init() {}
@@ -60,6 +61,10 @@ actor ChatService {
 
     func setOnHeardReceipt(_ handler: @escaping (HeardReceiptPayload) -> Void) {
         onHeardReceipt = handler
+    }
+
+    func setOnReactionReceipt(_ handler: @escaping (ReactionReceiptPayload) -> Void) {
+        onReactionReceipt = handler
     }
 
     func setOnUserTyping(_ handler: @escaping (UserTypingPayload) -> Void) {
@@ -175,6 +180,11 @@ actor ChatService {
 
         await conn.on("HeardReceipt") { [weak self] (payload: HeardReceiptPayload) async in
             guard let handler = await self?.onHeardReceipt else { return }
+            await MainActor.run { handler(payload) }
+        }
+
+        await conn.on("ReactionReceipt") { [weak self] (payload: ReactionReceiptPayload) async in
+            guard let handler = await self?.onReactionReceipt else { return }
             await MainActor.run { handler(payload) }
         }
 
@@ -367,6 +377,15 @@ struct HeardReceiptPayload: Decodable {
     let displayName: String
     let avatarUrl: String?
     let messageIds: [UUID]
+}
+
+// #47 — a reaction was set/switched (emoji != nil) or removed (emoji == nil).
+struct ReactionReceiptPayload: Decodable {
+    let bookId: UUID
+    let messageId: UUID
+    let userId: UUID
+    let displayName: String
+    let emoji: String?
 }
 
 struct UserTypingPayload: Decodable {
