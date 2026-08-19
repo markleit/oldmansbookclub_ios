@@ -428,6 +428,24 @@ final class APIClient {
                         authenticated: true)
     }
 
+    // #100 — report a MetricKit crash/hang/perf diagnostic; the server auto-files a deduped
+    // GitHub issue. Fire-and-forget from DiagnosticsReporter.
+    struct DiagnosticReport: Encodable {
+        let kind: String
+        let signature: String
+        let summary: String
+        let appVersion: String?
+        let build: String?
+        let osVersion: String?
+        let deviceModel: String?
+        let payloadJson: String?
+    }
+
+    func reportDiagnostic(_ report: DiagnosticReport) async throws {
+        struct Ack: Decodable { let deduped: Bool?; let issue: Int?; let url: String? }
+        let _: Ack = try await post(path: "/diagnostics", body: report, authenticated: true)
+    }
+
     func markRead(bookId: UUID, messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"

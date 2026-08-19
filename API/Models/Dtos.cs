@@ -79,3 +79,11 @@ public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string Sen
 public record ChatReadDto(Guid UserId, string DisplayName, string? AvatarUrl, Guid LastSeenMessageId, List<Guid> HeardMessageIds);
 public record CreateFeedbackRequest(string Title, string Body, string? AppVersion = null);
 public record FeedbackDto(int Number, string Title, string State, string HtmlUrl, DateTime CreatedAt);
+
+// #100 — client crash/hang diagnostic reported by MetricKit on the device, auto-filed as a
+// deduped GitHub issue. Kind: "crash" | "hang" | "cpu" | "disk". Signature is a stable short
+// hash of the call stack so recurrences fold into one issue.
+public record DiagnosticReportRequest(
+    string Kind, string Signature, string Summary,
+    string? AppVersion = null, string? Build = null, string? OsVersion = null,
+    string? DeviceModel = null, string? PayloadJson = null);
