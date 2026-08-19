@@ -51,6 +51,8 @@ builder.Services.AddSignalR()
 builder.Services.AddScoped<AppleTokenValidator>();
 builder.Services.AddSingleton<BlobService>();
 builder.Services.AddSingleton<NotificationService>();
+builder.Services.AddSingleton<NotificationQueue>();               // #24
+builder.Services.AddHostedService<NotificationDispatchService>();  // #24
 builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddSingleton<GitHubService>();
 builder.Services.AddHttpClient("github", client =>
