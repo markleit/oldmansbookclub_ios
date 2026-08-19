@@ -44,8 +44,10 @@ public class Club
 
 public class Membership
 {
-    // #36 — natural composite PK (UserId, ClubId); the artificial Id was unused (nothing read
-    // it, no FKs referenced it).
+    // #36 natural-PK cleanup deferred: dropping this artificial Id isn't backward-compatible
+    // with a still-running old server during deploy, and it has no functional value — do it
+    // later as its own coordinated change if ever.
+    public Guid Id { get; set; } = Guid.NewGuid();
     public Guid UserId { get; set; }
     public User User { get; set; } = null!;
     public Guid ClubId { get; set; }

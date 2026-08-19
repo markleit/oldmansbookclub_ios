@@ -178,7 +178,8 @@ namespace BookClubApi.Migrations
 
             modelBuilder.Entity("BookClubApi.Models.Membership", b =>
                 {
-                    b.Property<Guid>("UserId")
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<Guid>("ClubId")
@@ -190,9 +191,15 @@ namespace BookClubApi.Migrations
                     b.Property<DateTime>("JoinedAt")
                         .HasColumnType("datetime2");
 
-                    b.HasKey("UserId", "ClubId");
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
 
                     b.HasIndex("ClubId");
+
+                    b.HasIndex("UserId", "ClubId")
+                        .IsUnique();
 
                     b.ToTable("Memberships");
                 });

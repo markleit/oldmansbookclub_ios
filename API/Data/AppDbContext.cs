@@ -21,9 +21,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // #36 — natural composite PK replaces the artificial Id (also enforces uniqueness).
         modelBuilder.Entity<Membership>()
-            .HasKey(m => new { m.UserId, m.ClubId });
+            .HasIndex(m => new { m.UserId, m.ClubId })
+            .IsUnique();
 
         modelBuilder.Entity<Message>()
             .HasIndex(m => new { m.ClubId, m.SentAt });
