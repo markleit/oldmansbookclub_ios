@@ -36,12 +36,18 @@ actor MessagePrefetcher {
         let existingIds = Set(existing.map(\.id))
         let merged = ChatCache.merge(existing: existing, incoming: fetched, myUserId: TokenStore.shared.userId)
 
-        // #94: predownload the audio for NEW voice messages this wake pulled in, so playback
-        // (not just the bubble) is instant when the user opens the chat. Best-effort within the
-        // background window; anything iOS doesn't let us finish falls back to today's on-demand
-        // fetch on play — strictly better than before, never worse.
-        for m in merged.messages where m.type == .voice && !existingIds.contains(m.id) {
-            if let u = m.mediaUrl, let url = URL(string: u) { AudioCache.shared.prefetch(url) }
+        // #94: warm the media caches for NEW messages this wake pulled in, so opening the chat
+        // is instant — voice audio for playback, and photo/video thumbnails for the bubble.
+        // Best-effort within the background window; anything iOS doesn't let us finish falls back
+        // to today's on-demand fetch — strictly better than before, never worse.
+        for m in merged.messages where !existingIds.contains(m.id) {
+            guard let u = m.mediaUrl, let url = URL(string: u) else { continue }
+            switch m.type {
+            case .voice: AudioCache.shared.prefetch(url)
+            case .photo: ImageCache.shared.prefetch(url)
+            case .video: Task { await VideoThumbnailView.warm(url: url) }
+            default:     break
+            }
         }
 
         // Report .newData only when the id set actually changed, so iOS keeps our background

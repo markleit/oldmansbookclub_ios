@@ -458,26 +458,25 @@ struct VideoThumbnailView: View {
                 Color(.systemGray4)
             }
         }
-        .task(id: url) {
-            // Check the two-tier cache first — avoids re-downloading on every
-            // LazyVStack recycle and survives app launches via the disk layer.
-            if let cached = await ImageCache.shared.get(url) {
-                thumbnail = cached
-                return
-            }
-            // copyCGImage is synchronous and blocks during remote video download;
-            // run on a detached task so it never touches the main thread
-            let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
-                let asset = AVAsset(url: url)
-                let gen = AVAssetImageGenerator(asset: asset)
-                gen.appliesPreferredTrackTransform = true
-                gen.maximumSize = CGSize(width: 480, height: 360)
-                guard let cgImage = try? gen.copyCGImage(at: .zero, actualTime: nil) else { return nil }
-                return UIImage(cgImage: cgImage)
-            }.value
-            guard let image else { return }
-            ImageCache.shared[url] = image
-            thumbnail = image
-        }
+        .task(id: url) { thumbnail = await VideoThumbnailView.warm(url: url) }
+    }
+
+    // Generate + cache the poster frame for a video URL. Shared by the view and the #94
+    // background thumbnail prefetch. Two-tier cache first (avoids re-download on LazyVStack
+    // recycle, survives launches via disk), else generate off the main thread and store.
+    @discardableResult
+    static func warm(url: URL) async -> UIImage? {
+        if let cached = await ImageCache.shared.get(url) { return cached }
+        // copyCGImage is synchronous and blocks during remote video download; run detached.
+        let image = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+            let asset = AVAsset(url: url)
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 480, height: 360)
+            guard let cgImage = try? gen.copyCGImage(at: .zero, actualTime: nil) else { return nil }
+            return UIImage(cgImage: cgImage)
+        }.value
+        if let image { ImageCache.shared[url] = image }
+        return image
     }
 }

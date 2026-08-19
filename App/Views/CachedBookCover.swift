@@ -74,6 +74,19 @@ final class ImageCache: @unchecked Sendable {
         }
     }
 
+    // #94: warm the cache for a photo URL from a background wake. Fire-and-forget, no-op if
+    // already cached. Mirrors CachedRemoteImage.load's download without any view state.
+    func prefetch(_ url: URL) {
+        Task.detached(priority: .utility) {
+            if await ImageCache.shared.get(url) != nil { return }
+            let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let image = UIImage(data: data) else { return }
+            ImageCache.shared[url] = image
+        }
+    }
+
     // L1 + L2 read. Returns immediately on memory hit; otherwise hops to the disk
     // queue, loads + decodes, repopulates memory, and returns.
     func get(_ url: URL) async -> UIImage? {

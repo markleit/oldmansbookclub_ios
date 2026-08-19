@@ -122,6 +122,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             DeepLinkCoordinator.shared.pendingMessageBookId = mid != nil ? bookId : nil
             DeepLinkCoordinator.shared.pendingMessageId = mid
             DeepLinkCoordinator.shared.pendingBookId = bookId
+            // #94 Phase 3: the user is opening this book — warm its cache now so the chat is
+            // ready by the time the view appears.
+            Task { _ = await MessagePrefetcher.shared.prefetch(bookId: bookId) }
         }
         completionHandler()
     }
@@ -141,8 +144,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task {
             let isOpen = await ChatService.shared.activeBookId == bookId
             completionHandler(isOpen ? [] : [.banner, .list, .sound, .badge])
-            // Foreground push for a book you're not viewing → move its Library badge live (#96).
-            if !isOpen { await bumpUnread(bookId: bookId) }
+            // Foreground push for a book you're not viewing → move its Library badge live (#96)
+            // and warm its cache so tapping the banner opens instantly (#94 Phase 3).
+            if !isOpen {
+                await bumpUnread(bookId: bookId)
+                _ = await MessagePrefetcher.shared.prefetch(bookId: bookId)
+            }
         }
     }
 }
