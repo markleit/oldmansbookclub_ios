@@ -567,7 +567,11 @@ struct MessageRow: View {
                         replyChip(parentId: parentId)
                     }
                     messageBubble
-                    reactionPills
+                        .overlay(alignment: isMe ? .topLeading : .topTrailing) {
+                            // iMessage-style: reaction badge overlaps the bubble's outer top
+                            // corner (top-right for received, top-left for your own).
+                            reactionPills.offset(x: isMe ? -6 : 6, y: -12)
+                        }
                     Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
