@@ -595,13 +595,17 @@ struct MessageRow: View {
             }
         }
         // #47 — custom long-press menu: horizontal reaction bar on top, actions below (native
-        // .contextMenu can't do a horizontal row). Long-press cancels if the finger moves, so
-        // scrolling still works; inner button taps take priority over the 0.35s hold.
-        .onLongPressGesture(minimumDuration: 0.35) {
-            guard message.sendState == .failed || (!message.isDeleted && message.sendState == nil) else { return }
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            showReactMenu = true
-        }
+        // .contextMenu can't do a horizontal row). Use simultaneousGesture so the hold fires even
+        // over interactive children (voice scrubber, transcription tap) that would otherwise
+        // swallow it; the gesture still cancels on finger-move, so scrolling and scrubbing work.
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.4)
+                .onEnded { _ in
+                    guard message.sendState == .failed || (!message.isDeleted && message.sendState == nil) else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showReactMenu = true
+                }
+        )
         .popover(isPresented: $showReactMenu) { reactionActionMenu }
     }
 
