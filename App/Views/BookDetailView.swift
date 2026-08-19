@@ -595,10 +595,11 @@ struct MessageRow: View {
             }
         }
         // #47 — custom long-press menu: horizontal reaction bar on top, actions below (native
-        // .contextMenu can't do a horizontal row). Use simultaneousGesture so the hold fires even
-        // over interactive children (voice scrubber, transcription tap) that would otherwise
-        // swallow it; the gesture still cancels on finger-move, so scrolling and scrubbing work.
-        .simultaneousGesture(
+        // .contextMenu can't do a horizontal row). highPriorityGesture gives the hold priority
+        // over interactive children (voice scrubber, transcription tap) and SUPPRESSES their
+        // action when the picker fires — so a hold only opens the menu. A quick tap still hits
+        // the child (< 0.4s), and a drag still scrubs (long-press cancels on finger-move).
+        .highPriorityGesture(
             LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
                     guard message.sendState == .failed || (!message.isDeleted && message.sendState == nil) else { return }
