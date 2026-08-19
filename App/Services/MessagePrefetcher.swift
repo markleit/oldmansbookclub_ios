@@ -33,13 +33,28 @@ actor MessagePrefetcher {
         }
 
         let existing = ChatCache.load(bookId: bookId)
+        let existingIds = Set(existing.map(\.id))
         let merged = ChatCache.merge(existing: existing, incoming: fetched, myUserId: TokenStore.shared.userId)
+
+        // #94: warm the media caches for NEW messages this wake pulled in, so opening the chat
+        // is instant — voice audio for playback, and photo/video thumbnails for the bubble.
+        // Best-effort within the background window; anything iOS doesn't let us finish falls back
+        // to today's on-demand fetch — strictly better than before, never worse.
+        for m in merged.messages where !existingIds.contains(m.id) {
+            guard let u = m.mediaUrl, let url = URL(string: u) else { continue }
+            switch m.type {
+            case .voice: AudioCache.shared.prefetch(url)
+            case .photo: ImageCache.shared.prefetch(url)
+            case .video: Task { await VideoThumbnailView.warm(url: url) }
+            default:     break
+            }
+        }
 
         // Report .newData only when the id set actually changed, so iOS keeps our background
         // wakes scheduled accurately. The persisted cache holds only confirmed messages, and the
         // merge inputs carry none of the local optimistic sends, so nothing pending is at risk —
         // hence no exclusion set. waitForWrite: the app can be suspended the moment we return.
-        let changed = Set(merged.messages.map(\.id)) != Set(existing.map(\.id))
+        let changed = Set(merged.messages.map(\.id)) != existingIds
         ChatCache.save(merged.messages, bookId: bookId, excludingPending: [], waitForWrite: true)
         return changed
     }

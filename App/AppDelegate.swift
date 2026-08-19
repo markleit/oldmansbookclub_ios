@@ -19,6 +19,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Subscribe to MetricKit early so crash/hang diagnostics from the previous run are
+        // delivered and auto-filed as GitHub issues (#100). Device-only; no-op in the simulator.
+        DiagnosticsReporter.shared.start()
         // Recreate the background upload session so any task that finished while the app was
         // suspended/killed delivers its completion (marks the queue item uploaded).
         BackgroundUploadService.shared.activate()
@@ -119,6 +122,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             DeepLinkCoordinator.shared.pendingMessageBookId = mid != nil ? bookId : nil
             DeepLinkCoordinator.shared.pendingMessageId = mid
             DeepLinkCoordinator.shared.pendingBookId = bookId
+            // #94 Phase 3: the user is opening this book — warm its cache now so the chat is
+            // ready by the time the view appears.
+            Task { _ = await MessagePrefetcher.shared.prefetch(bookId: bookId) }
         }
         completionHandler()
     }
@@ -138,8 +144,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Task {
             let isOpen = await ChatService.shared.activeBookId == bookId
             completionHandler(isOpen ? [] : [.banner, .list, .sound, .badge])
-            // Foreground push for a book you're not viewing → move its Library badge live (#96).
-            if !isOpen { await bumpUnread(bookId: bookId) }
+            // Foreground push for a book you're not viewing → move its Library badge live (#96)
+            // and warm its cache so tapping the banner opens instantly (#94 Phase 3).
+            if !isOpen {
+                await bumpUnread(bookId: bookId)
+                _ = await MessagePrefetcher.shared.prefetch(bookId: bookId)
+            }
         }
     }
 }

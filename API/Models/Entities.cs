@@ -44,6 +44,9 @@ public class Club
 
 public class Membership
 {
+    // #36 natural-PK cleanup deferred: dropping this artificial Id isn't backward-compatible
+    // with a still-running old server during deploy, and it has no functional value — do it
+    // later as its own coordinated change if ever.
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid UserId { get; set; }
     public User User { get; set; } = null!;
@@ -58,7 +61,7 @@ public class Message
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid ClubId { get; set; }
     public Club Club { get; set; } = null!;
-    public Guid? BookId { get; set; }
+    public Guid BookId { get; set; }   // #36 — always set in practice; now non-nullable
     public Book? Book { get; set; }
     public Guid SenderId { get; set; }
     public User Sender { get; set; } = null!;
@@ -144,6 +147,18 @@ public class MessageHeard
     public Guid MessageId { get; set; }
     public Message Message { get; set; } = null!;
     public DateTime HeardAt { get; set; } = DateTime.UtcNow;
+}
+
+// #47 — one emoji reaction per user per message (composite PK). Switching emoji updates the
+// Emoji on the existing row; removing deletes it.
+public class MessageReaction
+{
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    public Guid MessageId { get; set; }
+    public Message Message { get; set; } = null!;
+    public string Emoji { get; set; } = "";
+    public DateTime ReactedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class RefreshToken

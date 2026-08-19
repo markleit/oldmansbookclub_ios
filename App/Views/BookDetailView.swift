@@ -532,7 +532,12 @@ struct MessageRow: View {
     @State private var safariItem: SafariItem?
     @State private var showEditSheet = false
     @State private var editText = ""
+    @State private var showReactionsPopup = false   // #47 — tap a pill to see who reacted
+    @State private var showReactMenu = false        // #47 — long-press reaction + action menu
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
+
+    // #47 — the fixed reaction set.
+    static let reactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🎉"]
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -563,6 +568,11 @@ struct MessageRow: View {
                         replyChip(parentId: parentId)
                     }
                     messageBubble
+                        .overlay(alignment: isMe ? .topLeading : .topTrailing) {
+                            // iMessage-style: reaction badge overlaps the bubble's outer top
+                            // corner (top-right for received, top-left for your own).
+                            reactionPills.offset(x: isMe ? -6 : 6, y: -12)
+                        }
                     Text(formatMessageDate(message.sentAt))
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -584,79 +594,109 @@ struct MessageRow: View {
                 Task { await viewModel.editMessage(id: message.id, newBody: newBody) }
             }
         }
-        .contextMenu {
-            if message.sendState == .failed {
-                Button {
-                    Task { await viewModel.retryMediaMessage(id: message.id) }
-                } label: {
-                    Label("Retry", systemImage: "arrow.clockwise")
+        // #47 — custom long-press menu: horizontal reaction bar on top, actions below (native
+        // .contextMenu can't do a horizontal row). highPriorityGesture gives the hold priority
+        // over interactive children (voice scrubber, transcription tap) and SUPPRESSES their
+        // action when the picker fires — so a hold only opens the menu. A quick tap still hits
+        // the child (< 0.4s), and a drag still scrubs (long-press cancels on finger-move).
+        .highPriorityGesture(
+            LongPressGesture(minimumDuration: 0.4)
+                .onEnded { _ in
+                    guard message.sendState == .failed || (!message.isDeleted && message.sendState == nil) else { return }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showReactMenu = true
                 }
-                Button(role: .destructive) {
-                    viewModel.cancelMediaMessage(id: message.id)
-                } label: {
-                    Label("Cancel", systemImage: "xmark")
-                }
-            } else if !message.isDeleted && message.sendState == nil {
-                Button {
-                    viewModel.replyingTo = message
-                    if message.type == .voice {
-                        TranscriptStore.shared.transcribeIfNeeded(messageId: message.id, mediaUrlString: message.mediaUrl)
-                    }
-                } label: {
-                    Label("Reply", systemImage: "arrowshape.turn.up.left")
-                }
-                if message.type == .text, let body = message.body, !body.isEmpty {
-                    Button {
-                        UIPasteboard.general.string = body
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                    if isMe {
+        )
+        .popover(isPresented: $showReactMenu) { reactionActionMenu }
+    }
+
+    // MARK: - #47 long-press reaction + action menu
+
+    @ViewBuilder
+    private var reactionActionMenu: some View {
+        let menu = VStack(alignment: .leading, spacing: 0) {
+            if !message.isDeleted && message.sendState == nil {
+                HStack(spacing: 6) {
+                    ForEach(MessageRow.reactionEmojis, id: \.self) { emoji in
                         Button {
-                            editText = body
-                            // Defer presenting until the context menu has dismissed —
-                            // presenting a sheet during the menu's dismissal can render
-                            // it blank in Release builds (#50).
-                            DispatchQueue.main.async { showEditSheet = true }
+                            showReactMenu = false
+                            viewModel.toggleReaction(emoji, on: message)
                         } label: {
-                            Label("Edit", systemImage: "pencil")
+                            Text(emoji)
+                                .font(.system(size: 26))
+                                .frame(width: 42, height: 42)
+                                .background(
+                                    message.myReactionEmoji == emoji ? Color.accentColor.opacity(0.25) : Color.clear,
+                                    in: Circle()
+                                )
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-                if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
-                    Button {
-                        PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
-                        viewModel.syncUnread()   // reflect to title + club + icon badges
-                        Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
-                    } label: {
-                        Label("Mark as Heard", systemImage: "checkmark.circle")
-                    }
-                }
-                Button {
-                    Task { await viewModel.saveMessage(id: message.id) }
-                } label: {
-                    Label("Save", systemImage: "bookmark")
-                }
-                if isMe {
-                    Button(role: .destructive) {
-                        Task { await viewModel.deleteMessage(id: message.id) }
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                } else {
-                    Button {
-                        Task { await viewModel.reportMessage(id: message.id) }
-                    } label: {
-                        Label("Report", systemImage: "flag")
-                    }
-                    Button(role: .destructive) {
-                        Task { await viewModel.blockUser(senderId: message.senderId) }
-                    } label: {
-                        Label("Block User", systemImage: "hand.raised")
-                    }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
+            actionMenuButtons
+        }
+        .frame(minWidth: 250)
+
+        if #available(iOS 16.4, *) {
+            menu.presentationCompactAdaptation(.popover)
+        } else {
+            menu
+        }
+    }
+
+    @ViewBuilder
+    private var actionMenuButtons: some View {
+        if message.sendState == .failed {
+            menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
+            menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+        } else if !message.isDeleted && message.sendState == nil {
+            menuRow("Reply", "arrowshape.turn.up.left") {
+                viewModel.replyingTo = message
+                if message.type == .voice {
+                    TranscriptStore.shared.transcribeIfNeeded(messageId: message.id, mediaUrlString: message.mediaUrl)
                 }
             }
+            if message.type == .text, let body = message.body, !body.isEmpty {
+                menuRow("Copy", "doc.on.doc") { UIPasteboard.general.string = body }
+                if isMe {
+                    // Defer the edit sheet until the popover has dismissed (#50).
+                    menuRow("Edit", "pencil") { editText = body; DispatchQueue.main.async { showEditSheet = true } }
+                }
+            }
+            if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
+                menuRow("Mark as Heard", "checkmark.circle") {
+                    PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
+                    viewModel.syncUnread()
+                    Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
+                }
+            }
+            menuRow("Save", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
+            if isMe {
+                menuRow("Delete", "trash", destructive: true) { Task { await viewModel.deleteMessage(id: message.id) } }
+            } else {
+                menuRow("Report", "flag") { Task { await viewModel.reportMessage(id: message.id) } }
+                menuRow("Block User", "hand.raised", destructive: true) { Task { await viewModel.blockUser(senderId: message.senderId) } }
+            }
         }
+    }
+
+    private func menuRow(_ title: String, _ icon: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            showReactMenu = false
+            action()
+        } label: {
+            Label(title, systemImage: icon)
+                .foregroundStyle(destructive ? Color.red : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var nameLabel: some View {
@@ -760,6 +800,34 @@ struct MessageRow: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.white)
             )
+    }
+
+    // #47 — reaction pills under the bubble: emoji + count, mine highlighted; tap to see who.
+    @ViewBuilder
+    private var reactionPills: some View {
+        let tallies = message.reactionTallies
+        if !tallies.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(tallies) { t in
+                    Button { showReactionsPopup = true } label: {
+                        HStack(spacing: 3) {
+                            Text(t.emoji).font(.system(size: 13))
+                            Text("\(t.count)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(t.mine ? .white : .secondary)
+                        }
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(t.mine ? Color.accentColor : Color(.systemGray5)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 1)
+            .sheet(isPresented: $showReactionsPopup) {
+                ReactionsPopupView(bookId: viewModel.book.id, messageId: message.id)
+            }
+        }
     }
 
     @ViewBuilder
@@ -880,6 +948,43 @@ struct MessageRow: View {
             }
         case .unknown:
             EmptyView()
+        }
+    }
+}
+
+// #47 — who reacted with what, loaded on demand when a reaction pill is tapped.
+struct ReactionsPopupView: View {
+    let bookId: UUID
+    let messageId: UUID
+    @Environment(\.dismiss) private var dismiss
+    @State private var reactors: [APIClient.ReactionReactor] = []
+    @State private var loading = true
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if loading {
+                    ProgressView()
+                } else if reactors.isEmpty {
+                    Text("No reactions").foregroundColor(.secondary)
+                } else {
+                    List(reactors) { r in
+                        HStack(spacing: 10) {
+                            Text(r.emoji).font(.title3)
+                            Text(r.displayName)
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Reactions")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
+        .task {
+            reactors = (try? await APIClient.shared.reactionReactors(bookId: bookId, messageId: messageId)) ?? []
+            loading = false
         }
     }
 }
@@ -1642,7 +1747,7 @@ struct SenderProfileView: View {
 
 struct BookDetailView_Previews: PreviewProvider {
     static var previews: some View {
-        NavigationView {
+        NavigationStack {
             BookDetailView(book: Book(
                 id: UUID(), clubId: UUID(),
                 title: "Dune", author: "Frank Herbert",

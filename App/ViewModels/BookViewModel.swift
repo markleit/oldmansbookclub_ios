@@ -6,7 +6,9 @@ import Network
 @MainActor
 final class BookViewModel: ObservableObject {
     @Published var book: Book
-    @Published var messages: [Message] = []
+    @Published var messages: [Message] = [] {
+        didSet { recomputeVisibleMessages() }   // #9
+    }
     @Published var isLoadingMessages = false
     @Published var isLoadingOlderMessages = false
     @Published var reachedBeginning = false
@@ -22,7 +24,9 @@ final class BookViewModel: ObservableObject {
     private var recordingTypingTimer: Timer?
     @Published var errorMessage: String?
     @Published var showMicDeniedAlert = false
-    @Published var blockedUserIds: Set<UUID> = []
+    @Published var blockedUserIds: Set<UUID> = [] {
+        didSet { recomputeVisibleMessages() }   // #9
+    }
     @Published var pendingImage: UIImage?
     @Published var pendingVideo: URL?
     @Published var isRecording = false {
@@ -47,8 +51,13 @@ final class BookViewModel: ObservableObject {
     // member userId -> sentAt of their last-seen message, for read receipts.
     private var readFrontierByUser: [UUID: Date] = [:]
 
-    var visibleMessages: [Message] {
-        messages.filter { !blockedUserIds.contains($0.senderId) }
+    // #9: memoized — BookDetailView reads visibleMessages 20+ times per render, so recomputing
+    // the filter on every access was pure waste. Now refreshed only when its inputs (messages /
+    // blockedUserIds) change, via their didSet.
+    @Published private(set) var visibleMessages: [Message] = []
+
+    private func recomputeVisibleMessages() {
+        visibleMessages = messages.filter { !blockedUserIds.contains($0.senderId) }
     }
 
     // This book's unread count computed from local state, matching the server's
@@ -145,6 +154,55 @@ final class BookViewModel: ObservableObject {
         reads.removeAll { $0.userId == p.userId }
         reads.append(APIClient.ChatReadDto(userId: p.userId, displayName: p.displayName,
             avatarUrl: p.avatarUrl, lastSeenMessageId: lastSeen, heardMessageIds: Array(heard)))
+    }
+
+    // #47: apply a live reaction receipt — upsert (or remove) this user's reaction on the
+    // target message. Per-user set, so a switch/remove resolves cleanly.
+    private func applyReactionReceipt(_ p: ReactionReceiptPayload) {
+        guard p.bookId == book.id, let idx = messages.firstIndex(where: { $0.id == p.messageId }) else { return }
+        var reactions = messages[idx].reactions ?? []
+        reactions.removeAll { $0.userId == p.userId }
+        if let emoji = p.emoji { reactions.append(MessageReaction(userId: p.userId, emoji: emoji)) }
+        messages[idx].reactions = reactions.isEmpty ? nil : reactions
+    }
+
+    // #47: toggle the caller's reaction — tapping the current emoji removes it, a different one
+    // switches. Optimistic local update; the server broadcast reconciles everyone (and a failed
+    // call heals on the next load).
+    func toggleReaction(_ emoji: String, on message: Message) {
+        guard let me = TokenStore.shared.userId,
+              let idx = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        let removing = messages[idx].myReactionEmoji == emoji
+        var reactions = messages[idx].reactions ?? []
+        reactions.removeAll { $0.userId == me }
+        if !removing { reactions.append(MessageReaction(userId: me, emoji: emoji)) }
+        messages[idx].reactions = reactions.isEmpty ? nil : reactions
+
+        let bookId = book.id
+        let messageId = message.id
+        Task {
+            do {
+                if removing { try await APIClient.shared.removeReaction(bookId: bookId, messageId: messageId) }
+                else { try await APIClient.shared.setReaction(bookId: bookId, messageId: messageId, emoji: emoji) }
+            } catch {
+                // Best-effort — reconciles on the next load() if the write didn't land.
+            }
+        }
+    }
+
+    // #107: a heard receipt from this user's OWN other device. Mirror the #102 seed logic —
+    // mark those voice ids heard in the device-local store (sticky/additive, skipping anything
+    // already completed so an in-progress playback isn't disturbed), then refresh the unread
+    // count. Never touches `reads`, so self can't appear in the "heard-by" avatar row (#108).
+    private func applySelfHeardReceipt(_ p: HeardReceiptPayload) {
+        let durationById = Dictionary(messages.map { ($0.id, $0.durationSeconds ?? 0) },
+                                      uniquingKeysWith: { first, _ in first })
+        let toMark = p.messageIds
+            .filter { !PlaybackProgressStore.shared.isCompleted($0) }
+            .map { (id: $0, duration: durationById[$0] ?? 0) }
+        guard !toMark.isEmpty else { return }
+        PlaybackProgressStore.shared.markHeard(toMark)
+        syncUnread()
     }
 
     // Optimistic text messages awaiting their server echo, tracked by clientId (the
@@ -325,9 +383,20 @@ final class BookViewModel: ObservableObject {
         }
 
         await ChatService.shared.setOnHeardReceipt { [weak self] payload in
-            guard let self, payload.bookId == self.book.id,
-                  payload.userId != TokenStore.shared.userId else { return }
-            self.applyHeardReceipt(payload)
+            guard let self, payload.bookId == self.book.id else { return }
+            if payload.userId == TokenStore.shared.userId {
+                // #107: a heard receipt echoed from THIS user's OWN other device. Sync the
+                // local heard state + unread count so counts track across devices live.
+                // Deliberately NOT routed through applyHeardReceipt, so self never lands in
+                // the "heard-by" avatar row (#108).
+                self.applySelfHeardReceipt(payload)
+            } else {
+                self.applyHeardReceipt(payload)
+            }
+        }
+
+        await ChatService.shared.setOnReactionReceipt { [weak self] payload in
+            self?.applyReactionReceipt(payload)
         }
 
         await ChatService.shared.setOnUserTyping { [weak self] payload in
@@ -868,7 +937,14 @@ final class BookViewModel: ObservableObject {
         echoTimeoutTasks.removeAll()
     }
 
+    private var isFlushingMedia = false
+
     private func flushPendingMedia() async {
+        // Guard against overlapping flushes (#37): foreground-resume and a SignalR reconnect can
+        // both fire this, and without the guard each would resend the same queued items.
+        guard !isFlushingMedia else { return }
+        isFlushingMedia = true
+        defer { isFlushingMedia = false }
         let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
         for item in pending {
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {

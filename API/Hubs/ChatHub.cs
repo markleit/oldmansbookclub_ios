@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, BlobService blob, NotificationService notifications, HubRateLimiter rateLimiter) : Hub
+public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notificationQueue, HubRateLimiter rateLimiter) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -336,33 +336,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationService noti
     {
         await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
 
-        // The sender's own device token can be registered to other accounts too (the
-        // same physical device signed in as multiple users — dev/test logins — over
-        // time). Excluding by UserId isn't enough: another account's membership carries
-        // the sender's device token, so the sender's phone gets a push for its own
-        // message. Exclude the sender's device token(s) explicitly, and Distinct() so a
-        // device shared across members isn't notified more than once.
-        var senderTokens = await db.Users
-            .Where(u => u.Id == dto.SenderId && u.DeviceToken != null)
-            .Select(u => u.DeviceToken!)
-            .ToListAsync();
-
-        // Per recipient (not just per token) so each push carries that user's own total
-        // unread count for the app icon badge. Distinct device tokens, sender's device
-        // excluded.
-        var recipients = await db.Memberships
-            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId && m.User.DeviceToken != null)
-            .Select(m => new { m.UserId, Token = m.User.DeviceToken! })
-            .Distinct()
-            .ToListAsync();
-
-        var seenTokens = new HashSet<string>(senderTokens);
-        foreach (var r in recipients)
-        {
-            if (!seenTokens.Add(r.Token)) continue;   // skip sender's device + dupes
-            var badge = await UnreadCalculator.TotalAsync(db, r.UserId);
-            await notifications.SendNewMessageAsync([r.Token], dto, bookTitle, bookId, badge);
-        }
+        // #24 — hand the APNs fan-out (per-member badge query + APNs round-trip, which used to run
+        // inline here and made send latency scale with club size) to the background dispatcher, so
+        // the sender's invoke() returns right after the in-memory SignalR broadcast.
+        notificationQueue.Enqueue(new NotificationJob(bookId, dto, bookTitle));
     }
 
     private Guid GetUserId() =>

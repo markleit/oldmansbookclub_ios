@@ -428,6 +428,24 @@ final class APIClient {
                         authenticated: true)
     }
 
+    // #100 — report a MetricKit crash/hang/perf diagnostic; the server auto-files a deduped
+    // GitHub issue. Fire-and-forget from DiagnosticsReporter.
+    struct DiagnosticReport: Encodable {
+        let kind: String
+        let signature: String
+        let summary: String
+        let appVersion: String?
+        let build: String?
+        let osVersion: String?
+        let deviceModel: String?
+        let payloadJson: String?
+    }
+
+    func reportDiagnostic(_ report: DiagnosticReport) async throws {
+        struct Ack: Decodable { let deduped: Bool?; let issue: Int?; let url: String? }
+        let _: Ack = try await post(path: "/diagnostics", body: report, authenticated: true)
+    }
+
     func markRead(bookId: UUID, messageId: UUID) async throws {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"
@@ -445,6 +463,35 @@ final class APIClient {
     // Mark every voice message in a book heard ("Mark all as heard").
     func markAllHeard(bookId: UUID) async throws {
         try await postEmpty(path: "/books/\(bookId)/heard/all")
+    }
+
+    // #47 — set/switch the caller's reaction on a message.
+    func setReaction(bookId: UUID, messageId: UUID, emoji: String) async throws {
+        struct Body: Encodable { let emoji: String }
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/messages/\(messageId)/reactions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(Body(emoji: emoji))
+        try await sendAuthorized(request)
+    }
+
+    // #47 — remove the caller's reaction from a message.
+    func removeReaction(bookId: UUID, messageId: UUID) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/messages/\(messageId)/reactions")!)
+        request.httpMethod = "DELETE"
+        try await sendAuthorized(request)
+    }
+
+    struct ReactionReactor: Decodable, Identifiable {
+        let userId: UUID
+        let displayName: String
+        let emoji: String
+        var id: UUID { userId }
+    }
+
+    // #47 — who reacted with what (backs the tap-to-see-who popup).
+    func reactionReactors(bookId: UUID, messageId: UUID) async throws -> [ReactionReactor] {
+        try await get(path: "/books/\(bookId)/messages/\(messageId)/reactions")
     }
 
     // Upload an on-device voice transcript so a reply quoting this message can show its
