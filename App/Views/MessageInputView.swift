@@ -296,7 +296,8 @@ struct MessageInputView: View {
     static let maxRecordingSeconds = 900   // 15 minutes
 
     private func formatElapsed(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
     }
 
     // Elapsed time normally; switches to a "Ns left" countdown in the final 30s.

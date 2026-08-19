@@ -928,7 +928,14 @@ final class BookViewModel: ObservableObject {
         echoTimeoutTasks.removeAll()
     }
 
+    private var isFlushingMedia = false
+
     private func flushPendingMedia() async {
+        // Guard against overlapping flushes (#37): foreground-resume and a SignalR reconnect can
+        // both fire this, and without the guard each would resend the same queued items.
+        guard !isFlushingMedia else { return }
+        isFlushingMedia = true
+        defer { isFlushingMedia = false }
         let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
         for item in pending {
             if let idx = messages.firstIndex(where: { $0.id == item.id }) {

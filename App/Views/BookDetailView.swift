@@ -1726,7 +1726,7 @@ struct SenderProfileView: View {
 
 struct BookDetailView_Previews: PreviewProvider {
     static var previews: some View {
-        NavigationView {
+        NavigationStack {
             BookDetailView(book: Book(
                 id: UUID(), clubId: UUID(),
                 title: "Dune", author: "Frank Herbert",
