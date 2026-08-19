@@ -147,6 +147,21 @@ final class BookViewModel: ObservableObject {
             avatarUrl: p.avatarUrl, lastSeenMessageId: lastSeen, heardMessageIds: Array(heard)))
     }
 
+    // #107: a heard receipt from this user's OWN other device. Mirror the #102 seed logic —
+    // mark those voice ids heard in the device-local store (sticky/additive, skipping anything
+    // already completed so an in-progress playback isn't disturbed), then refresh the unread
+    // count. Never touches `reads`, so self can't appear in the "heard-by" avatar row (#108).
+    private func applySelfHeardReceipt(_ p: HeardReceiptPayload) {
+        let durationById = Dictionary(messages.map { ($0.id, $0.durationSeconds ?? 0) },
+                                      uniquingKeysWith: { first, _ in first })
+        let toMark = p.messageIds
+            .filter { !PlaybackProgressStore.shared.isCompleted($0) }
+            .map { (id: $0, duration: durationById[$0] ?? 0) }
+        guard !toMark.isEmpty else { return }
+        PlaybackProgressStore.shared.markHeard(toMark)
+        syncUnread()
+    }
+
     // Optimistic text messages awaiting their server echo, tracked by clientId (the
     // server echoes it back). Keyed by id — not body — so identical consecutive sends
     // don't clobber each other (#35).
@@ -325,9 +340,16 @@ final class BookViewModel: ObservableObject {
         }
 
         await ChatService.shared.setOnHeardReceipt { [weak self] payload in
-            guard let self, payload.bookId == self.book.id,
-                  payload.userId != TokenStore.shared.userId else { return }
-            self.applyHeardReceipt(payload)
+            guard let self, payload.bookId == self.book.id else { return }
+            if payload.userId == TokenStore.shared.userId {
+                // #107: a heard receipt echoed from THIS user's OWN other device. Sync the
+                // local heard state + unread count so counts track across devices live.
+                // Deliberately NOT routed through applyHeardReceipt, so self never lands in
+                // the "heard-by" avatar row (#108).
+                self.applySelfHeardReceipt(payload)
+            } else {
+                self.applyHeardReceipt(payload)
+            }
         }
 
         await ChatService.shared.setOnUserTyping { [weak self] payload in
