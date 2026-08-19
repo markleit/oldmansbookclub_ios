@@ -1,0 +1,25 @@
+# #99 — advisory SwiftLint config. Lint the app sources; keep the first pass low-noise by
+# muting the most opinionated rules, then tighten over time. CI runs this non-blocking.
+included:
+  - App
+
+# Generated / non-source paths.
+excluded:
+  - OldMansBookClub.xcodeproj
+
+# Muted for the advisory first pass — re-enable as the codebase is tuned.
+disabled_rules:
+  - todo                    # TODO/FIXME comments are intentional here
+  - identifier_name         # short names (id, url, db, u) are common and fine
+  - line_length             # handled as a lenient warning below
+  - type_body_length
+  - file_length
+  - function_body_length
+  - cyclomatic_complexity
+  - large_tuple
+
+line_length:
+  warning: 140
+  ignores_comments: true
+
+reporter: "github-actions-logging"

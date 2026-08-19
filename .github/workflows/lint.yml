@@ -1,0 +1,33 @@
+name: Lint & format (advisory)
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+# #99 — advisory-first: surface style/format findings as PR annotations but NEVER block a
+# merge (every step is continue-on-error). Tighten to enforcing once the rules are tuned.
+jobs:
+  swiftlint:
+    name: SwiftLint (iOS, advisory)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install SwiftLint
+        run: brew install swiftlint
+      - name: SwiftLint
+        continue-on-error: true
+        run: swiftlint lint --reporter github-actions-logging
+
+  dotnet-format:
+    name: dotnet format (API, advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: dotnet format --verify-no-changes
+        continue-on-error: true
+        run: dotnet format API/BookClubApi.csproj --verify-no-changes --severity info

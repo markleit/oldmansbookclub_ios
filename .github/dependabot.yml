@@ -1,0 +1,18 @@
+# #99 — Dependabot: keep CI actions and API NuGet packages current, with basic
+# security-update coverage. (The iOS SignalR dependency is pinned via xcodegen's
+# project.yml, not a standard SPM manifest, so it isn't covered here yet.)
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["tech-debt"]
+
+  - package-ecosystem: "nuget"
+    directory: "/API"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["tech-debt"]
