@@ -117,7 +117,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         await SendToAllAsync([deviceToken], payload);
     }
 
-    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default, int badge = 1)
+    public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default, int badge = 1, int bookUnread = -1)
     {
         var alertBody = message.Type switch
         {
@@ -143,7 +143,10 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             },
             clubId = message.ClubId.ToString(),
             bookId = bookId.ToString(),
-            messageId = message.Id.ToString()
+            messageId = message.Id.ToString(),
+            // The recipient's unread count for THIS book, so a woken client can set it exactly
+            // rather than incrementing a number it can't verify (#119). -1 = not supplied.
+            bookUnread
         });
 
         await SendToAllAsync(deviceTokens, payload);

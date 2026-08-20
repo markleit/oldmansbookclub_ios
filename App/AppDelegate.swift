@@ -59,21 +59,29 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             // push is the only signal for a non-open book, so bump its unread count optimistically
             // (the next LibraryViewModel.load() → seed() reconciles to server truth).
             if inBackground, await ChatService.shared.activeBookId != bookId {
-                await bumpUnread(bookId: bookId)
+                await applyUnread(from: userInfo, bookId: bookId)
             }
             let gotNewData = await MessagePrefetcher.shared.prefetch(bookId: bookId)
             completionHandler(gotNewData ? .newData : .noData)
         }
     }
 
-    // Optimistically increment a book's unread count on a delivered message push, so Library
-    // badges move live instead of only on pull-to-refresh / foreground (#96). Guarded to signed-in
-    // only; the caller skips the currently-open book (it owns its own count while on screen, #87).
-    // seed() heals any drift on the next load, so an occasional over/under-count self-corrects.
+    // Move a book's unread count on a delivered message push, so Library badges update live
+    // instead of only on pull-to-refresh / foreground (#96). Guarded to signed-in only; the
+    // caller skips the currently-open book (it owns its own count while on screen, #87).
+    //
+    // The payload carries the recipient's real count for that book (#119), so this sets it
+    // outright. Incrementing was a guess — it over-counted messages from blocked senders and
+    // couldn't correct itself while backgrounded. The +1 remains only as a fallback for a push
+    // that predates the server change.
     @MainActor
-    private func bumpUnread(bookId: UUID) {
+    private func applyUnread(from userInfo: [AnyHashable: Any], bookId: UUID) {
         guard TokenStore.shared.token != nil else { return }
-        UnreadStore.shared.bump(bookId: bookId, by: 1)
+        if let exact = (userInfo["bookUnread"] as? NSNumber)?.intValue, exact >= 0 {
+            UnreadStore.shared.set(bookId: bookId, count: exact, writesBadge: false)
+        } else {
+            UnreadStore.shared.bump(bookId: bookId, by: 1, writesBadge: false)
+        }
     }
 
     // The system relaunched us (or woke us) to finish delivering background upload events.
@@ -147,7 +155,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             // Foreground push for a book you're not viewing → move its Library badge live (#96)
             // and warm its cache so tapping the banner opens instantly (#94 Phase 3).
             if !isOpen {
-                await bumpUnread(bookId: bookId)
+                await applyUnread(from: userInfo, bookId: bookId)
                 _ = await MessagePrefetcher.shared.prefetch(bookId: bookId)
             }
         }
