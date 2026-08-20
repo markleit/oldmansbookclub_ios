@@ -205,7 +205,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
             if let bid = self?.currentBookId {
-                Task { await ReceiptQueue.shared.markHeard(bookId: bid, messageId: completedId) }
+                Task {
+                    HeardStore.shared.markHeard([completedId], bookId: bid)
+                    UnreadStore.shared.bump(bookId: bid, by: -1)
+                    await ReceiptQueue.shared.pushHeard(bookId: bid, ids: [completedId])
+                }
             }
             self?.advance()
         }
@@ -391,7 +395,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         var sections: [CPListSection] = []
         // "Play all unheard" — start continuous playback from the oldest unheard voice. Match
         // the phone's count: voice messages that aren't yours and aren't locally heard yet.
-        let unheard = active.filter { $0.type == .voice && $0.senderId != me && !PlaybackProgressStore.shared.isCompleted($0.id) }
+        let unheard = active.filter { $0.type == .voice && $0.senderId != me && !HeardStore.shared.isHeard($0.id) }
         if let first = unheard.first {
             let playAll = CPListItem(text: "Play all unheard (\(unheard.count))", detailText: nil)
             playAll.handler = { [weak self] _, completion in
@@ -409,7 +413,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             case .voice:
                 // Always a 🎤 mic icon (consistent), then the transcript if we have one. Your
                 // own messages never show the unheard dot (matches the phone).
-                let heard = msg.senderId == me || PlaybackProgressStore.shared.isCompleted(msg.id)
+                let heard = msg.senderId == me || HeardStore.shared.isHeard(msg.id)
                 let body = TranscriptStore.shared.text(for: msg.id) ?? "Voice message"
                 item = CPListItem(text: (heard ? "" : "● ") + "🎤 " + body, detailText: sub)
                 // TEMP (skip investigation): eager on-device transcription of every row is a
@@ -454,7 +458,11 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
             if let bid = self?.currentBookId {
-                Task { await ReceiptQueue.shared.markHeard(bookId: bid, messageId: completedId) }
+                Task {
+                    HeardStore.shared.markHeard([completedId], bookId: bid)
+                    UnreadStore.shared.bump(bookId: bid, by: -1)
+                    await ReceiptQueue.shared.pushHeard(bookId: bid, ids: [completedId])
+                }
             }
             self?.advance()
         }

@@ -11,6 +11,7 @@ struct BookDetailView: View {
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     // Observed so voice bubbles re-render live as messages are played / marked heard.
     @ObservedObject private var playbackStore = PlaybackProgressStore.shared
+    @ObservedObject private var heardStore = HeardStore.shared
     // Single source of truth for the unread count shown in the title (same value the
     // club-view + icon badges use).
     @ObservedObject private var unreadStore = UnreadStore.shared
@@ -389,10 +390,7 @@ struct BookDetailView: View {
             // Report the voice message as heard (sticky, server-side) for receipts + unread.
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
-                Task { @MainActor in
-                    vm.syncUnread()   // local completed state already set → reflect to all surfaces
-                    await ReceiptQueue.shared.markHeard(bookId: vm.book.id, messageId: completedId)
-                }
+                Task { @MainActor in vm.consumeHeard([completedId]) }
             }
             // Auto-advance to the next (newer) voice message in the chat, if any.
             AudioPlayerService.shared.nextToPlay = { [weak viewModel] completedId in
@@ -441,17 +439,6 @@ struct BookDetailView: View {
         }
     }
 
-    // Loaded voice messages from OTHERS not yet marked played (drives the chat-title
-    // unread count + "Mark all as heard"). Excludes your own — you can't have an
-    // "unheard" message you sent — matching the server's unread definition.
-    private var unheardVoiceMessages: [Message] {
-        viewModel.visibleMessages.filter {
-            $0.type == .voice && !$0.isDeleted
-                && $0.senderId != TokenStore.shared.userId
-                && !PlaybackProgressStore.shared.isCompleted($0.id)
-        }
-    }
-
     @ViewBuilder
     private var bookMenuItems: some View {
         Button { showingDetails = true } label: {
@@ -461,24 +448,19 @@ struct BookDetailView: View {
             Label("Edit Book", systemImage: "pencil")
         }
         Divider()
-        // Offer the repair path whenever EITHER ledger still shows unread (#119). The displayed
-        // count is this device's while the chat is open, and if it has drifted below the server's
-        // this is the only control that can push the two back into agreement — hiding it here is
-        // what left users stuck with a count they had no way to clear.
-        if max(unreadStore.counts[viewModel.book.id] ?? 0,
-               unreadStore.serverCount(bookId: viewModel.book.id)) > 0 {
+        if (unreadStore.counts[viewModel.book.id] ?? 0) > 0 {
             Button {
-                // Mark every type consumed so the count zeroes on all surfaces: voice →
-                // heard, text/photo/video → read (advance last-seen to newest). Local
-                // first (instant), then both server calls; next load reconciles.
+                // Mark every type consumed: voice → heard, text/photo/video → read (advance
+                // last-seen to newest). Local first so the count zeroes instantly, then the
+                // outbox sends both — and a failure stays queued rather than being lost (#119).
+                let unheard = viewModel.unheardVoiceMessages
                 PlaybackProgressStore.shared.markHeard(
-                    unheardVoiceMessages.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
+                    unheard.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
                 )
+                HeardStore.shared.markHeard(unheard.map(\.id), bookId: viewModel.book.id)
                 UnreadStore.shared.zero(bookId: viewModel.book.id)
-                let latestId = viewModel.visibleMessages.first?.id
+                let latestId = viewModel.visibleMessages.first(where: { $0.sendState == nil })?.id
                 Task {
-                    // Queued, not fire-and-forget: a failure here used to leave the server still
-                    // showing unread with no way for the user to try again (#119).
                     await ReceiptQueue.shared.markAllHeard(bookId: viewModel.book.id)
                     if let latestId {
                         await ReceiptQueue.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
@@ -674,11 +656,10 @@ struct MessageRow: View {
                     menuRow("Edit", "pencil") { editText = body; DispatchQueue.main.async { showEditSheet = true } }
                 }
             }
-            if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
+            if message.type == .voice, !HeardStore.shared.isHeard(message.id) {
                 menuRow("Mark as Heard", "checkmark.circle") {
                     PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
-                    viewModel.syncUnread()
-                    Task { await ReceiptQueue.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
+                    viewModel.consumeHeard([message.id])
                 }
             }
             menuRow("Save", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
@@ -1055,6 +1036,7 @@ struct VoiceMessageBubble: View {
     var onCancel: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
     @ObservedObject private var store = PlaybackProgressStore.shared
+    @ObservedObject private var heard = HeardStore.shared
     @GestureState private var isScrubbing = false
     @State private var showSpeedSlider = false
     @State private var showTranscription = false
@@ -1065,9 +1047,11 @@ struct VoiceMessageBubble: View {
     private var isSending: Bool { message.sendState == .sending }
     private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
-    // Fully listened: the play circle goes green once the audio has reached the end.
-    // Clears on replay (AudioPlayerService clears the completed flag when it restarts).
-    private var isFullyPlayed: Bool { store.isCompleted(message.id) }
+    // Fully listened: the play circle goes green once the audio has reached the end. For
+    // others' messages that's the heard state — shared across your devices and sticky through
+    // replays; for your own it's just this device's playback position, since "heard" isn't a
+    // thing you can be about your own message.
+    private var isFullyPlayed: Bool { heard.isHeard(message.id) || store.isCompleted(message.id) }
     // The "my message" blue — softer/muted vs the vivid system blue. Shared by the
     // bubble and the play icon so they read as one color family.
     private var myBlue: Color { .myMessageBlue }

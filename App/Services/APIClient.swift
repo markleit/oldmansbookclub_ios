@@ -446,33 +446,40 @@ final class APIClient {
         let _: Ack = try await post(path: "/diagnostics", body: report, authenticated: true)
     }
 
-    func markRead(bookId: UUID, messageId: UUID) async throws {
+    // Every endpoint that consumes messages answers with the book's authoritative unread count
+    // (#119), so the client never re-derives the number from message state.
+    private struct UnreadCountResponse: Decodable { let unreadCount: Int }
+
+    private func unreadCount(from data: Data) -> Int? {
+        (try? decoder.decode(UnreadCountResponse.self, from: data))?.unreadCount
+    }
+
+    @discardableResult
+    func markRead(bookId: UUID, messageId: UUID) async throws -> Int? {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONEncoder().encode(messageId)
-        try await sendAuthorized(request)
-    }
-
-    // Mark a voice message heard (sticky, server-side). Fired on full playback or a
-    // per-message "Mark as Heard".
-    func markHeard(bookId: UUID, messageId: UUID) async throws {
-        try await postEmpty(path: "/books/\(bookId)/messages/\(messageId)/heard")
+        return unreadCount(from: try await sendAuthorized(request))
     }
 
     // Mark every voice message in a book heard ("Mark all as heard").
-    func markAllHeard(bookId: UUID) async throws {
-        try await postEmpty(path: "/books/\(bookId)/heard/all")
+    @discardableResult
+    func markAllHeard(bookId: UUID) async throws -> Int? {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard/all")!)
+        request.httpMethod = "POST"
+        return unreadCount(from: try await sendAuthorized(request))
     }
 
-    // Mark a specific set of voice messages heard (#119) — backs the two-way heard reconcile,
-    // pushing up ids this device has heard that the server is missing.
-    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws {
+    // Mark a specific set of voice messages heard (#119) — the outbox's only heard call, whether
+    // it carries one mark or a backlog.
+    @discardableResult
+    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws -> Int? {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(messageIds)
-        try await sendAuthorized(request)
+        return unreadCount(from: try await sendAuthorized(request))
     }
 
     // #47 — set/switch the caller's reaction on a message.

@@ -62,6 +62,15 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     private Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
         => UnreadCalculator.PerBookAsync(db, UserId, bookIds);
 
+    // The caller's unread count for one book, as the server computes it. Every endpoint that
+    // consumes messages returns this so the client never has to re-derive the number itself
+    // (#119) — it applies an optimistic change for instant feedback and this corrects it.
+    private async Task<int> UnreadCountAsync(Guid bookId)
+        => (await UnreadCalculator.PerBookAsync(db, UserId, [bookId])).GetValueOrDefault(bookId);
+
+    private async Task<IActionResult> OkWithUnreadAsync(Guid bookId)
+        => Ok(new { unreadCount = await UnreadCountAsync(bookId) });
+
     // Mark a single voice message heard (on full playback or per-message "mark as heard").
     // Sticky/idempotent — replays never remove it.
     [HttpPost("{bookId}/messages/{messageId}/heard")]
@@ -78,7 +87,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             catch (DbUpdateException) { /* raced another mark — already heard, fine */ }
         }
         await BroadcastHeardAsync(bookId, [messageId]);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     // Mark every (others') voice message in a book heard — backs "Mark all as heard".
@@ -99,7 +108,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
         if (toMark.Count > 0) await db.SaveChangesAsync();
         await BroadcastHeardAsync(bookId, toMark);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     // Mark a specific set of voice messages heard (#119). Backs the client's two-way heard
@@ -113,7 +122,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return NotFound();
         if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
-        if (messageIds is null || messageIds.Count == 0) return Ok();
+        if (messageIds is null || messageIds.Count == 0) return await OkWithUnreadAsync(bookId);
 
         var alreadyHeard = db.MessageHeards.Where(h => h.UserId == UserId).Select(h => h.MessageId);
         var toMark = await db.Messages
@@ -122,12 +131,12 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .Select(m => m.Id)
             .ToListAsync();
 
-        if (toMark.Count == 0) return Ok();
+        if (toMark.Count == 0) return await OkWithUnreadAsync(bookId);
         foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
         try { await db.SaveChangesAsync(); }
-        catch (DbUpdateException) { return Ok(); }   // raced a concurrent mark; next reconcile retries
+        catch (DbUpdateException) { return await OkWithUnreadAsync(bookId); }   // raced a concurrent mark
         await BroadcastHeardAsync(bookId, toMark);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     // The caller's OWN heard voice-message IDs for a book. The /reads endpoint deliberately
@@ -489,7 +498,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .Where(m => m.Id == messageId && m.BookId == bookId)
             .Select(m => (DateTime?)m.SentAt)
             .FirstOrDefaultAsync();
-        if (incomingSentAt is null) return Ok();   // unknown message for this book — ignore
+        if (incomingSentAt is null) return await OkWithUnreadAsync(bookId);   // unknown message — ignore
 
         var existing = await db.ChatReads
             .FirstOrDefaultAsync(cr => cr.UserId == UserId && cr.BookId == bookId);
@@ -506,14 +515,14 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                     .Select(m => (DateTime?)m.SentAt)
                     .FirstOrDefaultAsync();
             // Already read at or past this message — nothing changed, so don't re-broadcast either.
-            if (currentSentAt is not null && incomingSentAt <= currentSentAt) return Ok();
+            if (currentSentAt is not null && incomingSentAt <= currentSentAt) return await OkWithUnreadAsync(bookId);
             existing.LastSeenMessageId = messageId;
             existing.UpdatedAt = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync();
         await BroadcastReadAsync(bookId, messageId);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     [HttpGet("{bookId}/reads")]
