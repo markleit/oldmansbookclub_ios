@@ -205,7 +205,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
             if let bid = self?.currentBookId {
-                Task { try? await APIClient.shared.markHeard(bookId: bid, messageId: completedId) }
+                Task { await ReceiptQueue.shared.markHeard(bookId: bid, messageId: completedId) }
             }
             self?.advance()
         }
@@ -454,7 +454,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
             if let bid = self?.currentBookId {
-                Task { try? await APIClient.shared.markHeard(bookId: bid, messageId: completedId) }
+                Task { await ReceiptQueue.shared.markHeard(bookId: bid, messageId: completedId) }
             }
             self?.advance()
         }

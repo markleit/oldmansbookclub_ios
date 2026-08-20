@@ -102,6 +102,34 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return Ok();
     }
 
+    // Mark a specific set of voice messages heard (#119). Backs the client's two-way heard
+    // reconcile: the device pushes up anything it has marked heard locally that the server is
+    // missing (a markHeard POST that never landed). Unlike /heard/all this touches only the ids
+    // given, so it can repair drift without silently consuming messages the user never played.
+    // Ids that aren't others' live voice messages in this book are ignored, not rejected.
+    [HttpPost("{bookId}/heard")]
+    public async Task<IActionResult> MarkHeardBatch(Guid bookId, [FromBody] List<Guid> messageIds)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+        if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
+        if (messageIds is null || messageIds.Count == 0) return Ok();
+
+        var alreadyHeard = db.MessageHeards.Where(h => h.UserId == UserId).Select(h => h.MessageId);
+        var toMark = await db.Messages
+            .Where(m => m.BookId == bookId && m.Type == MessageType.Voice && m.SenderId != UserId
+                && m.DeletedAt == null && messageIds.Contains(m.Id) && !alreadyHeard.Contains(m.Id))
+            .Select(m => m.Id)
+            .ToListAsync();
+
+        if (toMark.Count == 0) return Ok();
+        foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
+        try { await db.SaveChangesAsync(); }
+        catch (DbUpdateException) { return Ok(); }   // raced a concurrent mark; next reconcile retries
+        await BroadcastHeardAsync(bookId, toMark);
+        return Ok();
+    }
+
     // The caller's OWN heard voice-message IDs for a book. The /reads endpoint deliberately
     // excludes self (it powers "read by others"), so this exposes the caller's heard state.
     // The client seeds its local heard cache (PlaybackProgressStore) from this on load, so
@@ -454,6 +482,15 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
+        // The marker may only ever advance (#119). It's a pointer, not a timestamp, so a client
+        // working from a stale cache — or a race between the chat-open call and a live-receive
+        // call — could otherwise rewind it and resurrect already-read messages.
+        var incomingSentAt = await db.Messages
+            .Where(m => m.Id == messageId && m.BookId == bookId)
+            .Select(m => (DateTime?)m.SentAt)
+            .FirstOrDefaultAsync();
+        if (incomingSentAt is null) return Ok();   // unknown message for this book — ignore
+
         var existing = await db.ChatReads
             .FirstOrDefaultAsync(cr => cr.UserId == UserId && cr.BookId == bookId);
 
@@ -463,6 +500,13 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }
         else
         {
+            var currentSentAt = existing.LastSeenMessageId == null ? null
+                : await db.Messages
+                    .Where(m => m.Id == existing.LastSeenMessageId)
+                    .Select(m => (DateTime?)m.SentAt)
+                    .FirstOrDefaultAsync();
+            // Already read at or past this message — nothing changed, so don't re-broadcast either.
+            if (currentSentAt is not null && incomingSentAt <= currentSentAt) return Ok();
             existing.LastSeenMessageId = messageId;
             existing.UpdatedAt = DateTime.UtcNow;
         }

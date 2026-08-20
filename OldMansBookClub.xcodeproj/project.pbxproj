@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */; };
 		0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */; };
 		165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D395542233ADC1273F05370D /* AppDelegate.swift */; };
 		19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */; };
@@ -107,6 +108,7 @@
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
+		FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptQueue.swift; sourceTree = "<group>"; };
 		FF5A48CCFD136D8940110FEF /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -155,6 +157,7 @@
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
 				4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
+				FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 				C05DE224CB1318D203D6469B /* TranscriptStore.swift */,
 				FF5A48CCFD136D8940110FEF /* UnreadStore.swift */,
@@ -351,6 +354,7 @@
 				0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
 				3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */,
+				062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
 				C1446459207EFE368581046D /* SettingsView.swift in Sources */,
 				D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */,

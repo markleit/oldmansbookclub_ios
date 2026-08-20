@@ -17,6 +17,13 @@ final class UnreadStore: ObservableObject {
 
     @Published private(set) var counts: [UUID: Int] = [:]
 
+    // The last count the SERVER reported for each book, kept alongside the displayed one (#119).
+    // The two disagree whenever this device's heard state has drifted from the server's, and
+    // the open chat overwrites `counts` with its own device-local figure — so without this,
+    // a book the server considers unread looks fully read from inside the chat — exactly when
+    // the user needs the repair control. Cleared when a book is genuinely zeroed.
+    @Published private(set) var serverCounts: [UUID: Int] = [:]
+
     // The chat currently on screen, if any. While a chat is open it marks messages
     // read/heard locally and owns its own count, so a concurrent library reload (which
     // fires on every foreground) must NOT overwrite it with server truth that may lag a
@@ -37,12 +44,17 @@ final class UnreadStore: ObservableObject {
     func seed(from books: [Book]) {
         var next = Dictionary(books.map { ($0.id, max(0, $0.unreadCount)) },
                               uniquingKeysWith: { first, _ in first })
+        serverCounts = next
         if let active = activeBookId, let local = counts[active], next[active] != nil {
             next[active] = local
         }
         counts = next
         syncBadge()
     }
+
+    // What the server last said, for a book whose displayed count may have been replaced by a
+    // device-local figure. Used to keep the "Mark all as read" repair path reachable (#119).
+    func serverCount(bookId: UUID) -> Int { serverCounts[bookId] ?? 0 }
 
     // Set a book's count outright — used when a surface can compute the exact unread
     // locally (the open chat, which holds the full message list + heard state).
@@ -58,7 +70,11 @@ final class UnreadStore: ObservableObject {
         set(bookId: bookId, count: (counts[bookId] ?? 0) + delta)
     }
 
+    // Everything in this book is consumed on BOTH ledgers (mark-all-read posts read + heard-all),
+    // so drop the server figure too — otherwise the repair control would stay on screen after
+    // it had already done its job, until the next library load reseeded.
     func zero(bookId: UUID) {
+        serverCounts[bookId] = 0
         set(bookId: bookId, count: 0)
     }
 

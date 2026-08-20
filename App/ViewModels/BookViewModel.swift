@@ -303,11 +303,27 @@ final class BookViewModel: ObservableObject {
                 .filter { !PlaybackProgressStore.shared.isCompleted($0) }
                 .map { (id: $0, duration: durationById[$0] ?? 0) }
             if !toSeed.isEmpty { PlaybackProgressStore.shared.markHeard(toSeed) }
+
+            // ...and reconcile the other direction (#119). Anything this device has marked heard
+            // that the server doesn't know about is a receipt that never landed. Left alone it
+            // stays unread server-side forever — the seed above only ever adds — so the book list
+            // would keep showing a count the chat itself says is zero, with nothing able to clear
+            // it. Pushing the difference up is what makes the drift self-healing.
+            let serverHeard = Set(heardIds)
+            let myId = TokenStore.shared.userId
+            let heardOnlyHere = messages
+                .filter { $0.type == .voice && !$0.isDeleted && $0.senderId != myId
+                          && PlaybackProgressStore.shared.isCompleted($0.id)
+                          && !serverHeard.contains($0.id) }
+                .map(\.id)
+            if !heardOnlyHere.isEmpty {
+                await ReceiptQueue.shared.markHeardBatch(bookId: bookId, messageIds: heardOnlyHere)
+            }
         }
 
         // markRead fires after messages resolved (needs latestId)
         if let id = latestId {
-            try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
+            await ReceiptQueue.shared.markRead(bookId: bookId, messageId: id)
         }
         // Reflect the just-read state to every surface (non-voice now read; remaining
         // unread is unheard voice).
@@ -351,7 +367,7 @@ final class BookViewModel: ObservableObject {
 
             self.messages.insert(message, at: 0)
             self.saveMessagesCache()
-            Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
+            Task { await ReceiptQueue.shared.markRead(bookId: self.book.id, messageId: message.id) }
             // An incoming voice message from another member bumps this book's unread;
             // non-voice is immediately marked read above, so it nets to zero.
             self.syncUnread()

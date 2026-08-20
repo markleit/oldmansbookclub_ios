@@ -391,7 +391,7 @@ struct BookDetailView: View {
                 guard let vm = viewModel else { return }
                 Task { @MainActor in
                     vm.syncUnread()   // local completed state already set → reflect to all surfaces
-                    try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId)
+                    await ReceiptQueue.shared.markHeard(bookId: vm.book.id, messageId: completedId)
                 }
             }
             // Auto-advance to the next (newer) voice message in the chat, if any.
@@ -461,7 +461,12 @@ struct BookDetailView: View {
             Label("Edit Book", systemImage: "pencil")
         }
         Divider()
-        if (unreadStore.counts[viewModel.book.id] ?? 0) > 0 {
+        // Offer the repair path whenever EITHER ledger still shows unread (#119). The displayed
+        // count is this device's while the chat is open, and if it has drifted below the server's
+        // this is the only control that can push the two back into agreement — hiding it here is
+        // what left users stuck with a count they had no way to clear.
+        if max(unreadStore.counts[viewModel.book.id] ?? 0,
+               unreadStore.serverCount(bookId: viewModel.book.id)) > 0 {
             Button {
                 // Mark every type consumed so the count zeroes on all surfaces: voice →
                 // heard, text/photo/video → read (advance last-seen to newest). Local
@@ -472,9 +477,11 @@ struct BookDetailView: View {
                 UnreadStore.shared.zero(bookId: viewModel.book.id)
                 let latestId = viewModel.visibleMessages.first?.id
                 Task {
-                    try? await APIClient.shared.markAllHeard(bookId: viewModel.book.id)
+                    // Queued, not fire-and-forget: a failure here used to leave the server still
+                    // showing unread with no way for the user to try again (#119).
+                    await ReceiptQueue.shared.markAllHeard(bookId: viewModel.book.id)
                     if let latestId {
-                        try? await APIClient.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
+                        await ReceiptQueue.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
                     }
                 }
             } label: {
@@ -671,7 +678,7 @@ struct MessageRow: View {
                 menuRow("Mark as Heard", "checkmark.circle") {
                     PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
                     viewModel.syncUnread()
-                    Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
+                    Task { await ReceiptQueue.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
                 }
             }
             menuRow("Save", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }

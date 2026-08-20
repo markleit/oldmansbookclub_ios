@@ -465,6 +465,16 @@ final class APIClient {
         try await postEmpty(path: "/books/\(bookId)/heard/all")
     }
 
+    // Mark a specific set of voice messages heard (#119) — backs the two-way heard reconcile,
+    // pushing up ids this device has heard that the server is missing.
+    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(messageIds)
+        try await sendAuthorized(request)
+    }
+
     // #47 — set/switch the caller's reaction on a message.
     func setReaction(bookId: UUID, messageId: UUID, emoji: String) async throws {
         struct Body: Encodable { let emoji: String }
