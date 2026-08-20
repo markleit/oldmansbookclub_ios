@@ -29,6 +29,7 @@
 		57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22282622C7A5BEAAEE8961CE /* AudioCue.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
 		59ECDF29F8EB5F808607ADAC /* BackgroundTaskBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */; };
+		5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DBF0F42D59478B1E09CB57 /* AccountScope.swift */; };
 		5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */; };
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
@@ -75,6 +76,7 @@
 		3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskBox.swift; sourceTree = "<group>"; };
 		3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
 		40CB6C91B09B06C1D5531269 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		40DBF0F42D59478B1E09CB57 /* AccountScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountScope.swift; sourceTree = "<group>"; };
 		41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSendQueue.swift; sourceTree = "<group>"; };
 		4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePrefetcher.swift; sourceTree = "<group>"; };
 		52DE7679A3B99FB9C646DA4C /* HeardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeardStore.swift; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 		0DC96F159ED578CF4C8628B8 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				40DBF0F42D59478B1E09CB57 /* AccountScope.swift */,
 				2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */,
 				E2ABB613BFB149719A00A493 /* AudioCache.swift */,
 				22282622C7A5BEAAEE8961CE /* AudioCue.swift */,
@@ -318,6 +321,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				882C4AA5AED7AF3D691F14CA /* APIClient.swift in Sources */,
+				5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */,
 				8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */,
 				BC028A1177F026A4999F388C /* AdminView.swift in Sources */,
 				165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */,

@@ -454,6 +454,13 @@ final class APIClient {
         (try? decoder.decode(UnreadCountResponse.self, from: data))?.unreadCount
     }
 
+    // The heard batch also reports which of the requested ids it will ever accept, so the client
+    // never has to guess on the server's behalf (#119).
+    struct HeardBatchResult: Decodable {
+        let unreadCount: Int
+        let heard: [UUID]
+    }
+
     @discardableResult
     func markRead(bookId: UUID, messageId: UUID) async throws -> Int? {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
@@ -473,13 +480,12 @@ final class APIClient {
 
     // Mark a specific set of voice messages heard (#119) — the outbox's only heard call, whether
     // it carries one mark or a backlog.
-    @discardableResult
-    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws -> Int? {
+    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws -> HeardBatchResult {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(messageIds)
-        return unreadCount(from: try await sendAuthorized(request))
+        return try decoder.decode(HeardBatchResult.self, from: try await sendAuthorized(request))
     }
 
     // #47 — set/switch the caller's reaction on a message.
@@ -787,7 +793,9 @@ final class APIClient {
             }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
-        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        // Carry the status through: a 4xx means the request will never succeed, which callers
+        // with a retry queue must be able to tell apart from "the network is down" (#119).
+        guard (200..<300).contains(http.statusCode) else { throw APIError.serverError(http.statusCode) }
         return data
     }
 

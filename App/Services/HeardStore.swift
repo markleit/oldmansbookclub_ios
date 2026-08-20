@@ -37,13 +37,27 @@ final class HeardStore: ObservableObject {
         } else {
             pending = [:]
         }
+        // Cheap and worth it once at launch: without this, a cold start signed in as someone
+        // else would render the previous account's green bubbles until the first book load.
+        dropIfNotMine()
     }
 
+    // Deliberately does no account check: it runs per voice bubble on every render, and every
+    // path that could act on stale state (seed, markHeard, the outbox) checks before it does.
     func isHeard(_ id: UUID) -> Bool { confirmed.contains(id) || pending[id] != nil }
+
+    // Drop everything if the signed-in account changed — this state is one account's.
+    private func dropIfNotMine() {
+        guard AccountScope.ownerChanged("heardStore") else { return }
+        confirmed = []
+        pending = [:]
+        persist()
+    }
 
     // Mark heard locally and hand the marks to the outbox. Instant on screen; the network
     // attempt happens in `push`, and anything that fails simply stays pending.
     func markHeard(_ ids: [UUID], bookId: UUID) {
+        dropIfNotMine()
         guard !ids.isEmpty else { return }
         for id in ids where !confirmed.contains(id) { pending[id] = bookId }
         persist()
@@ -70,9 +84,13 @@ final class HeardStore: ObservableObject {
     // written straight to sticky local state with no outbox, so a lost receipt left no trace to
     // retry — they're adopted into the outbox once here and pushed up like any other mark.
     func seed(serverHeardIds: [UUID], voiceIds: [UUID], legacyHeardIds: [UUID], bookId: UUID) -> [UUID] {
+        dropIfNotMine()
         let server = Set(serverHeardIds)
         let legacy = Set(legacyHeardIds)
         confirmed.formUnion(server)
+        // The server already knows about these, so the outbox is done with them. Without this
+        // they'd linger and be re-sent on the next flush for no reason.
+        for id in server { pending.removeValue(forKey: id) }
 
         for id in voiceIds where !server.contains(id) && pending[id] == nil {
             if legacy.contains(id) {
@@ -88,10 +106,23 @@ final class HeardStore: ObservableObject {
 
     // Everything queued for one book, for a retry that isn't tied to a book load.
     func pendingIds(bookId: UUID) -> [UUID] {
-        pending.compactMap { $0.value == bookId ? $0.key : nil }
+        dropIfNotMine()
+        return pending.compactMap { $0.value == bookId ? $0.key : nil }
     }
 
-    var pendingBookIds: Set<UUID> { Set(pending.values) }
+    var pendingBookIds: Set<UUID> {
+        dropIfNotMine()
+        return Set(pending.values)
+    }
+
+    // The server has told us it will never accept these — your own message, a deleted one, an id
+    // it doesn't recognise. Keeping them would mean retrying forever, so they leave the outbox.
+    // They stay "heard" on screen only if they're in the cache on their own merit.
+    func abandon(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { pending.removeValue(forKey: id) }
+        persist()
+    }
 
     private func persist() {
         let d = UserDefaults.standard

@@ -204,13 +204,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         currentBookId = bookId
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
-            if let bid = self?.currentBookId {
-                Task {
-                    HeardStore.shared.markHeard([completedId], bookId: bid)
-                    UnreadStore.shared.bump(bookId: bid, by: -1)
-                    await ReceiptQueue.shared.pushHeard(bookId: bid, ids: [completedId])
-                }
-            }
+            self?.recordHeard(completedId)
             self?.advance()
         }
         reflectAdopted()
@@ -387,6 +381,20 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         await refresh()   // initial populate; templateWillAppear refreshes on re-entry
     }
 
+    // Finishing a voice message marks it heard — but only someone else's. The queue here plays
+    // your own messages too, and the server has no heard row to record for those, so sending one
+    // would be a mark it can only refuse (#119).
+    private func recordHeard(_ completedId: UUID) {
+        guard let bookId = currentBookId,
+              let message = playQueue.first(where: { $0.id == completedId }),
+              message.type == .voice,
+              message.senderId != TokenStore.shared.userId,
+              !HeardStore.shared.isHeard(completedId) else { return }
+        HeardStore.shared.markHeard([completedId], bookId: bookId)
+        UnreadStore.shared.bump(bookId: bookId, by: -1)
+        Task { await ReceiptQueue.shared.pushHeard(bookId: bookId, ids: [completedId]) }
+    }
+
     private func messageSections(book: Book, messages: [Message]) -> [CPListSection] {
         for m in messages where m.transcript != nil { TranscriptStore.shared.cache(m.transcript!, for: m.id) }
         let active = messages.filter { !$0.isDeleted }.sorted { $0.sentAt < $1.sentAt }   // chronological
@@ -457,13 +465,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // only as the "voice finished" signal, not its own auto-advance.
         AudioPlayerService.shared.nextToPlay = nil
         AudioPlayerService.shared.onPlaybackCompleted = { [weak self] completedId in
-            if let bid = self?.currentBookId {
-                Task {
-                    HeardStore.shared.markHeard([completedId], bookId: bid)
-                    UnreadStore.shared.bump(bookId: bid, by: -1)
-                    await ReceiptQueue.shared.pushHeard(bookId: bid, ids: [completedId])
-                }
-            }
+            self?.recordHeard(completedId)
             self?.advance()
         }
         presentNowPlaying()

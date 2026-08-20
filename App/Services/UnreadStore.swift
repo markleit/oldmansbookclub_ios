@@ -39,7 +39,17 @@ final class UnreadStore: ObservableObject {
     // Refresh the cache from a books fetch. Books absent from the fetch are dropped (e.g.
     // removed from the club) so the icon-badge sum stays correct. The open chat's count is
     // preserved — see activeBookId.
+    // Counts (and the icon they drive) belong to the signed-in account — on a change, drop them
+    // and clear the icon rather than showing one person's unread to the next. See AccountScope.
+    private func dropIfNotMine() {
+        guard AccountScope.ownerChanged("unreadStore") else { return }
+        counts = [:]
+        hasSeeded = false
+        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+    }
+
     func seed(from books: [Book]) {
+        dropIfNotMine()
         hasSeeded = true
         var next = Dictionary(books.map { ($0.id, max(0, $0.unreadCount)) },
                               uniquingKeysWith: { first, _ in first })
@@ -57,6 +67,7 @@ final class UnreadStore: ObservableObject {
     // TOTAL and the OS has applied it, so re-deriving the icon from a sum whose other books are
     // older than that total would replace a fresh number with a staler one (#119).
     func set(bookId: UUID, count: Int, writesBadge: Bool = true) {
+        dropIfNotMine()
         let clamped = max(0, count)
         guard counts[bookId] != clamped else { return }
         counts[bookId] = clamped

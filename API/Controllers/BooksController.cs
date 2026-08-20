@@ -122,21 +122,36 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var book = await db.Books.FindAsync(bookId);
         if (book is null) return NotFound();
         if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
-        if (messageIds is null || messageIds.Count == 0) return await OkWithUnreadAsync(bookId);
+        if (messageIds is null || messageIds.Count == 0)
+            return Ok(new { unreadCount = await UnreadCountAsync(bookId), heard = Array.Empty<Guid>() });
 
-        var alreadyHeard = db.MessageHeards.Where(h => h.UserId == UserId).Select(h => h.MessageId);
-        var toMark = await db.Messages
+        // Everything the caller asked about that this endpoint could ever accept: others' live
+        // voice messages in this book. Anything else — your own message, a deleted one, an id
+        // from another book — is not a transient failure, it will never be accepted, and the
+        // reply says so explicitly so the client can stop asking (#119).
+        var acceptable = await db.Messages
             .Where(m => m.BookId == bookId && m.Type == MessageType.Voice && m.SenderId != UserId
-                && m.DeletedAt == null && messageIds.Contains(m.Id) && !alreadyHeard.Contains(m.Id))
+                && m.DeletedAt == null && messageIds.Contains(m.Id))
             .Select(m => m.Id)
             .ToListAsync();
 
-        if (toMark.Count == 0) return await OkWithUnreadAsync(bookId);
-        foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
-        try { await db.SaveChangesAsync(); }
-        catch (DbUpdateException) { return await OkWithUnreadAsync(bookId); }   // raced a concurrent mark
-        await BroadcastHeardAsync(bookId, toMark);
-        return await OkWithUnreadAsync(bookId);
+        var alreadyHeard = await db.MessageHeards
+            .Where(h => h.UserId == UserId && acceptable.Contains(h.MessageId))
+            .Select(h => h.MessageId)
+            .ToListAsync();
+
+        var toMark = acceptable.Except(alreadyHeard).ToList();
+        if (toMark.Count > 0)
+        {
+            foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
+            try { await db.SaveChangesAsync(); }
+            catch (DbUpdateException) { /* raced a concurrent mark — the rows exist either way */ }
+            await BroadcastHeardAsync(bookId, toMark);
+        }
+
+        // `heard` is every requested id that is now heard, not just the ones written here, so a
+        // replay of an already-applied batch still confirms rather than looking like a refusal.
+        return Ok(new { unreadCount = await UnreadCountAsync(bookId), heard = acceptable });
     }
 
     // The caller's OWN heard voice-message IDs for a book. The /reads endpoint deliberately

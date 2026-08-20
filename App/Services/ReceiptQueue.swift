@@ -37,6 +37,14 @@ final class ReceiptQueue {
         }
     }
 
+    // Queued receipts belong to the account that made them; replaying one under a different
+    // sign-in would mark the WRONG person's messages read. See AccountScope.
+    private func dropIfNotMine() {
+        guard AccountScope.ownerChanged("receiptQueue") else { return }
+        pending = []
+        persist()
+    }
+
     // MARK: - Book-level receipts
 
     func markRead(bookId: UUID, messageId: UUID) async {
@@ -47,8 +55,21 @@ final class ReceiptQueue {
         await send(Receipt(kind: .heardAll, bookId: bookId, messageId: nil))
     }
 
+    // A 4xx is an answer, not an outage: the book is gone, or was never ours. Retrying can't
+    // change that, so the receipt is dropped instead of living in the queue forever. Anything
+    // else — no network, a 5xx — is worth another go.
+    private func isPermanentRefusal(_ error: Error) -> Bool {
+        if case APIError.serverError(let code) = error { return (400..<500).contains(code) }
+        return false
+    }
+
     private func send(_ receipt: Receipt) async {
-        do { try await perform(receipt) } catch { enqueue(receipt) }
+        dropIfNotMine()
+        do {
+            try await perform(receipt)
+        } catch {
+            if !isPermanentRefusal(error) { enqueue(receipt) }
+        }
     }
 
     private func perform(_ receipt: Receipt) async throws {
@@ -69,11 +90,16 @@ final class ReceiptQueue {
     func pushHeard(bookId: UUID, ids: [UUID]) async {
         guard !ids.isEmpty else { return }
         do {
-            apply(try await APIClient.shared.markHeardBatch(bookId: bookId, messageIds: ids),
-                  to: bookId)
-            HeardStore.shared.confirm(ids)
+            let result = try await APIClient.shared.markHeardBatch(bookId: bookId, messageIds: ids)
+            apply(result.unreadCount, to: bookId)
+            // Confirm exactly what the server says it holds, and stop asking about the rest.
+            // Anything it won't take — your own message, one since deleted, an id from another
+            // book — would otherwise be retried on every flush for the life of the install.
+            HeardStore.shared.confirm(result.heard)
+            HeardStore.shared.abandon(Array(Set(ids).subtracting(result.heard)))
         } catch {
-            // Stays pending in HeardStore — the next flush picks it up.
+            // Transport failure leaves them pending for the next flush; a refusal retires them.
+            if isPermanentRefusal(error) { HeardStore.shared.abandon(ids) }
         }
     }
 
@@ -102,12 +128,21 @@ final class ReceiptQueue {
     // waiting. Stops at the first failure — if one call can't reach the server the rest won't
     // either, and they keep their order for the next attempt.
     func flush() async {
+        dropIfNotMine()
         guard !isFlushing, TokenStore.shared.token != nil else { return }
         isFlushing = true
         defer { isFlushing = false }
 
         while let next = pending.first {
-            do { try await perform(next) } catch { return }
+            do {
+                try await perform(next)
+            } catch {
+                // A refusal must not wedge the queue behind it — drop it and carry on.
+                guard isPermanentRefusal(error) else { return }
+                pending.removeAll { $0 == next }
+                persist()
+                continue
+            }
             if pending.first == next { pending.removeFirst() } else { pending.removeAll { $0 == next } }
             persist()
         }
