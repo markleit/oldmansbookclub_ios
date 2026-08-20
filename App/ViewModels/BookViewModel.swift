@@ -317,7 +317,7 @@ final class BookViewModel: ObservableObject {
             let toPush = HeardStore.shared.seed(
                 serverHeardIds: heardIds,
                 voiceIds: voice.map(\.id),
-                legacyHeardIds: voice.map(\.id).filter { PlaybackProgressStore.shared.isCompleted($0) },
+                legacyHeardIds: PlaybackProgressStore.shared.legacyHeardIds(among: voice.map(\.id)),
                 bookId: bookId)
             // Park the scrubbers of anything newly known-heard at the end.
             let toPosition = heardIds
