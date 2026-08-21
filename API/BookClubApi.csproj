@@ -11,6 +11,12 @@
          transitive advisories can actually be alerted on. It also pins transitive versions,
          so a CI restore resolves exactly what a local one did. -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Audit the whole graph, not just direct references, and FAIL on it (#123). The
+         Microsoft.OpenApi advisory sat in build output as a warning for weeks and was only
+         noticed while reading a deploy log for an unrelated reason. A high-severity finding
+         should stop the build, not scroll past. NU1901-1904 are the audit severities. -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,7 +30,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.8" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
   </ItemGroup>
 
 </Project>
