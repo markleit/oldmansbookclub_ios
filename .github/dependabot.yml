@@ -1,6 +1,9 @@
-# #99 — Dependabot: keep CI actions and API NuGet packages current, with basic
-# security-update coverage. (The iOS SignalR dependency is pinned via xcodegen's
-# project.yml, not a standard SPM manifest, so it isn't covered here yet.)
+# #99 — Dependabot: keep CI actions, API NuGet packages, and the one iOS SPM
+# dependency current, with basic security-update coverage.
+#
+# NOTE: version updates only cover DIRECT references. Transitive advisories (e.g.
+# Microsoft.OpenApi via Swashbuckle — see #123) are invisible here; that needs
+# Dependabot SECURITY updates enabled in repo settings, plus NuGetAuditMode=all.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -12,6 +15,22 @@ updates:
 
   - package-ecosystem: "nuget"
     directory: "/API"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["tech-debt"]
+
+  # The iOS side has exactly one third-party dependency (SignalRClient), declared in
+  # xcodegen's project.yml rather than a Package.swift. Dependabot keys off the resolved
+  # file, which xcodegen writes into the generated .xcodeproj — both of which ARE tracked
+  # in git, so point it there. If no PRs ever appear for it, that path is the reason and
+  # the fallback is a real Package.swift.
+  #
+  # Worth knowing regardless: project.yml pins `from: 1.0.0`, i.e. up to the next major,
+  # so a resolve can move this within 1.x without any PR. Package.resolved is what
+  # actually holds it steady.
+  - package-ecosystem: "swift"
+    directory: "/OldMansBookClub.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
