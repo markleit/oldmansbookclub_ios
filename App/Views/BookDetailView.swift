@@ -1077,7 +1077,13 @@ struct VoiceMessageBubble: View {
     private var displayFraction: Double {
         if isPlaying { return audio.progress }
         guard totalSeconds > 0 else { return 0 }
-        return min(store.position(for: message.id) / Double(totalSeconds), 1)
+        let position = store.position(for: message.id)
+        // A finished message whose stored position is within a second of the end is at the end:
+        // the gap is integer rounding between the media's real length and the recorded duration,
+        // not audio left unheard. Without this, messages finished before the write was corrected
+        // keep drawing a bar that stops just short.
+        if store.isCompleted(message.id), position >= Double(totalSeconds) - 1 { return 1 }
+        return min(position / Double(totalSeconds), 1)
     }
     // Progress bar / thumb color, matched to the play control: white while playing
     // (blue bubble) and on own (blue) bubbles, adaptive on others' (grey) bubbles.

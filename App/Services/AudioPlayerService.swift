@@ -32,6 +32,12 @@ final class AudioPlayerService: ObservableObject {
     private static let sessionQueue = DispatchQueue(label: "com.example.oldmansbookclub.audiosession", qos: .userInitiated)
 
     @Published private(set) var playingMessageId: UUID?
+    // The playing message's SERVER-recorded duration. The bubble draws its progress bar as
+    // storedPosition / message.durationSeconds, but the media's real length can be slightly
+    // shorter than that rounded integer — so writing the real length on completion left a
+    // fully-heard message drawing at ~90% forever. Kept here so the completion write can be
+    // expressed in the same units the bar divides by.
+    private var playingRecordedDuration: Double = 0
     // The book the currently-playing message belongs to. Published purely so other surfaces
     // (CarPlay) can locate the right chat to mirror — does not affect phone playback behavior.
     @Published private(set) var playingBookId: UUID?
@@ -178,9 +184,11 @@ final class AudioPlayerService: ObservableObject {
         let dur = item.duration.seconds
         let cur = player.currentTime().seconds
         guard dur.isFinite, dur > 0, cur.isFinite else { return }
+        // On completion store whichever length is greater, so the bar reaches the end whichever
+        // way the recorded integer was rounded. Mid-playback positions stay real.
         PlaybackProgressStore.shared.set(
             id: id,
-            position: completed ? dur : min(max(cur, 0), dur),
+            position: completed ? max(dur, playingRecordedDuration) : min(max(cur, 0), dur),
             completed: completed
         )
     }
@@ -228,6 +236,7 @@ final class AudioPlayerService: ObservableObject {
 
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
+        playingRecordedDuration = Double(message.durationSeconds ?? 0)
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else {
             stopCurrentPlayer(deactivateSession: false); return
         }
