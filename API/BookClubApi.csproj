@@ -4,6 +4,13 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Produces packages.lock.json (#123). Two reasons: GitHub's dependency graph parses the
+         csproj and therefore only ever saw our DIRECT references — Microsoft.OpenApi, which
+         carries a high-severity advisory, was invisible to Dependabot because it arrives
+         transitively via Swashbuckle. A lock file gives GitHub the resolved graph so
+         transitive advisories can actually be alerted on. It also pins transitive versions,
+         so a CI restore resolves exactly what a local one did. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
