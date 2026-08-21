@@ -85,7 +85,11 @@ public class BlobService
 
             var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
             var expiresOn = DateTimeOffset.UtcNow.AddDays(7);
-            var key = await _client.GetUserDelegationKeyAsync(startsOn, expiresOn);
+            // 12.29 replaced the (startsOn, expiresOn) overload with an options object. StartsOn is
+            // optional there (null = start immediately); we set it explicitly to keep the same
+            // 5-minute clock-skew allowance the previous call had.
+            var key = await _client.GetUserDelegationKeyAsync(
+                new BlobGetUserDelegationKeyOptions(expiresOn) { StartsOn = startsOn });
             _cachedKey = key;
             _cachedKeyExpiry = expiresOn;
             return (key, expiresOn);
@@ -157,7 +161,8 @@ public class BlobService
         var startsOn = DateTimeOffset.UtcNow.AddMinutes(-5);
         var expiresOn = DateTimeOffset.UtcNow.Add(validity);
 
-        var delegationKey = await _client.GetUserDelegationKeyAsync(startsOn, expiresOn);
+        var delegationKey = await _client.GetUserDelegationKeyAsync(
+            new BlobGetUserDelegationKeyOptions(expiresOn) { StartsOn = startsOn });
 
         var sasBuilder = new BlobSasBuilder
         {
