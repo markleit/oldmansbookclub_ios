@@ -95,6 +95,7 @@
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
 		88754FFD53578C83DEC2294D /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		8994D3123C1F58B7C697E408 /* CacheService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheService.swift; sourceTree = "<group>"; };
+		8EAD4C42E18CA66F1B4759B3 /* OldMansBookClub.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.Debug.entitlements; sourceTree = "<group>"; };
 		9166A20FFC2B637533597918 /* ImageAspectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAspectStore.swift; sourceTree = "<group>"; };
 		95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsReporter.swift; sourceTree = "<group>"; };
 		A518484880F73D42F012B0EA /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
@@ -237,6 +238,7 @@
 				C5BDC572FF6DDD04153861DF /* ContentView.swift */,
 				40CB6C91B09B06C1D5531269 /* Extensions.swift */,
 				CD42813D21DFB8362B19ACCF /* Info.plist */,
+				8EAD4C42E18CA66F1B4759B3 /* OldMansBookClub.Debug.entitlements */,
 				BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */,
 				17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */,
 				6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */,
@@ -455,7 +457,8 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.9.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
+				OMBC_BUNDLE_SUFFIX = "";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -466,7 +469,7 @@
 			buildSettings = {
 				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.entitlements;
+				CODE_SIGN_ENTITLEMENTS = App/OldMansBookClub.Debug.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -478,7 +481,8 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.9.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
+				OMBC_BUNDLE_SUFFIX = .dev;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

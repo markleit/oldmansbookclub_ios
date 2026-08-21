@@ -53,6 +53,8 @@
             </array>
         </dict>
     </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Used only in development builds, to reach a local API server on your network.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>

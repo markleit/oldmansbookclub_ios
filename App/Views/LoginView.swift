@@ -42,9 +42,9 @@ struct LoginView: View {
                 .padding(.horizontal, 40)
             }
 
-            #if targetEnvironment(simulator)
+            #if DEBUG
             VStack(spacing: 8) {
-                Button("Dev Login (Simulator)") {
+                Button("Dev Login (Debug)") {
                     auth.devLogin()
                 }
                 Button("Simulate New User") {

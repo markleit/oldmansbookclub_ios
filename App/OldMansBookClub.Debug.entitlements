@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Debug-only entitlements for the .dev bundle id (#120).
+     Identical to App/OldMansBookClub.entitlements EXCEPT it omits
+     com.apple.developer.carplay-audio, which is a managed entitlement granted only to the
+     production App ID — including it here makes device signing fail.
+     Keep in sync when the generated entitlements change. -->
+<plist version="1.0">
+<dict>
+	<key>aps-environment</key>
+	<string>$(APS_ENVIRONMENT)</string>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>
