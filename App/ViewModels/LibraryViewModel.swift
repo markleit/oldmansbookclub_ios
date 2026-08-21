@@ -54,6 +54,14 @@ final class LibraryViewModel: ObservableObject {
         // changes — a refresh where nothing changed must produce zero re-renders until the end.
         if books.isEmpty { loadCache() }
         if isOffline { isOffline = false }
+
+        // Drain the outbox on every load attempt (#119), BEFORE the fetches and in its own task.
+        // Not on the success path: a .refreshable can be cancelled mid-flight (#91), which
+        // returns early — so hanging this off a completed fetch means pull-to-refresh, the one
+        // gesture that means "reconcile with the server", is exactly the one that might not.
+        // An unstructured Task doesn't inherit the refresh's cancellation, so it survives it.
+        // Costs nothing when the outbox is empty, and fails harmlessly when there's no network.
+        Task { await ReceiptQueue.shared.flush() }
         let wantLoading = books.isEmpty
         if isLoading != wantLoading { isLoading = wantLoading }
         if errorMessage != nil { errorMessage = nil }
