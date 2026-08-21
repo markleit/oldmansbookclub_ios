@@ -63,6 +63,9 @@ struct RootView: View {
                             // launch), regardless of which screen is open — the bytes upload
                             // in the background; the send completes when the chat connects.
                             Task { await BackgroundUploadService.shared.resumePendingUploads() }
+                            // Retry any read/heard receipt that never reached the server (#119) —
+                            // until it does, this device's unread count and the server's disagree.
+                            Task { await ReceiptQueue.shared.flush() }
                         }
                     }
             } else if let clubName = auth.pendingApprovalClubName {

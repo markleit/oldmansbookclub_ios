@@ -195,6 +195,8 @@ actor ChatService {
 
         await conn.onReconnected { [weak self] in
             await self?.rejoinBookGroup()
+            // Connectivity is back — drain any receipt that failed while it was gone (#119).
+            await ReceiptQueue.shared.flush()
         }
 
         await conn.onClosed { [weak self] _ in

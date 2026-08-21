@@ -62,6 +62,15 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     private Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
         => UnreadCalculator.PerBookAsync(db, UserId, bookIds);
 
+    // The caller's unread count for one book, as the server computes it. Every endpoint that
+    // consumes messages returns this so the client never has to re-derive the number itself
+    // (#119) — it applies an optimistic change for instant feedback and this corrects it.
+    private async Task<int> UnreadCountAsync(Guid bookId)
+        => (await UnreadCalculator.PerBookAsync(db, UserId, [bookId])).GetValueOrDefault(bookId);
+
+    private async Task<IActionResult> OkWithUnreadAsync(Guid bookId)
+        => Ok(new { unreadCount = await UnreadCountAsync(bookId) });
+
     // Mark a single voice message heard (on full playback or per-message "mark as heard").
     // Sticky/idempotent — replays never remove it.
     [HttpPost("{bookId}/messages/{messageId}/heard")]
@@ -78,7 +87,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             catch (DbUpdateException) { /* raced another mark — already heard, fine */ }
         }
         await BroadcastHeardAsync(bookId, [messageId]);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     // Mark every (others') voice message in a book heard — backs "Mark all as heard".
@@ -99,7 +108,50 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
         if (toMark.Count > 0) await db.SaveChangesAsync();
         await BroadcastHeardAsync(bookId, toMark);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
+    }
+
+    // Mark a specific set of voice messages heard (#119). Backs the client's two-way heard
+    // reconcile: the device pushes up anything it has marked heard locally that the server is
+    // missing (a markHeard POST that never landed). Unlike /heard/all this touches only the ids
+    // given, so it can repair drift without silently consuming messages the user never played.
+    // Ids that aren't others' live voice messages in this book are ignored, not rejected.
+    [HttpPost("{bookId}/heard")]
+    public async Task<IActionResult> MarkHeardBatch(Guid bookId, [FromBody] List<Guid> messageIds)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+        if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
+        if (messageIds is null || messageIds.Count == 0)
+            return Ok(new { unreadCount = await UnreadCountAsync(bookId), heard = Array.Empty<Guid>() });
+
+        // Everything the caller asked about that this endpoint could ever accept: others' live
+        // voice messages in this book. Anything else — your own message, a deleted one, an id
+        // from another book — is not a transient failure, it will never be accepted, and the
+        // reply says so explicitly so the client can stop asking (#119).
+        var acceptable = await db.Messages
+            .Where(m => m.BookId == bookId && m.Type == MessageType.Voice && m.SenderId != UserId
+                && m.DeletedAt == null && messageIds.Contains(m.Id))
+            .Select(m => m.Id)
+            .ToListAsync();
+
+        var alreadyHeard = await db.MessageHeards
+            .Where(h => h.UserId == UserId && acceptable.Contains(h.MessageId))
+            .Select(h => h.MessageId)
+            .ToListAsync();
+
+        var toMark = acceptable.Except(alreadyHeard).ToList();
+        if (toMark.Count > 0)
+        {
+            foreach (var id in toMark) db.MessageHeards.Add(new MessageHeard { UserId = UserId, MessageId = id });
+            try { await db.SaveChangesAsync(); }
+            catch (DbUpdateException) { /* raced a concurrent mark — the rows exist either way */ }
+            await BroadcastHeardAsync(bookId, toMark);
+        }
+
+        // `heard` is every requested id that is now heard, not just the ones written here, so a
+        // replay of an already-applied batch still confirms rather than looking like a refusal.
+        return Ok(new { unreadCount = await UnreadCountAsync(bookId), heard = acceptable });
     }
 
     // The caller's OWN heard voice-message IDs for a book. The /reads endpoint deliberately
@@ -454,6 +506,15 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
+        // The marker may only ever advance (#119). It's a pointer, not a timestamp, so a client
+        // working from a stale cache — or a race between the chat-open call and a live-receive
+        // call — could otherwise rewind it and resurrect already-read messages.
+        var incomingSentAt = await db.Messages
+            .Where(m => m.Id == messageId && m.BookId == bookId)
+            .Select(m => (DateTime?)m.SentAt)
+            .FirstOrDefaultAsync();
+        if (incomingSentAt is null) return await OkWithUnreadAsync(bookId);   // unknown message — ignore
+
         var existing = await db.ChatReads
             .FirstOrDefaultAsync(cr => cr.UserId == UserId && cr.BookId == bookId);
 
@@ -463,13 +524,20 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }
         else
         {
+            var currentSentAt = existing.LastSeenMessageId == null ? null
+                : await db.Messages
+                    .Where(m => m.Id == existing.LastSeenMessageId)
+                    .Select(m => (DateTime?)m.SentAt)
+                    .FirstOrDefaultAsync();
+            // Already read at or past this message — nothing changed, so don't re-broadcast either.
+            if (currentSentAt is not null && incomingSentAt <= currentSentAt) return await OkWithUnreadAsync(bookId);
             existing.LastSeenMessageId = messageId;
             existing.UpdatedAt = DateTime.UtcNow;
         }
 
         await db.SaveChangesAsync();
         await BroadcastReadAsync(bookId, messageId);
-        return Ok();
+        return await OkWithUnreadAsync(bookId);
     }
 
     [HttpGet("{bookId}/reads")]

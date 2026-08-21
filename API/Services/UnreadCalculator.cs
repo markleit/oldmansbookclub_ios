@@ -41,10 +41,17 @@ public static class UnreadCalculator
 
     // Total unread across all the user's books — drives the app icon badge.
     public static async Task<int> TotalAsync(AppDbContext db, Guid userId)
+        => (await TotalWithPerBookAsync(db, userId)).Total;
+
+    // Both halves from one pass. The push fan-out needs the total (badge) and the pushed book's
+    // own count (so the client can set that book exactly instead of guessing +1), and computing
+    // the total already walks every book — so handing back the per-book dictionary is free.
+    public static async Task<(int Total, Dictionary<Guid, int> PerBook)> TotalWithPerBookAsync(
+        AppDbContext db, Guid userId)
     {
         var clubIds = await db.Memberships.Where(m => m.UserId == userId).Select(m => m.ClubId).ToListAsync();
         var bookIds = await db.Books.Where(b => clubIds.Contains(b.ClubId)).Select(b => b.Id).ToListAsync();
         var perBook = await PerBookAsync(db, userId, bookIds);
-        return perBook.Values.Sum();
+        return (perBook.Values.Sum(), perBook);
     }
 }

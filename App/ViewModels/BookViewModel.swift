@@ -60,21 +60,30 @@ final class BookViewModel: ObservableObject {
         visibleMessages = messages.filter { !blockedUserIds.contains($0.senderId) }
     }
 
-    // This book's unread count computed from local state, matching the server's
-    // UnreadCalculator definition. While the chat is open we mark everything read on
-    // open and on each receipt (markRead → last-seen = newest), so non-voice always
-    // resolves to read; the remaining unread is unheard voice from others. Written
-    // through to the shared UnreadStore so the club-view + icon badges stay live.
-    var localUnreadCount: Int {
+    // Voice messages from others this device hasn't heard — drives "Mark all as read".
+    // NOT a count: the number on screen always comes from the server (#119).
+    var unheardVoiceMessages: [Message] {
         visibleMessages.filter {
             $0.type == .voice && !$0.isDeleted
                 && $0.senderId != TokenStore.shared.userId
-                && !PlaybackProgressStore.shared.isCompleted($0.id)
-        }.count
+                && !HeardStore.shared.isHeard($0.id)
+        }
     }
 
-    func syncUnread() {
-        UnreadStore.shared.set(bookId: book.id, count: localUnreadCount)
+    // Consuming a voice message drops the count by one straight away; the server's answer to
+    // the receipt replaces it a moment later (UnreadStore.set via ReceiptQueue).
+    //
+    // Only others' voice counts. Playing your own message completes too, but the server has
+    // nothing to record for it — an id it won't accept would sit in the outbox being retried
+    // forever.
+    func consumeHeard(_ ids: [UUID]) {
+        let myId = TokenStore.shared.userId
+        let byOthers = Set(messages.filter { $0.type == .voice && $0.senderId != myId }.map(\.id))
+        let consumable = ids.filter { byOthers.contains($0) && !HeardStore.shared.isHeard($0) }
+        guard !consumable.isEmpty else { return }
+        HeardStore.shared.markHeard(consumable, bookId: book.id)
+        UnreadStore.shared.bump(bookId: book.id, by: -consumable.count)
+        Task { await ReceiptQueue.shared.pushHeard(bookId: book.id, ids: consumable) }
     }
 
     private func recomputeReadFrontiers() {
@@ -195,14 +204,16 @@ final class BookViewModel: ObservableObject {
     // already completed so an in-progress playback isn't disturbed), then refresh the unread
     // count. Never touches `reads`, so self can't appear in the "heard-by" avatar row (#108).
     private func applySelfHeardReceipt(_ p: HeardReceiptPayload) {
+        let newlyHeard = p.messageIds.filter { !HeardStore.shared.isHeard($0) }
+        guard !newlyHeard.isEmpty else { return }
+        // The other device already told the server, so this is confirmed truth, not a mark to
+        // send. Move the scrubbers to the end to match, and drop the count optimistically —
+        // the next consuming action or books load reconciles it.
         let durationById = Dictionary(messages.map { ($0.id, $0.durationSeconds ?? 0) },
                                       uniquingKeysWith: { first, _ in first })
-        let toMark = p.messageIds
-            .filter { !PlaybackProgressStore.shared.isCompleted($0) }
-            .map { (id: $0, duration: durationById[$0] ?? 0) }
-        guard !toMark.isEmpty else { return }
-        PlaybackProgressStore.shared.markHeard(toMark)
-        syncUnread()
+        PlaybackProgressStore.shared.markHeard(newlyHeard.map { (id: $0, duration: durationById[$0] ?? 0) })
+        HeardStore.shared.confirm(newlyHeard)
+        UnreadStore.shared.bump(bookId: book.id, by: -newlyHeard.count)
     }
 
     // Optimistic text messages awaiting their server echo, tracked by clientId (the
@@ -288,30 +299,40 @@ final class BookViewModel: ObservableObject {
 
         guard !isOffline else { return }
 
-        let latestId = messages.first?.id
+        // Newest SERVER-known message: an optimistic send still in flight has an id the server
+        // has never seen, and the read marker must point at a real message (#119).
+        let latestId = messages.first(where: { $0.sendState == nil })?.id
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
         if let fetched = try? await readsFetch { reads = fetched }
 
-        // Seed the local heard cache from the server's per-account heard state (#102), so voices
-        // heard on another device read as heard here. Sticky/additive — only marks, never unmarks,
-        // and skips anything already heard locally so it can't disturb an in-progress playback.
+        // Reconcile this device's heard cache with the server's per-account heard state (#102,
+        // #119): the server's answer wins for anything we have data on, marks still waiting in
+        // the outbox survive, and the ids the server is missing come back to be pushed up.
         if let heardIds = try? await myHeardFetch {
-            let durationById = Dictionary(messages.map { ($0.id, $0.durationSeconds ?? 0) },
+            let myId = TokenStore.shared.userId
+            let voice = messages.filter { $0.type == .voice && $0.senderId != myId }
+            let durationById = Dictionary(voice.map { ($0.id, $0.durationSeconds ?? 0) },
                                           uniquingKeysWith: { first, _ in first })
-            let toSeed = heardIds
+            let toPush = HeardStore.shared.seed(
+                serverHeardIds: heardIds,
+                voiceIds: voice.map(\.id),
+                legacyHeardIds: PlaybackProgressStore.shared.legacyHeardIds(among: voice.map(\.id)),
+                bookId: bookId)
+            // Park the scrubbers of anything newly known-heard at the end.
+            let toPosition = heardIds
                 .filter { !PlaybackProgressStore.shared.isCompleted($0) }
                 .map { (id: $0, duration: durationById[$0] ?? 0) }
-            if !toSeed.isEmpty { PlaybackProgressStore.shared.markHeard(toSeed) }
+            if !toPosition.isEmpty { PlaybackProgressStore.shared.markHeard(toPosition) }
+            if !toPush.isEmpty { await ReceiptQueue.shared.pushHeard(bookId: bookId, ids: toPush) }
         }
 
-        // markRead fires after messages resolved (needs latestId)
+        // markRead fires after messages resolved (needs latestId). Its response carries the
+        // book's fresh unread count, which lands in UnreadStore — so opening a chat resyncs
+        // the number rather than recomputing it here.
         if let id = latestId {
-            try? await APIClient.shared.markRead(bookId: bookId, messageId: id)
+            await ReceiptQueue.shared.markRead(bookId: bookId, messageId: id)
         }
-        // Reflect the just-read state to every surface (non-voice now read; remaining
-        // unread is unheard voice).
-        syncUnread()
 
         await ChatService.shared.setOnMessageReceived { [weak self] message in
             guard let self, message.clubId == self.book.clubId else { return }
@@ -351,10 +372,9 @@ final class BookViewModel: ObservableObject {
 
             self.messages.insert(message, at: 0)
             self.saveMessagesCache()
-            Task { try? await APIClient.shared.markRead(bookId: self.book.id, messageId: message.id) }
-            // An incoming voice message from another member bumps this book's unread;
-            // non-voice is immediately marked read above, so it nets to zero.
-            self.syncUnread()
+            // The read receipt's response carries this book's fresh unread count — an arriving
+            // voice message raises it (unheard), non-voice nets to zero (read on arrival).
+            Task { await ReceiptQueue.shared.markRead(bookId: self.book.id, messageId: message.id) }
         }
 
         await ChatService.shared.setOnMessageDeleted { [weak self] messageId in

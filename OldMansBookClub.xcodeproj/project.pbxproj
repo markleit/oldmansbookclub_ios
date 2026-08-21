@@ -7,8 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */; };
 		0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */; };
 		165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D395542233ADC1273F05370D /* AppDelegate.swift */; };
+		16A27074D46A1A1F4135B7E1 /* HeardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52DE7679A3B99FB9C646DA4C /* HeardStore.swift */; };
 		19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */; };
 		205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */; };
 		238255509291CD03907584E8 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */; };
@@ -27,6 +29,7 @@
 		57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22282622C7A5BEAAEE8961CE /* AudioCue.swift */; };
 		58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */; };
 		59ECDF29F8EB5F808607ADAC /* BackgroundTaskBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */; };
+		5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DBF0F42D59478B1E09CB57 /* AccountScope.swift */; };
 		5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */; };
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
@@ -39,6 +42,7 @@
 		8945DA2868AE99040E4F7D11 /* AudioPlayerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */; };
 		8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6531FD0CE01104B5FBC19167 /* MessageInputView.swift */; };
 		958AF33D661E4DE915A5862A /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8FBEB2C7086C94FA433207 /* ChatService.swift */; };
+		98F1C24B88DD320D01538463 /* ImageAspectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9166A20FFC2B637533597918 /* ImageAspectStore.swift */; };
 		A4DFDAB4010F3A518EBD1A3E /* AudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2ABB613BFB149719A00A493 /* AudioCache.swift */; };
 		A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88754FFD53578C83DEC2294D /* LibraryView.swift */; };
 		B085151687156DA2AC994199 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E0F879AC20F63014F28CB5 /* BookDetailView.swift */; };
@@ -73,8 +77,10 @@
 		3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskBox.swift; sourceTree = "<group>"; };
 		3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
 		40CB6C91B09B06C1D5531269 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
+		40DBF0F42D59478B1E09CB57 /* AccountScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountScope.swift; sourceTree = "<group>"; };
 		41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaSendQueue.swift; sourceTree = "<group>"; };
 		4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePrefetcher.swift; sourceTree = "<group>"; };
+		52DE7679A3B99FB9C646DA4C /* HeardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeardStore.swift; sourceTree = "<group>"; };
 		59E0F879AC20F63014F28CB5 /* BookDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailView.swift; sourceTree = "<group>"; };
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
 		62112635C861D78687D704A9 /* BrowseClubsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseClubsView.swift; sourceTree = "<group>"; };
@@ -87,6 +93,7 @@
 		846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedMessagesSheet.swift; sourceTree = "<group>"; };
 		88754FFD53578C83DEC2294D /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		8994D3123C1F58B7C697E408 /* CacheService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheService.swift; sourceTree = "<group>"; };
+		9166A20FFC2B637533597918 /* ImageAspectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAspectStore.swift; sourceTree = "<group>"; };
 		95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsReporter.swift; sourceTree = "<group>"; };
 		A518484880F73D42F012B0EA /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
@@ -107,6 +114,7 @@
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
+		FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptQueue.swift; sourceTree = "<group>"; };
 		FF5A48CCFD136D8940110FEF /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -141,6 +149,7 @@
 		0DC96F159ED578CF4C8628B8 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				40DBF0F42D59478B1E09CB57 /* AccountScope.swift */,
 				2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */,
 				E2ABB613BFB149719A00A493 /* AudioCache.swift */,
 				22282622C7A5BEAAEE8961CE /* AudioCue.swift */,
@@ -152,9 +161,12 @@
 				DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */,
 				EF8FBEB2C7086C94FA433207 /* ChatService.swift */,
 				95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */,
+				52DE7679A3B99FB9C646DA4C /* HeardStore.swift */,
+				9166A20FFC2B637533597918 /* ImageAspectStore.swift */,
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
 				4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
+				FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */,
 				02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */,
 				C05DE224CB1318D203D6469B /* TranscriptStore.swift */,
 				FF5A48CCFD136D8940110FEF /* UnreadStore.swift */,
@@ -312,6 +324,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				882C4AA5AED7AF3D691F14CA /* APIClient.swift in Sources */,
+				5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */,
 				8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */,
 				BC028A1177F026A4999F388C /* AdminView.swift in Sources */,
 				165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */,
@@ -337,6 +350,8 @@
 				19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */,
 				D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */,
 				42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */,
+				16A27074D46A1A1F4135B7E1 /* HeardStore.swift in Sources */,
+				98F1C24B88DD320D01538463 /* ImageAspectStore.swift in Sources */,
 				A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */,
 				8491BB705E4FC317CFF6FCF7 /* LibraryViewModel.swift in Sources */,
 				FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */,
@@ -351,6 +366,7 @@
 				0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
 				3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */,
+				062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
 				C1446459207EFE368581046D /* SettingsView.swift in Sources */,
 				D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */,
@@ -434,7 +450,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.0;
+				MARKETING_VERSION = 1.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -457,7 +473,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.0;
+				MARKETING_VERSION = 1.9.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.oldmansbookclub;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

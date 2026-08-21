@@ -11,6 +11,7 @@ struct BookDetailView: View {
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     // Observed so voice bubbles re-render live as messages are played / marked heard.
     @ObservedObject private var playbackStore = PlaybackProgressStore.shared
+    @ObservedObject private var heardStore = HeardStore.shared
     // Single source of truth for the unread count shown in the title (same value the
     // club-view + icon badges use).
     @ObservedObject private var unreadStore = UnreadStore.shared
@@ -389,10 +390,7 @@ struct BookDetailView: View {
             // Report the voice message as heard (sticky, server-side) for receipts + unread.
             AudioPlayerService.shared.onPlaybackCompleted = { [weak viewModel] completedId in
                 guard let vm = viewModel else { return }
-                Task { @MainActor in
-                    vm.syncUnread()   // local completed state already set → reflect to all surfaces
-                    try? await APIClient.shared.markHeard(bookId: vm.book.id, messageId: completedId)
-                }
+                Task { @MainActor in vm.consumeHeard([completedId]) }
             }
             // Auto-advance to the next (newer) voice message in the chat, if any.
             AudioPlayerService.shared.nextToPlay = { [weak viewModel] completedId in
@@ -441,17 +439,6 @@ struct BookDetailView: View {
         }
     }
 
-    // Loaded voice messages from OTHERS not yet marked played (drives the chat-title
-    // unread count + "Mark all as heard"). Excludes your own — you can't have an
-    // "unheard" message you sent — matching the server's unread definition.
-    private var unheardVoiceMessages: [Message] {
-        viewModel.visibleMessages.filter {
-            $0.type == .voice && !$0.isDeleted
-                && $0.senderId != TokenStore.shared.userId
-                && !PlaybackProgressStore.shared.isCompleted($0.id)
-        }
-    }
-
     @ViewBuilder
     private var bookMenuItems: some View {
         Button { showingDetails = true } label: {
@@ -463,18 +450,20 @@ struct BookDetailView: View {
         Divider()
         if (unreadStore.counts[viewModel.book.id] ?? 0) > 0 {
             Button {
-                // Mark every type consumed so the count zeroes on all surfaces: voice →
-                // heard, text/photo/video → read (advance last-seen to newest). Local
-                // first (instant), then both server calls; next load reconciles.
+                // Mark every type consumed: voice → heard, text/photo/video → read (advance
+                // last-seen to newest). Local first so the count zeroes instantly, then the
+                // outbox sends both — and a failure stays queued rather than being lost (#119).
+                let unheard = viewModel.unheardVoiceMessages
                 PlaybackProgressStore.shared.markHeard(
-                    unheardVoiceMessages.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
+                    unheard.map { (id: $0.id, duration: $0.durationSeconds ?? 0) }
                 )
+                HeardStore.shared.markHeard(unheard.map(\.id), bookId: viewModel.book.id)
                 UnreadStore.shared.zero(bookId: viewModel.book.id)
-                let latestId = viewModel.visibleMessages.first?.id
+                let latestId = viewModel.visibleMessages.first(where: { $0.sendState == nil })?.id
                 Task {
-                    try? await APIClient.shared.markAllHeard(bookId: viewModel.book.id)
+                    await ReceiptQueue.shared.markAllHeard(bookId: viewModel.book.id)
                     if let latestId {
-                        try? await APIClient.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
+                        await ReceiptQueue.shared.markRead(bookId: viewModel.book.id, messageId: latestId)
                     }
                 }
             } label: {
@@ -667,11 +656,10 @@ struct MessageRow: View {
                     menuRow("Edit", "pencil") { editText = body; DispatchQueue.main.async { showEditSheet = true } }
                 }
             }
-            if message.type == .voice, !PlaybackProgressStore.shared.isCompleted(message.id) {
+            if message.type == .voice, !HeardStore.shared.isHeard(message.id) {
                 menuRow("Mark as Heard", "checkmark.circle") {
                     PlaybackProgressStore.shared.markHeard([(id: message.id, duration: message.durationSeconds ?? 0)])
-                    viewModel.syncUnread()
-                    Task { try? await APIClient.shared.markHeard(bookId: viewModel.book.id, messageId: message.id) }
+                    viewModel.consumeHeard([message.id])
                 }
             }
             menuRow("Save", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
@@ -1048,6 +1036,7 @@ struct VoiceMessageBubble: View {
     var onCancel: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
     @ObservedObject private var store = PlaybackProgressStore.shared
+    @ObservedObject private var heard = HeardStore.shared
     @GestureState private var isScrubbing = false
     @State private var showSpeedSlider = false
     @State private var showTranscription = false
@@ -1058,9 +1047,11 @@ struct VoiceMessageBubble: View {
     private var isSending: Bool { message.sendState == .sending }
     private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
-    // Fully listened: the play circle goes green once the audio has reached the end.
-    // Clears on replay (AudioPlayerService clears the completed flag when it restarts).
-    private var isFullyPlayed: Bool { store.isCompleted(message.id) }
+    // Fully listened: the play circle goes green once the audio has reached the end. For
+    // others' messages that's the heard state — shared across your devices and sticky through
+    // replays; for your own it's just this device's playback position, since "heard" isn't a
+    // thing you can be about your own message.
+    private var isFullyPlayed: Bool { heard.isHeard(message.id) || store.isCompleted(message.id) }
     // The "my message" blue — softer/muted vs the vivid system blue. Shared by the
     // bubble and the play icon so they read as one color family.
     private var myBlue: Color { .myMessageBlue }
@@ -1086,7 +1077,13 @@ struct VoiceMessageBubble: View {
     private var displayFraction: Double {
         if isPlaying { return audio.progress }
         guard totalSeconds > 0 else { return 0 }
-        return min(store.position(for: message.id) / Double(totalSeconds), 1)
+        let position = store.position(for: message.id)
+        // A finished message whose stored position is within a second of the end is at the end:
+        // the gap is integer rounding between the media's real length and the recorded duration,
+        // not audio left unheard. Without this, messages finished before the write was corrected
+        // keep drawing a bar that stops just short.
+        if store.isCompleted(message.id), position >= Double(totalSeconds) - 1 { return 1 }
+        return min(position / Double(totalSeconds), 1)
     }
     // Progress bar / thumb color, matched to the play control: white while playing
     // (blue bubble) and on own (blue) bubbles, adaptive on others' (grey) bubbles.
@@ -1402,6 +1399,25 @@ struct PhotoMessageBubble: View {
     var onRetry: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
 
+    @ObservedObject private var aspects = ImageAspectStore.shared
+
+    // The bubble takes the photo's own shape instead of a fixed square (#122). A square with
+    // scaledToFill cropped every non-square photo — sides off a landscape, head and feet off a
+    // portrait — so people had to open each one to see what it was.
+    private static let maxWidth: CGFloat = 240
+    private static let maxHeight: CGFloat = 300
+
+    private var aspect: CGFloat { aspects.aspect(for: url) ?? ImageAspectStore.placeholder }
+
+    // Fit the image's ratio inside the bounding box: wide photos meet the width limit, tall ones
+    // meet the height limit, and neither is cropped.
+    private var displaySize: CGSize {
+        let byWidth = CGSize(width: Self.maxWidth, height: Self.maxWidth / aspect)
+        return byWidth.height <= Self.maxHeight
+            ? byWidth
+            : CGSize(width: Self.maxHeight * aspect, height: Self.maxHeight)
+    }
+
     private var isSending: Bool { sendState == .sending }
     private var isFailed: Bool { sendState == .failed }
     private var isLocalFile: Bool { url.scheme == "file" }
@@ -1413,7 +1429,7 @@ struct PhotoMessageBubble: View {
                 onTap()
             } label: {
                 imageContent
-                    .frame(width: 200, height: 200)
+                    .frame(width: displaySize.width, height: displaySize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
@@ -1430,11 +1446,14 @@ struct PhotoMessageBubble: View {
     @ViewBuilder
     private var imageContent: some View {
         if isLocalFile, let image = UIImage(contentsOfFile: url.path) {
+            // A local file is a send in flight; measuring it here means the bubble is the right
+            // shape from the first frame, and stays that shape when the server copy replaces it.
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
+                .onAppear { aspects.record(image, for: url) }
         } else {
-            CachedRemoteImage(url: url) { phase in
+            CachedRemoteImage(url: url, onDecoded: { aspects.record($0, for: url) }) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
                 } else {

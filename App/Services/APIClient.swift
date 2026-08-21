@@ -255,8 +255,25 @@ final class APIClient {
 
     // MARK: - Books
 
-    func getMyBooks() async throws -> [Book] {
-        try await get(path: "/books")
+    // The books payload also carries this user's unread count per book. It is decoded here and
+    // returned separately rather than hung on `Book` (#119) — one count, owned by UnreadStore,
+    // with no copy on a value type that every view holds its own version of.
+    struct BooksResponse {
+        let books: [Book]
+        let unread: [UUID: Int]
+    }
+
+    // Tolerant on purpose: a strict non-optional here would make ONE book missing the field fail
+    // the whole array decode, and an empty map seeds every count to zero (#119).
+    private struct BookUnread: Decodable { let id: UUID; let unreadCount: Int? }
+
+    func getMyBooks() async throws -> BooksResponse {
+        let data = try await getData(path: "/books")
+        let books = try decoder.decode([Book].self, from: data)
+        let counts = (try? decoder.decode([BookUnread].self, from: data)) ?? []
+        return BooksResponse(books: books,
+                             unread: Dictionary(counts.map { ($0.id, $0.unreadCount ?? 0) },
+                                                uniquingKeysWith: { first, _ in first }))
     }
 
     struct CreateBookRequest: Encodable {
@@ -446,23 +463,46 @@ final class APIClient {
         let _: Ack = try await post(path: "/diagnostics", body: report, authenticated: true)
     }
 
-    func markRead(bookId: UUID, messageId: UUID) async throws {
+    // Every endpoint that consumes messages answers with the book's authoritative unread count
+    // (#119), so the client never re-derives the number from message state.
+    private struct UnreadCountResponse: Decodable { let unreadCount: Int }
+
+    private func unreadCount(from data: Data) -> Int? {
+        (try? decoder.decode(UnreadCountResponse.self, from: data))?.unreadCount
+    }
+
+    // The heard batch also reports which of the requested ids it will ever accept, so the client
+    // never has to guess on the server's behalf (#119).
+    struct HeardBatchResult: Decodable {
+        let unreadCount: Int
+        let heard: [UUID]
+    }
+
+    @discardableResult
+    func markRead(bookId: UUID, messageId: UUID) async throws -> Int? {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/read")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONEncoder().encode(messageId)
-        try await sendAuthorized(request)
-    }
-
-    // Mark a voice message heard (sticky, server-side). Fired on full playback or a
-    // per-message "Mark as Heard".
-    func markHeard(bookId: UUID, messageId: UUID) async throws {
-        try await postEmpty(path: "/books/\(bookId)/messages/\(messageId)/heard")
+        return unreadCount(from: try await sendAuthorized(request))
     }
 
     // Mark every voice message in a book heard ("Mark all as heard").
-    func markAllHeard(bookId: UUID) async throws {
-        try await postEmpty(path: "/books/\(bookId)/heard/all")
+    @discardableResult
+    func markAllHeard(bookId: UUID) async throws -> Int? {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard/all")!)
+        request.httpMethod = "POST"
+        return unreadCount(from: try await sendAuthorized(request))
+    }
+
+    // Mark a specific set of voice messages heard (#119) — the outbox's only heard call, whether
+    // it carries one mark or a backlog.
+    func markHeardBatch(bookId: UUID, messageIds: [UUID]) async throws -> HeardBatchResult {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/heard")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(messageIds)
+        return try decoder.decode(HeardBatchResult.self, from: try await sendAuthorized(request))
     }
 
     // #47 — set/switch the caller's reaction on a message.
@@ -770,11 +810,19 @@ final class APIClient {
             }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
-        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
+        // Carry the status through: a 4xx means the request will never succeed, which callers
+        // with a retry queue must be able to tell apart from "the network is down" (#119).
+        guard (200..<300).contains(http.statusCode) else { throw APIError.serverError(http.statusCode) }
         return data
     }
 
     private func get<Response: Decodable>(path: String, retried: Bool = false) async throws -> Response {
+        try decoder.decode(Response.self, from: try await getData(path: path, retried: retried))
+    }
+
+    // The raw-body GET, so a caller that needs to read one payload two ways (books + their
+    // unread counts, #119) doesn't have to duplicate the 401-refresh handling.
+    private func getData(path: String, retried: Bool = false) async throws -> Data {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "GET"
         if let token = TokenStore.shared.token {
@@ -785,15 +833,15 @@ final class APIClient {
         if http.statusCode == 401 {
             if !retried {
                 switch await attemptRefresh() {
-                case .refreshed: return try await get(path: path, retried: true)
+                case .refreshed: return try await getData(path: path, retried: true)
                 case .transient: throw URLError(.timedOut)  // keep session; surface as a transient error
                 case .rejected: break                        // fall through to sign out
                 }
             }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
-        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try decoder.decode(Response.self, from: data)
+        guard (200..<300).contains(http.statusCode) else { throw APIError.serverError(http.statusCode) }
+        return data
     }
 
     private func post<Body: Encodable, Response: Decodable>(

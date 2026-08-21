@@ -26,6 +26,24 @@ final class PlaybackProgressStore: ObservableObject {
         } else {
             states = [:]
         }
+        dropIfNotMine()
+    }
+
+    // Positions belong to the account that listened (#119). This matters beyond tidiness: the
+    // `completed` flags here are the source of the legacy heard-mark migration, so leaving one
+    // account's flags in place would let them be adopted as the NEXT account's marks and pushed
+    // to the server — routing around the scoping in HeardStore through a side door.
+    private func dropIfNotMine() {
+        guard AccountScope.ownerChanged("playbackProgress") else { return }
+        states = [:]
+        persist()
+    }
+
+    // Voice ids among `candidates` this device played to the end before #119 introduced an
+    // outbox. Scoped on the way out so a migration can never adopt someone else's listening.
+    func legacyHeardIds(among candidates: [UUID]) -> [UUID] {
+        dropIfNotMine()
+        return candidates.filter { states[$0.uuidString]?.completed == true }
     }
 
     func position(for id: UUID) -> Double { states[id.uuidString]?.position ?? 0 }
@@ -35,6 +53,7 @@ final class PlaybackProgressStore: ObservableObject {
     // playback or "mark as heard"). Replays and re-scrubs never clear it — only an
     // explicit un-mark would.
     func set(id: UUID, position: Double, completed: Bool) {
+        dropIfNotMine()
         let heard = (states[id.uuidString]?.completed ?? false) || completed
         states[id.uuidString] = State(position: max(0, position), completed: heard)
         persist()
@@ -43,6 +62,7 @@ final class PlaybackProgressStore: ObservableObject {
     // Move the resume point by dragging the thumb on an idle bubble. Keeps the
     // heard/green state (sticky).
     func setPosition(id: UUID, fraction: Double, duration: Int) {
+        dropIfNotMine()
         guard duration > 0 else { return }
         let pos = max(0, min(1, fraction)) * Double(duration)
         states[id.uuidString] = State(position: pos, completed: states[id.uuidString]?.completed ?? false)
@@ -53,6 +73,7 @@ final class PlaybackProgressStore: ObservableObject {
     // Positions the thumb at the end + sets the green/completed state. One persist
     // for the whole batch. Items: (message id, duration in seconds).
     func markHeard(_ items: [(id: UUID, duration: Int)]) {
+        dropIfNotMine()
         guard !items.isEmpty else { return }
         for item in items {
             let pos = item.duration > 0 ? Double(item.duration) : max(states[item.id.uuidString]?.position ?? 1, 1)
@@ -64,6 +85,7 @@ final class PlaybackProgressStore: ObservableObject {
     // Reset the resume position to the start (on replay) WITHOUT un-hearing — the
     // green/heard state is sticky and survives replays.
     func resetPosition(_ id: UUID) {
+        dropIfNotMine()
         states[id.uuidString] = State(position: 0, completed: states[id.uuidString]?.completed ?? false)
         persist()
     }

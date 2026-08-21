@@ -61,8 +61,9 @@ public class NotificationDispatchService(
         foreach (var r in recipients)
         {
             if (!seenTokens.Add(r.Token)) continue;   // skip sender's device + dupes
-            var badge = await UnreadCalculator.TotalAsync(db, r.UserId);
-            await notifications.SendNewMessageAsync([r.Token], dto, job.BookTitle, job.BookId, badge);
+            var (badge, perBook) = await UnreadCalculator.TotalWithPerBookAsync(db, r.UserId);
+            await notifications.SendNewMessageAsync([r.Token], dto, job.BookTitle, job.BookId, badge,
+                perBook.GetValueOrDefault(job.BookId));
         }
     }
 }
