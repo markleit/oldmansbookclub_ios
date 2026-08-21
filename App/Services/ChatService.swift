@@ -117,12 +117,9 @@ actor ChatService {
 
         currentBookId = bookId
 
-        #if targetEnvironment(simulator)
-        let baseUrl = "http://localhost:5235"
-        #else
-        let baseUrl = "https://oldmansbookclub-api.azurewebsites.net"
-        #endif
-        let url = "\(baseUrl)/hubs/chat"
+        // Same resolver as APIClient (#120) — these two must never disagree, or chat would keep
+        // talking to production while REST calls went somewhere else.
+        let url = "\(ServerEnvironment.baseURLString)/hubs/chat"
 
         // Called on every negotiate (including auto-reconnect) and on a 401 — refresh, then hand
         // over the current token. The client appends it as `access_token` on the transport URL.

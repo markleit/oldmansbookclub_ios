@@ -19,11 +19,10 @@ enum APIError: LocalizedError {
 final class APIClient {
     static let shared = APIClient()
 
-    #if targetEnvironment(simulator)
-    private let baseURL = URL(string: "http://localhost:5235")!
-    #else
-    private let baseURL = URL(string: "https://oldmansbookclub-api.azurewebsites.net")!
-    #endif
+    // Resolved per access, not stored: in DEBUG the host can change at runtime (#120), and a
+    // `let` captured at init would keep every request pinned to whatever was set at launch.
+    // In RELEASE this inlines to the production literal.
+    private var baseURL: URL { ServerEnvironment.baseURL }
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
