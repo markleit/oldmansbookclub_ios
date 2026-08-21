@@ -156,6 +156,9 @@ enum CachedImagePhase {
 
 struct CachedRemoteImage<Content: View>: View {
     let url: URL
+    // Handed the decoded image so a caller can measure it — the chat bubble needs the aspect
+    // ratio to size itself (#122). Optional so existing call sites are unaffected.
+    var onDecoded: ((UIImage) -> Void)? = nil
     @ViewBuilder let content: (CachedImagePhase) -> Content
 
     @State private var phase: CachedImagePhase = .empty
@@ -167,6 +170,7 @@ struct CachedRemoteImage<Content: View>: View {
 
     private func load() async {
         if let cached = await ImageCache.shared.get(url) {
+            onDecoded?(cached)
             phase = .success(Image(uiImage: cached))
             return
         }
@@ -189,6 +193,7 @@ struct CachedRemoteImage<Content: View>: View {
             }.value
             guard let uiImage else { continue }
             ImageCache.shared[url] = uiImage
+            onDecoded?(uiImage)
             phase = .success(Image(uiImage: uiImage))
             return
         }

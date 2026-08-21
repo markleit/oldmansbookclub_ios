@@ -1399,6 +1399,25 @@ struct PhotoMessageBubble: View {
     var onRetry: (() -> Void)? = nil
     var onCancel: (() -> Void)? = nil
 
+    @ObservedObject private var aspects = ImageAspectStore.shared
+
+    // The bubble takes the photo's own shape instead of a fixed square (#122). A square with
+    // scaledToFill cropped every non-square photo — sides off a landscape, head and feet off a
+    // portrait — so people had to open each one to see what it was.
+    private static let maxWidth: CGFloat = 240
+    private static let maxHeight: CGFloat = 300
+
+    private var aspect: CGFloat { aspects.aspect(for: url) ?? ImageAspectStore.placeholder }
+
+    // Fit the image's ratio inside the bounding box: wide photos meet the width limit, tall ones
+    // meet the height limit, and neither is cropped.
+    private var displaySize: CGSize {
+        let byWidth = CGSize(width: Self.maxWidth, height: Self.maxWidth / aspect)
+        return byWidth.height <= Self.maxHeight
+            ? byWidth
+            : CGSize(width: Self.maxHeight * aspect, height: Self.maxHeight)
+    }
+
     private var isSending: Bool { sendState == .sending }
     private var isFailed: Bool { sendState == .failed }
     private var isLocalFile: Bool { url.scheme == "file" }
@@ -1410,7 +1429,7 @@ struct PhotoMessageBubble: View {
                 onTap()
             } label: {
                 imageContent
-                    .frame(width: 200, height: 200)
+                    .frame(width: displaySize.width, height: displaySize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
@@ -1427,11 +1446,14 @@ struct PhotoMessageBubble: View {
     @ViewBuilder
     private var imageContent: some View {
         if isLocalFile, let image = UIImage(contentsOfFile: url.path) {
+            // A local file is a send in flight; measuring it here means the bubble is the right
+            // shape from the first frame, and stays that shape when the server copy replaces it.
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
+                .onAppear { aspects.record(image, for: url) }
         } else {
-            CachedRemoteImage(url: url) { phase in
+            CachedRemoteImage(url: url, onDecoded: { aspects.record($0, for: url) }) { phase in
                 if let image = phase.image {
                     image.resizable().scaledToFill()
                 } else {
