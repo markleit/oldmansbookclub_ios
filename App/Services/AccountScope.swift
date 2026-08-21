@@ -23,6 +23,11 @@ enum AccountScope {
         let stamped = defaults.string(forKey: stampKey)
         guard stamped != current else { return false }
         defaults.set(current, forKey: stampKey)
-        return true
+        // No previous stamp means this data was written before scoping existed — on an install
+        // that has only ever had one account. It belongs to whoever is signed in now, so ADOPT
+        // it. Wiping on first run would erase every resume position on upgrade AND destroy the
+        // pre-#119 heard flags that the legacy migration reads, which is the one thing that
+        // repairs users already diverged.
+        return stamped != nil
     }
 }
