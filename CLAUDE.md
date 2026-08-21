@@ -80,11 +80,12 @@ Azure SQL firewall must allow your dev machine's IP — add a rule via `az sql s
 
 ## Known gaps / next up
 
-The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-20) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
+The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-21) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
 
 **Bugs**
 - #25 — Single `DeviceToken` per user → `UserDevices` table (also blocks cross-device badge sync)
-- #119 — Unread counts: heard-state divergence (server vs device)
+- #119 — Unread counts: heard-state divergence (server vs device) — FIXED in 1.9.1, awaiting release
+- #121 — Verify on device: does the app recover from a server outage without backgrounding?
 
 **Features / enhancements**
 - #14 — Saved Messages UX rework (explicit forward + destination picker)
@@ -96,6 +97,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #22 — Saved Messages indexing & auto title/label
 - #51 — Transcribe-on-send for own voice messages
 - #83 — Photo/video viewing & multi-photo sharing (`feedback`)
+- #122 — Chat photos cropped to a square (`feedback`) — FIXED in 1.9.1, awaiting release
 - #98 — Enhance add-book search quality (metadata accuracy)
 
 **Perf**
@@ -109,6 +111,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #34 — `APIClient`: unify 20+ ad-hoc `URLRequest` builders
 - #36 — Schema niceties (`Membership` natural PK deferred from 1.9.0)
 - #120 — No test environment: local dev runs against the prod DB; device testing needs a prod deploy
+- #123 — Microsoft.OpenApi advisory + transitive deps unwatched — DONE 2026-08-21 (advisory cleared, lock file added, Dependabot alerts/security updates enabled, NuGet audit now fails the build)
 
 ### Security backlog (kept private — NOT filed as public GitHub issues)
 
