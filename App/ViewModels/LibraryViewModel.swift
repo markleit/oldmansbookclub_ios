@@ -97,7 +97,8 @@ final class LibraryViewModel: ObservableObject {
 
         do {
             let coversBefore = books.map { "\($0.id)|\($0.coverBlobUrl ?? "")" }
-            let fetched = try await APIClient.shared.getMyBooks()
+            let response = try await APIClient.shared.getMyBooks()
+            let fetched = response.books
             if books != fetched {
                 books = fetched
                 saveCache(fetched)
@@ -112,7 +113,7 @@ final class LibraryViewModel: ObservableObject {
             // to server truth on every load (initial, pull-to-refresh, foreground). This
             // is the convergence point that heals any optimistic local drift; pushes set
             // the badge while backgrounded.
-            UnreadStore.shared.seed(from: fetched)
+            UnreadStore.shared.seed(response.unread)
         } catch let error where error.isCancellation {
             isLoading = false
             return

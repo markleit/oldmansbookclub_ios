@@ -268,7 +268,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if template.sections.isEmpty {
             let cachedBooks = LibraryViewModel.cachedBooks()
             if !cachedBooks.isEmpty, Set(cachedBooks.map { $0.clubId }).count == 1 {
-                UnreadStore.shared.seed(from: cachedBooks)
+                // No seed here: UnreadStore persists its own counts (#119), so it already holds
+                // the last known numbers — the cached books carry no count to seed from.
                 template.updateSections(bookSections(cachedBooks))
             }
         }
@@ -277,12 +278,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         async let clubsReq = APIClient.shared.getMyClubs()
         async let booksReq = APIClient.shared.getMyBooks()
         let clubs = (try? await clubsReq) ?? []
-        let books = (try? await booksReq) ?? []
+        let booksResponse = try? await booksReq
+        let books = booksResponse?.books ?? []
         // Feed the shared UnreadStore so CarPlay and the phone read the SAME counts (#53). The
         // phone displays UnreadStore.counts (which it also mutates locally as you read/hear
         // messages); CarPlay previously showed raw book.unreadCount from its own fetch, so the
         // two drifted. Seeding here + reading via unreadCount(for:) keeps them identical.
-        if !books.isEmpty { UnreadStore.shared.seed(from: books) }
+        if let booksResponse, !books.isEmpty { UnreadStore.shared.seed(booksResponse.unread) }
         guard !clubs.isEmpty else {
             // Set BOTH title + subtitle (otherwise the title stays "Loading…" → looks blank /
             // stuck). Distinguish genuinely signed-out from signed-in-but-no-clubs.
@@ -301,8 +303,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             template.updateSections(bookSections(books.filter { $0.clubId == cid }))
             refreshers[ObjectIdentifier(template)] = { [weak self, weak template] in
                 guard let self, let template else { return }
-                let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
-                if !fresh.isEmpty { UnreadStore.shared.seed(from: fresh) }
+                guard let response = try? await APIClient.shared.getMyBooks() else { return }
+                let fresh = response.books
+                if !fresh.isEmpty { UnreadStore.shared.seed(response.unread) }
                 template.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
             }
             return
@@ -316,8 +319,9 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 let t = CPListTemplate(title: club.name, sections: self.bookSections(books.filter { $0.clubId == cid }))
                 self.refreshers[ObjectIdentifier(t)] = { [weak self, weak t] in
                     guard let self, let t else { return }
-                    let fresh = (try? await APIClient.shared.getMyBooks()) ?? []
-                    if !fresh.isEmpty { UnreadStore.shared.seed(from: fresh) }
+                    guard let response = try? await APIClient.shared.getMyBooks() else { return }
+                    let fresh = response.books
+                    if !fresh.isEmpty { UnreadStore.shared.seed(response.unread) }
                     t.updateSections(self.bookSections(fresh.filter { $0.clubId == cid }))
                 }
                 self.interfaceController?.pushTemplate(t, animated: true, completion: nil)
@@ -339,7 +343,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     // Unread count for a book, read from the shared UnreadStore so it matches the phone exactly
     // (#53); falls back to the book's own server value if the store hasn't been seeded yet.
     private func unreadCount(for book: Book) -> Int {
-        UnreadStore.shared.counts[book.id] ?? book.unreadCount
+        UnreadStore.shared.counts[book.id] ?? 0
     }
 
     private func bookSections(_ books: [Book]) -> [CPListSection] {

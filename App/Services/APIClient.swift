@@ -255,8 +255,25 @@ final class APIClient {
 
     // MARK: - Books
 
-    func getMyBooks() async throws -> [Book] {
-        try await get(path: "/books")
+    // The books payload also carries this user's unread count per book. It is decoded here and
+    // returned separately rather than hung on `Book` (#119) — one count, owned by UnreadStore,
+    // with no copy on a value type that every view holds its own version of.
+    struct BooksResponse {
+        let books: [Book]
+        let unread: [UUID: Int]
+    }
+
+    // Tolerant on purpose: a strict non-optional here would make ONE book missing the field fail
+    // the whole array decode, and an empty map seeds every count to zero (#119).
+    private struct BookUnread: Decodable { let id: UUID; let unreadCount: Int? }
+
+    func getMyBooks() async throws -> BooksResponse {
+        let data = try await getData(path: "/books")
+        let books = try decoder.decode([Book].self, from: data)
+        let counts = (try? decoder.decode([BookUnread].self, from: data)) ?? []
+        return BooksResponse(books: books,
+                             unread: Dictionary(counts.map { ($0.id, $0.unreadCount ?? 0) },
+                                                uniquingKeysWith: { first, _ in first }))
     }
 
     struct CreateBookRequest: Encodable {
@@ -800,6 +817,12 @@ final class APIClient {
     }
 
     private func get<Response: Decodable>(path: String, retried: Bool = false) async throws -> Response {
+        try decoder.decode(Response.self, from: try await getData(path: path, retried: retried))
+    }
+
+    // The raw-body GET, so a caller that needs to read one payload two ways (books + their
+    // unread counts, #119) doesn't have to duplicate the 401-refresh handling.
+    private func getData(path: String, retried: Bool = false) async throws -> Data {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         request.httpMethod = "GET"
         if let token = TokenStore.shared.token {
@@ -810,15 +833,15 @@ final class APIClient {
         if http.statusCode == 401 {
             if !retried {
                 switch await attemptRefresh() {
-                case .refreshed: return try await get(path: path, retried: true)
+                case .refreshed: return try await getData(path: path, retried: true)
                 case .transient: throw URLError(.timedOut)  // keep session; surface as a transient error
                 case .rejected: break                        // fall through to sign out
                 }
             }
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
-        guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try decoder.decode(Response.self, from: data)
+        guard (200..<300).contains(http.statusCode) else { throw APIError.serverError(http.statusCode) }
+        return data
     }
 
     private func post<Body: Encodable, Response: Decodable>(

@@ -38,8 +38,10 @@ struct Book: Identifiable, Codable, Hashable {
     var description: String?
     var publishedYear: Int?
     var pageCount: Int?
-    // Unread messages for the current user (non-voice after last-seen + unheard voice).
-    var unreadCount: Int = 0
+    // NOTE: unread is deliberately NOT a property of a book (#119). It is per-user, changes
+    // without the book changing, and a Book is a value type copied into every view — so a count
+    // living here would go stale in each copy independently. UnreadStore owns it; the wire
+    // field is decoded straight into that store by APIClient.getMyBooks().
 }
 
 struct User: Identifiable, Codable {
