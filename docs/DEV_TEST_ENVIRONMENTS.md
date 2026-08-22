@@ -1,9 +1,9 @@
-# Dev & test environments (#120)
+# Dev & test environments (#120 — DONE)
 
 This document describes how OMBC is developed and tested across simulator and
-device, what's shared with production today, and the plan to stop sharing it.
-See also `docs/ARCHITECTURE.md` for the system overview and `CLAUDE.md` for
-day-to-day build commands.
+device, and how dev/test traffic is isolated from production. See also
+`docs/ARCHITECTURE.md` for the system overview and `CLAUDE.md` for day-to-day
+build commands.
 
 ## The problem this solves
 
@@ -14,12 +14,12 @@ outage recovery — could only be exercised against real member data, and a
 client change depending on unshipped server behaviour was untestable until
 that server change had already deployed to prod.
 
-Separately, local dev has always run against the **production Azure SQL
-database** (`API/appsettings.Development.json`), because there's no local or
-dev database at all.
+Separately, local dev used to run against the **production Azure SQL
+database** and share production's storage, SignalR, and APNs — because there
+was no isolated alternative at all.
 
-These are two independent problems (client wiring vs. server data), tracked
-together as #120 and split into two halves below.
+These were two independent problems (client wiring vs. server data), tracked
+together as #120 and split into two halves, both now done.
 
 ## Half B — configurable host (DONE)
 
@@ -98,22 +98,27 @@ Consequences of the separate identity:
   border + "DEV" banner over the real icon, deliberately unpolished) so the
   two apps are never confused on a home screen.
 
-## What's still shared with production (Half A — PLANNED, decisions made, not built)
+## Half A — data isolation (DONE)
 
-Until Half A is built, the local API is a different front end onto the
-**same** backing services as production:
+Before Half A, the local API was a different front end onto the **same**
+backing services as production:
 
-| Service | Local dev uses | Risk |
+| Service | Local dev used to use | Risk |
 |---|---|---|
-| Azure SQL (`bookclubdb`) | **Production**, directly | Startup runs EF migrations against prod; test writes are real |
-| Azure Blob Storage | Production `oldmansbookclubstore` | Test uploads land in the real container |
-| APNs | Production credentials | A message from a dev/test account pushes real devices |
-| Azure SignalR | Shared backplane with prod (deliberate — see `Program.cs`) | A local hub invoke may route to the Azure server instead, or vice versa |
-| GitHub (Feedback feature) | Production PAT/repo | Test feedback files real issues |
+| Azure SQL (`bookclubdb`) | **Production**, directly | Startup ran EF migrations against prod; test writes were real |
+| Azure Blob Storage | Production `oldmansbookclubstore` | Test uploads landed in the real container |
+| APNs | Production credentials | A message from a dev/test account pushed real devices |
+| Azure SignalR | Shared backplane with prod (deliberate — see `Program.cs`) | A local hub invoke could route to the Azure server instead, or vice versa |
 
-**The standing guardrail until this is built: test in "Test Club"**, which
-reaches only two real accounts (Mark, Reviewer) rather than the full
-membership. "Old Man's Book Club" is the real club and reaches Mitty.
+None of that is true anymore — see the table below. GitHub (the Feedback
+feature) still uses the production PAT/repo in dev; that wasn't in scope for
+Half A and test feedback still files real issues.
+
+**The old standing guardrail — test in "Test Club" only — is no longer load-
+bearing for anything pointed at Localhost/Dev Machine**, since that traffic
+no longer touches the production database, storage, SignalR, or APNs at all.
+It still applies whenever a client is deliberately pointed at the Production
+preset (that's the point of that preset — real everything, real audience).
 
 ### The key architectural point: this is a config change, not a client change
 
@@ -136,97 +141,116 @@ pointing at Localhost / Dev Machine gives the fully isolated stack below.
 | Blob | `oldmansbookclubstore` | Second real storage account (`oldmansbookclubdev`) |
 | APNs | Real, sends | No-op — logs instead of calling Apple |
 
-### Decisions (made 2026-08-22)
+### Decisions and outcomes (built and verified 2026-08-22)
 
-**1. SignalR — switch dev to in-process `AddSignalR()`, drop the shared backplane.**
-The shared-backplane design predates Half B: `Program.cs`'s own comment says
-it exists so a simulator (local) and a physical device (previously *forced*
-onto production) could reach each other in real time — the only way to bridge
-two different API deployments. Half B removed that constraint: device and
-simulator can now both point at the same local process. In-process SignalR
-gives full isolation, zero Azure SignalR cost for dev traffic, **and**
-preserves sim ↔ device real-time testing, because both clients hit the same
-server. No remaining tradeoff.
+**1. SignalR — dev switched to in-process `AddSignalR()`, no Azure resource.**
+`Program.cs` now branches on `builder.Environment.IsDevelopment()`: production
+keeps `.AddAzureSignalR(...)` (needed across multiple App Service instances);
+dev gets plain `AddSignalR()`. The shared-backplane design predated Half B —
+its own comment explained it existed so a simulator (local) and a physical
+device (previously *forced* onto production) could reach each other in real
+time, the only way to bridge two different API deployments. Half B removed
+that constraint, so in-process SignalR gives full isolation *and* keeps
+sim ↔ device real-time, since both now connect to the same local process.
+**Verified:** startup log went from several `ServiceConnection...connected`
+lines plus a hub-binding line to zero Azure SignalR log output at all; a real
+message sent from the simulator produced a persistent local socket
+(`OldMansBookClub ↔ BookClubApi, 127.0.0.1:5235`) and landed in `bookclubdb-dev`.
 
 **2. APNs — no-op in dev, real only via the Production preset.**
-Gate is a single `Apns:Enabled` config flag (default `true`) checked once in
-`NotificationService` (all three send paths — `SendJoinRequestNotificationAsync`,
-`SendJoinResponseNotificationAsync`, `SendNewMessageAsync` — already share one
-class with `IConfiguration` injected). `appsettings.Development.json` sets it
-`false`: dev sends are logged, not delivered. There's no useful middle ground
-(a "sandboxed but realistic" push isn't meaningfully safer than real APNs) —
-when real push behaviour actually needs verifying, that's what pointing the
-client at Production is *for*, deliberately, not an accident of shared dev
-config.
+`NotificationService.SendToAllAsync` — the single choke point all three
+public send methods (`SendJoinRequestNotificationAsync`,
+`SendJoinResponseNotificationAsync`, `SendNewMessageAsync`) already funneled
+through — now checks `Apns:Enabled` (config, default `true`) before doing any
+APNs work and returns early if it's `false`. Dev's user-secrets set it
+`false`. **Verified:** added a second dev user as a club member with a
+real-format (fake) device token, sent a live message, and the log showed
+`Apns:Enabled=false — skipping push to 1 device(s)` with no HTTP call to
+Apple attempted at all — no delivery line, no network error, nothing sent.
 
 **3. Blob — a second real Azure Storage account, not Azurite.**
 Checked `BlobService.cs:91,164`: SAS generation goes through
-`GetUserDelegationKeyAsync` (Azure AD user-delegation SAS). **Azurite doesn't
-support user-delegation SAS at all** — only account-key SAS — so using it
-would mean forking `BlobService` to carry two SAS code paths permanently,
-which breaks the "isolate via config, not code" goal. Same reasoning as the
-SQL decision: a second real Azure resource (`oldmansbookclubdev`, its own
-`club-media`/`avatars` containers) costs a few cents a month at dev traffic
-volumes and has zero drift from production's behaviour.
+`GetUserDelegationKeyAsync` (Azure AD user-delegation SAS), which Azurite
+doesn't support (account-key SAS only) — using it would mean permanently
+forking `BlobService`. Created `oldmansbookclubdev` instead, matching prod's
+two containers exactly: `club-media` (private) and `avatars` (`blob` public
+access — confirmed prod's account has `allowBlobPublicAccess: true` and
+matched it; **new storage accounts default this to `false`**, which silently
+no-ops a public container creation with exit code 0 — caught by re-checking
+the container rather than trusting the CLI's exit status).
 
-**4. Seed data — a seeder, extending the existing seed mechanism.**
-A `/admin/seed-messages` endpoint (`X-Seed-Key`-gated) already exists for
-messages. Extend it to also seed clubs/books/memberships/users, and run it
-once against `bookclubdb-dev` after migrations. Preferred over a sanitized
-production snapshot: reproducible and resettable for deterministic test
-scenarios, and side-steps any question about copying real member content even
-redacted.
+**4. Seed data — `/admin/seed-baseline`, not a sanitized snapshot.**
+Turned out smaller than scoped: `AuthController.DevLogin` already
+auto-creates a club and joins the calling user as club admin the moment
+`bookclubdb-dev` has zero clubs, so seeding "users/memberships" was already
+solved. The actual gap was books — a fresh DB has none, so Library looks
+empty after the first Dev Login. Added `POST /admin/seed-baseline`
+(`[AllowAnonymous]` + an `IsDevelopment()` check, same pattern as the
+pre-existing `seed-join-request`, so it 404s outright on a Release/production
+build regardless of any header) — ensures one book per status
+(current/future/past) in whatever club already exists. **Verified
+idempotent** by calling it twice: first call created all 3 books, second
+created none and left them untouched. The pre-existing `/admin/seed-messages`
+(unchanged) still handles dropping sample messages into a book.
 
-### Build plan (not started)
+### What was built
 
 1. **`bookclubdb-dev`** — second Basic-tier Azure SQL database on the existing
    server. Prod is Azure SQL Database (evergreen PaaS, no fixed version to
    match) and there is no native ARM64 SQL Server engine (Microsoft: container
    images are x86-64-only, Rosetta explicitly unsupported; Azure SQL Edge, the
    old ARM path, retired 2025-09-30) — a second real Azure DB has zero engine
-   drift, unlike any local/container option. ~$5/month.
-2. **`oldmansbookclubdev`** storage account — mirrors `oldmansbookclubstore`'s
-   containers (`club-media`, `avatars`).
-3. **Firewall upsert script** — replace manually chasing the dev machine's
-   rotating egress IP with a one-line `az sql server firewall-rule create`
-   run before `dotnet run`. (Not fixable with a VNet rule — VNet rules and
-   Private Link put the *client* inside an Azure network, which a laptop
-   can't join.)
-4. **`Program.cs`** — branch `AddSignalR()` vs `AddAzureSignalR(...)` on
-   `builder.Environment.IsDevelopment()`.
-5. **`NotificationService`** — add the `Apns:Enabled` gate.
-6. **Seeder** — extend `/admin/seed-messages` to cover clubs/books/memberships/users.
-7. **Secrets migration** — `API/appsettings.Development.json` currently holds
-   plaintext SQL/SignalR/Blob/APNs/JWT/GitHub secrets (gitignored, but one
-   `git add -A` from disaster). Move dev secrets to `dotnet user-secrets`.
+   drift, unlike any local/container option. ~$5/month. **First-ever
+   start-from-empty run of the full migration history: all 29 migrations
+   applied cleanly, 14 tables, correct schema** — previously only ever
+   verified incrementally against prod as each migration shipped.
+2. **`oldmansbookclubdev`** storage account, West US 3, with `club-media` and
+   `avatars` containers matching production's access levels.
+3. **Secrets migration** — `API/appsettings.Development.json` is now just
+   logging config; all 18 values (SQL/Storage/SignalR/APNs/JWT/GitHub/etc,
+   repointed at the new dev resources where applicable) live in
+   `dotnet user-secrets` instead. `BookClubApi.csproj` carries the new
+   `UserSecretsId` (the only piece of this that isn't itself a secret, so the
+   only piece that needed to land in git). Verified by starting the API with
+   the plaintext file stripped down and confirming it still resolved every
+   value correctly.
+4. **`Program.cs`** SignalR branch, **`NotificationService`** `Apns:Enabled`
+   gate, **`AdminController.SeedBaseline`** — see decisions above.
 
-## Scenario matrix (current, post Half B)
+**Not built — deferred, not blocking:** the firewall-upsert script (chasing
+the dev machine's rotating egress IP is unchanged from before Half A; it just
+no longer carries prod-migration risk if forgotten, so the urgency dropped).
+File as a small follow-up if the manual `az sql server firewall-rule create`
+step becomes annoying enough.
 
-| # | Client | Host | Data | Status |
+## Scenario matrix (current, post Half A + Half B)
+
+| # | Client | Host | Data / backend | Status |
 |---|---|---|---|---|
-| 1 | Simulator | localhost (default) | Production DB | Everyday dev |
-| 2 | Simulator | Production | Production DB | Reproduce a prod bug |
-| 3 | Device (`.dev`) | Dev Machine (LAN IP) | Production DB | **New** — device-only features against unshipped server changes |
-| 4 | Device (`.dev`) | Production | Production DB | **New** — device testing against prod without touching the App Store app |
-| 5 | Device, App Store | Production | Production DB | What users have — never disturbed by any of the above |
+| 1 | Simulator | Localhost (default) | `bookclubdb-dev`, in-process SignalR, dev storage, no real APNs | Everyday dev — **fully isolated** |
+| 2 | Simulator | Production | Real everything | Reproduce a prod bug |
+| 3 | Device (`.dev`) | Dev Machine (LAN IP) | `bookclubdb-dev`, isolated | **Fully isolated** — device-only features against unshipped server changes, zero prod contact |
+| 4 | Device (`.dev`) | Production | Real everything | Device testing against prod without touching the App Store app |
+| 5 | Device, App Store | Production | Real everything | What users have — never disturbed by any of the above |
 
-After Half A is built, scenarios 1 and 3 point at `bookclubdb-dev` instead,
-and become genuinely data-isolated rather than merely app-isolated.
+Scenarios 1 and 3 are the ones Half A changed: they used to share production's
+database, storage, SignalR, and APNs; now they touch none of it. 2, 4, and 5
+are deliberately real, by pointing at the Production preset — that's what
+preserves using the simulator (or a device) as a prod tester.
 
 ## Looking ahead: a CI regression / build-acceptance suite
 
-Once Half A exists, the intent is to build an automated regression pass —
-build-acceptance testing that runs on every CI build, not a one-off manual
-check. This is future work, not yet scoped in detail, but it changes how Half
-A should be built, so it's worth stating the constraint now rather than
-discovering it after the fact:
+Half A's isolated stack is what makes an automated regression pass possible
+without every CI run touching production. This is future work, not yet
+scoped in detail, but worth stating the constraints now:
 
 **A GitHub Actions runner is not this dev machine.** `ci.yml` currently only
 builds (`xcodebuild ... clean build`, simulator only, no test target — this is
 also #32, "No test target"); it doesn't touch the API or a database at all.
 For an automated suite to exercise real client-server behaviour, the runner
 needs to reach an isolated backend the same way this Mac does today, which
-raises questions Half A's build should leave room for rather than block on:
+raises questions worth deciding before building the suite, without blocking
+anything already done above:
 
 - **Reachability** — a GitHub-hosted runner's egress IP isn't static, so the
   firewall-upsert approach that works for one dev machine doesn't generalize
@@ -256,10 +280,10 @@ raises questions Half A's build should leave room for rather than block on:
   written directly into the workflow YAML. CI becomes just "run the same thing
   automatically," not a second implementation.
 
-None of this blocks starting Half A — it only argues for building the seeder
-idempotently, keeping the dev database's connection details in one obvious,
-swappable config spot from day one, and keeping the eventual test runner as a
-plain, locally-invokable script from the start.
+`/admin/seed-baseline` was already built idempotent (matches on `(ClubId,
+Title)` rather than inserting blindly) and the dev connection details already
+live in one place (`dotnet user-secrets`) — both ahead of this suite actually
+being scoped, so neither should need rework when it is.
 
 ## Azure region move: Norway East → West US 3 (DONE)
 
