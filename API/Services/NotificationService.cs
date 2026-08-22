@@ -154,6 +154,16 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
 
     private async Task SendToAllAsync(IEnumerable<string> deviceTokens, string payload)
     {
+        // Single choke point for all three public send methods (#120 half A). Dev never calls
+        // Apple — a dev/test account's messages must not push real devices. Real push behaviour
+        // is verified deliberately, by pointing a client at the Production preset instead.
+        if (!config.GetValue("Apns:Enabled", true))
+        {
+            var tokenList = deviceTokens.ToList();
+            logger.LogInformation("Apns:Enabled=false — skipping push to {Count} device(s)", tokenList.Count);
+            return;
+        }
+
         var bearerToken = GetBearerToken();
         var prodClient = httpClientFactory.CreateClient("apns");
         var sandboxClient = httpClientFactory.CreateClient("apns-sandbox");
