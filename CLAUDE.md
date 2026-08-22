@@ -43,12 +43,12 @@ for specifics — only the non-obvious bits are worth recording here:
 - `App/Services/ServerEnvironment.swift` — resolves the API host. In DEBUG it is a runtime value
   (Settings → "Server (Debug)"), so a device can be pointed at a laptop or a staging slot; in
   RELEASE it compiles to the production literal. Both `APIClient` and `ChatService` MUST go
-  through it — if only one switches, chat silently keeps talking to prod (#120 half B)
+  through it — if only one switches, chat silently keeps talking to prod (#120, done)
 - `App/Services/APIClient.swift` — singleton HTTP client; base URL comes from `ServerEnvironment`
 - `App/Services/ChatService.swift` — SignalR client, an actor
 - `App/Services/TokenStore.swift` — JWT persistence in the Keychain
-- `API/Migrations/` — migrations run automatically on API startup, and local dev points at the
-  PROD database, so starting the local API migrates production (#120)
+- `API/Migrations/` — migrations run automatically on API startup. Local dev points at
+  `bookclubdb-dev`, an isolated database (#120, done) — see `docs/DEV_TEST_ENVIRONMENTS.md`
 
 ## Auth
 
@@ -62,10 +62,11 @@ The API uses `JsonNamingPolicy.SnakeCaseLower` — all JSON keys are snake_case 
 
 **See `docs/DEV_TEST_ENVIRONMENTS.md` — the canonical reference** for how the
 API host is configured (runtime in DEBUG, hardcoded in RELEASE), how the
-`.dev` device app is isolated from the App Store app, the simulator/device
-scenario matrix, what's still shared with production (#120 half A, not done),
-and the planned Azure region move. Don't duplicate that content here or in
-memory — update the doc and link to it.
+`.dev` device app is isolated from the App Store app, the isolated dev
+backend (`bookclubdb-dev`, in-process SignalR, dev storage, no-op APNs — #120,
+done), the simulator/device scenario matrix, and the completed Azure region
+move. Don't duplicate that content here or in memory — update the doc and
+link to it.
 
 Quick start: `cd API && dotnet run`, build+run in the simulator, tap "Dev
 Login (Debug)" on the login screen. Azure SQL firewall must allow your dev
@@ -83,7 +84,7 @@ machine's egress IP (`az sql server firewall-rule create` if it changes).
 
 ## Known gaps / next up
 
-The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-21) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
+The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-22) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
 
 **Bugs**
 - #25 — Single `DeviceToken` per user → `UserDevices` table (also blocks cross-device badge sync)
@@ -113,7 +114,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #33 — `BookViewModel` ~8 responsibilities; split large views
 - #34 — `APIClient`: unify 20+ ad-hoc `URLRequest` builders
 - #36 — Schema niceties (`Membership` natural PK deferred from 1.9.0)
-- #120 — No test environment: local dev runs against the prod DB; device testing needs a prod deploy
+- #120 — No test environment: local dev ran against the prod DB — CLOSED 2026-08-22 (isolated `bookclubdb-dev` + storage, in-process SignalR, no-op APNs, idempotent seeder; see `docs/DEV_TEST_ENVIRONMENTS.md`)
 - #123 — Microsoft.OpenApi advisory + transitive deps unwatched — DONE 2026-08-21 (advisory cleared, lock file added, Dependabot alerts/security updates enabled, NuGet audit now fails the build)
 
 ### Security backlog (kept private — NOT filed as public GitHub issues)
