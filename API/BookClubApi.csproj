@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -17,6 +17,7 @@
          should stop the build, not scroll past. NU1901-1904 are the audit severities. -->
     <NuGetAuditMode>all</NuGetAuditMode>
     <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
+    <UserSecretsId>72a2829d-5f40-4252-a061-b71d55ebfc5c</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
