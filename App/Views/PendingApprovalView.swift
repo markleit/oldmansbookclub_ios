@@ -44,8 +44,8 @@ struct PendingApprovalView: View {
                 .frame(height: 50)
                 .padding(.horizontal, 40)
 
-                #if targetEnvironment(simulator)
-                Button("Dev Check Status (Simulator)") {
+                #if DEBUG
+                Button("Dev Check Status (Debug)") {
                     auth.devLogin()
                 }
                 .font(.caption)

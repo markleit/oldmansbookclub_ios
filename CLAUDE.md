@@ -40,8 +40,11 @@ iOS is SwiftUI + MVVM under `App/` (`Models/`, `ViewModels/`, `Views/`, `Service
 ASP.NET Core under `API/` (`Controllers/`, `Hubs/`, `Models/`, `Data/`, `Services/`). Read the tree
 for specifics — only the non-obvious bits are worth recording here:
 
-- `App/Services/APIClient.swift` — singleton HTTP client; base URL is COMPILE-TIME (simulator →
-  localhost, device → Azure prod), which is why device testing needs a prod deploy (#120)
+- `App/Services/ServerEnvironment.swift` — resolves the API host. In DEBUG it is a runtime value
+  (Settings → "Server (Debug)"), so a device can be pointed at a laptop or a staging slot; in
+  RELEASE it compiles to the production literal. Both `APIClient` and `ChatService` MUST go
+  through it — if only one switches, chat silently keeps talking to prod (#120 half B)
+- `App/Services/APIClient.swift` — singleton HTTP client; base URL comes from `ServerEnvironment`
 - `App/Services/ChatService.swift` — SignalR client, an actor
 - `App/Services/TokenStore.swift` — JWT persistence in the Keychain
 - `API/Migrations/` — migrations run automatically on API startup, and local dev points at the

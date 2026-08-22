@@ -42,9 +42,18 @@ struct LoginView: View {
                 .padding(.horizontal, 40)
             }
 
-            #if targetEnvironment(simulator)
+            #if DEBUG
+            // Settings (where this control normally lives) is only reachable once signed in — but
+            // a fresh install on a device defaults to production, and production has no dev-login
+            // (#120: AuthController 404s it outside Development). Without this, there is no way
+            // to reach a local server before authenticating: production rejects Dev Login, and
+            // there is no route to Settings to point elsewhere. Same override key as Settings, so
+            // either screen sees the other's change.
+            DebugServerControl()
+                .padding(.horizontal, 40)
+
             VStack(spacing: 8) {
-                Button("Dev Login (Simulator)") {
+                Button("Dev Login (Debug)") {
                     auth.devLogin()
                 }
                 Button("Simulate New User") {

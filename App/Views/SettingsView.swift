@@ -22,6 +22,10 @@ struct SettingsView: View {
                     Text("About")
                 }
             }
+
+            #if DEBUG
+            ServerEnvironmentSection()
+            #endif
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -50,3 +54,30 @@ struct AboutView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
+
+#if DEBUG
+// Point a build at a laptop or a staging slot (#120). DEBUG-only: a Release build has no such
+// section and no runtime host at all, so nothing here can reach a shipped app.
+//
+// Signed-in-only wrapper around DebugServerControl (see LoginView.swift), which is the
+// pre-auth copy — Settings is unreachable before signing in, and a fresh device install
+// defaults to production, where dev-login 404s. Without that copy there is no route to a
+// local server at all on a first launch.
+private struct ServerEnvironmentSection: View {
+    @EnvironmentObject var auth: AuthViewModel
+
+    var body: some View {
+        Section {
+            DebugServerControl {
+                // Drop the refresh token BEFORE signing out. signOut() otherwise fires a
+                // fire-and-forget revoke, which — now that the host has already changed —
+                // would hand the old server's refresh token to the new one.
+                TokenStore.shared.refreshToken = nil
+                auth.signOut()
+            }
+        } header: {
+            Text("Server (Debug)")
+        }
+    }
+}
+#endif

@@ -19,11 +19,10 @@ enum APIError: LocalizedError {
 final class APIClient {
     static let shared = APIClient()
 
-    #if targetEnvironment(simulator)
-    private let baseURL = URL(string: "http://localhost:5235")!
-    #else
-    private let baseURL = URL(string: "https://oldmansbookclub-api.azurewebsites.net")!
-    #endif
+    // Resolved per access, not stored: in DEBUG the host can change at runtime (#120), and a
+    // `let` captured at init would keep every request pinned to whatever was set at launch.
+    // In RELEASE this inlines to the production literal.
+    private var baseURL: URL { ServerEnvironment.baseURL }
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -224,7 +223,8 @@ final class APIClient {
         return try await post(path: "/auth/demo-login", body: body, authenticated: false)
     }
 
-    #if targetEnvironment(simulator)
+    // Was simulator-only; also needed on a DEBUG device build (#120) — see AuthViewModel.devLogin.
+    #if DEBUG
     struct DevLoginRequest: Encodable { let displayName: String }
 
     func devLogin(displayName: String) async throws -> AuthResponse {

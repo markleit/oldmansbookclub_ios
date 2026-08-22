@@ -17,19 +17,19 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: App
-    entitlements:
-      path: App/OldMansBookClub.entitlements
-      properties:
-        com.apple.developer.applesignin:
-          - Default
-        aps-environment: $(APS_ENVIRONMENT)
-        # CarPlay audio entitlement (#46). MANAGED — pending Apple approval; device/TestFlight
-        # signing will fail until granted. Simulator + CarPlay Simulator builds are unaffected.
-        com.apple.developer.carplay-audio: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub
+        # Debug builds install under a SEPARATE bundle id (.dev) so they can sit alongside the
+        # App Store build on a device instead of replacing it — see #120. The suffix is a build
+        # setting rather than a hardcoded id so a one-off CarPlay debug session can still build
+        # with the real id (CarPlay's managed entitlement is granted only to that App ID):
+        #   xcodebuild ... OMBC_BUNDLE_SUFFIX="" \
+        #     CODE_SIGN_ENTITLEMENTS=App/OldMansBookClub.entitlements
+        # (both are needed — the real App ID AND the entitlements file that carries CarPlay)
+        PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)
+        OMBC_BUNDLE_SUFFIX: ""
         INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/OldMansBookClub.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BCH6CDU76R
@@ -41,7 +41,17 @@ targets:
       configs:
         Debug:
           APS_ENVIRONMENT: development
+          OMBC_BUNDLE_SUFFIX: .dev
+          # The .dev App ID has no CarPlay grant, so Debug signs against an entitlements file
+          # that omits it. Keep in sync with the generated file above, minus carplay-audio.
+          CODE_SIGN_ENTITLEMENTS: App/OldMansBookClub.Debug.entitlements
+          # So the .dev app is visually unmistakable from the real one on a home screen —
+          # different name suffix, different (unpolished, deliberately loud) icon.
+          OMBC_DISPLAY_SUFFIX: (DEV)
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Debug
         Release:
           APS_ENVIRONMENT: production
+          OMBC_DISPLAY_SUFFIX: ""
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: SignalRClient
