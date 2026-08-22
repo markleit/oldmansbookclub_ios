@@ -67,6 +67,57 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return Ok(new { userId = user.Id, clubId = club.Id, status = "created" });
     }
 
+    // Bootstraps a usable dev database (#120 half A) — a club with one book per status, so
+    // Library isn't empty after the first Dev Login. Deliberately does NOT touch users or
+    // memberships: DevLogin already creates the first club and joins the calling user to every
+    // club as club admin, so duplicating that here would just be two places to keep in sync.
+    // Idempotent — matches existing rows by title/status instead of inserting blindly, so it's
+    // safe to call repeatedly (e.g. from a future CI seed step) without piling up duplicates.
+    [AllowAnonymous]
+    [HttpPost("seed-baseline")]
+    public async Task<IActionResult> SeedBaseline()
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var club = await db.Clubs.FirstOrDefaultAsync();
+        if (club is null)
+        {
+            club = new Club { Id = Guid.NewGuid(), Name = "Old Man's Book Club" };
+            db.Clubs.Add(club);
+            await db.SaveChangesAsync();
+        }
+
+        (string Title, string Author, string Status)[] wanted =
+        [
+            ("Seed: Current Read", "Baseline Author", "current"),
+            ("Seed: Future Read", "Baseline Author", "future"),
+            ("Seed: Past Read", "Baseline Author", "past"),
+        ];
+
+        var created = new List<string>();
+        foreach (var (title, author, status) in wanted)
+        {
+            var exists = await db.Books.AnyAsync(b => b.ClubId == club.Id && b.Title == title);
+            if (exists) continue;
+
+            db.Books.Add(new Book
+            {
+                ClubId = club.Id,
+                Title = title,
+                Author = author,
+                Status = status,
+                FinishedAt = status == "past" ? DateTime.UtcNow.AddDays(-7) : null,
+            });
+            created.Add(title);
+        }
+
+        if (created.Count > 0)
+            await db.SaveChangesAsync();
+
+        return Ok(new { clubId = club.Id, clubName = club.Name, booksCreated = created });
+    }
+
     [HttpPost("seed-messages")]
     public async Task<IActionResult> SeedMessages([FromBody] SeedMessagesRequest req)
     {
