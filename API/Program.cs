@@ -31,21 +31,26 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database", tags: ["ready"]);
 
-// SignalR. Both dev and prod use the Azure SignalR Service backplane so the
-// simulator and physical device can exchange messages in real time end-to-end.
-// Trade-off: simulator's hub invocations route through SignalR Service to one of
-// the registered servers (local or Azure prod), so local dotnet may not see
-// every invoke. Flip to AddSignalR()-only (no AzureSignalR) when you need
-// guaranteed local invoke routing for server-side debugging.
-builder.Services.AddSignalR()
+// SignalR. Production uses the Azure SignalR Service backplane (needed across
+// multiple App Service instances). Development runs in-process instead (#120 half A) —
+// this used to be shared with prod so a simulator and a physical device (which was
+// PREVIOUSLY FORCED onto production, see #120 half B) could reach each other in real
+// time. That constraint is gone: a device can now point at this same local process, so
+// in-process SignalR still gives sim<->device real-time (both connect to one server),
+// while guaranteeing every hub invoke is actually visible here, and touching no Azure
+// SignalR resource for dev traffic at all.
+var signalR = builder.Services.AddSignalR()
     .AddJsonProtocol(options =>
     {
         options.PayloadSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
         options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
         options.PayloadSerializerOptions.Converters.Add(new UtcDateTimeConverter());
-    })
-    .AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
+    });
+if (!builder.Environment.IsDevelopment())
+{
+    signalR.AddAzureSignalR(builder.Configuration["Azure:SignalRConnectionString"]
         ?? "Endpoint=https://oldmansbookclub-signalr.service.signalr.net;AuthType=aad;Version=1.0;");
+}
 
 // Services
 builder.Services.AddScoped<AppleTokenValidator>();
