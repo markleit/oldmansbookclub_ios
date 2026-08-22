@@ -131,7 +131,10 @@ final class AuthViewModel: ObservableObject {
     }
 
     func completeClubSetup(clubName: String) {
-        #if targetEnvironment(simulator)
+        // Must match devLogin()'s own gate — a Release-configured simulator build has
+        // targetEnvironment(simulator) true but DEBUG false, so calling devLogin() there
+        // wouldn't compile if this block used the wider gate.
+        #if DEBUG
         if pendingIdentityToken == nil {
             needsClubSetup = false
             devLogin()
@@ -222,7 +225,9 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
-    #if targetEnvironment(simulator)
+    // Was simulator-only. Needed on a DEBUG device build too — Sign in with Apple is bound to
+    // the production bundle id (#120), so it's the .dev app's only way to authenticate.
+    #if DEBUG
     func devLogin() {
         isLoading = true
         errorMessage = nil

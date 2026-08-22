@@ -223,7 +223,8 @@ final class APIClient {
         return try await post(path: "/auth/demo-login", body: body, authenticated: false)
     }
 
-    #if targetEnvironment(simulator)
+    // Was simulator-only; also needed on a DEBUG device build (#120) — see AuthViewModel.devLogin.
+    #if DEBUG
     struct DevLoginRequest: Encodable { let displayName: String }
 
     func devLogin(displayName: String) async throws -> AuthResponse {
