@@ -223,20 +223,67 @@ no longer carries prod-migration risk if forgotten, so the urgency dropped).
 File as a small follow-up if the manual `az sql server firewall-rule create`
 step becomes annoying enough.
 
-## Scenario matrix (current, post Half A + Half B)
+## Scenario matrix (current, post Half A + Half B + #130)
 
-| # | Client | Host | Data / backend | Status |
-|---|---|---|---|---|
-| 1 | Simulator | Localhost (default) | `bookclubdb-dev`, in-process SignalR, dev storage, no real APNs | Everyday dev — **fully isolated** |
-| 2 | Simulator | Production | Real everything | Reproduce a prod bug |
-| 3 | Device (`.dev`) | Dev Machine (LAN IP) | `bookclubdb-dev`, isolated | **Fully isolated** — device-only features against unshipped server changes, zero prod contact |
-| 4 | Device (`.dev`) | Production | Real everything | Device testing against prod without touching the App Store app |
-| 5 | Device, App Store | Production | Real everything | What users have — never disturbed by any of the above |
+| # | Client | Host | Data / backend | Account | Status |
+|---|---|---|---|---|---|
+| 1 | Simulator | Localhost (default) | `bookclubdb-dev`, in-process SignalR, dev storage, no real APNs | "Dev Login (Debug)" / "Simulate…" buttons on `LoginView` — no real Apple ID | Everyday dev — **fully isolated** |
+| 2 | Simulator | Production | Real everything | Your real Apple ID, **signed in at the Simulator's OS level first** (Settings app) | Reproduce a prod bug — see gotchas below |
+| 3 | Device (`.dev`) | Dev Machine (LAN IP) | `bookclubdb-dev`, isolated | "Dev Login (Debug)" / "Simulate…" buttons — no real Apple ID | **Fully isolated** — device-only features against unshipped server changes, zero prod contact |
+| 4 | Device (`.dev`) | Production | Real everything | Your real Apple ID (already signed in at the OS level on a real device, nothing extra to set up) | Device testing against prod without touching the App Store app — see gotchas below |
+| 5 | Device, App Store | Production | Real everything | Your real Apple ID | What users have — never disturbed by any of the above |
 
 Scenarios 1 and 3 are the ones Half A changed: they used to share production's
 database, storage, SignalR, and APNs; now they touch none of it. 2, 4, and 5
 are deliberately real, by pointing at the Production preset — that's what
 preserves using the simulator (or a device) as a prod tester.
+
+### Gotchas for scenarios 2 and 4 (Production + DEBUG build)
+
+**Sign In with Apple needs two one-time fixes, both now done (#130):**
+Every DEBUG build (simulator or device) compiles with bundle id
+`<bundleId>.dev` (the #120 device-isolation split). Production's Apple
+Sign-In validation used to check the identity token's audience against only
+the real bundle id, so a `.dev`-audience token always 401'd — scenarios 2 and
+4 didn't actually work despite being documented here, until:
+1. **Server**: `AuthController`/`AppleTokenValidator` now accept both the
+   real and `.dev` bundle ids as valid audiences (commit `ed33d49`, deployed
+   2026-08-27).
+2. **Apple Developer portal** (one-time, manual): the `.dev` App ID's Sign In
+   with Apple capability must be **grouped** under the primary App ID
+   (`com.markleit.oldmansbookclub`) as its primary App ID. Without this,
+   Apple mints a *different* `sub` per bundle id even for the same real
+   Apple ID — you'd land on a second, empty account instead of your real
+   one. Done 2026-08-27 (Identifiers → primary App ID → Sign In with Apple →
+   "Enable as a primary App ID"; `.dev` App ID → Sign In with Apple → "Group
+   with an existing primary App ID..." → select the primary).
+
+**A Simulator with no real Apple ID signed in silently fakes it.** If you
+tap Sign In with Apple on a Simulator that has no Apple ID configured at the
+OS level (Settings app shows no account at the top), iOS doesn't error —
+it substitutes Apple's built-in synthetic test identity (name literally
+"Simulator", no email) and hands the app a valid-looking token for it. The
+server has no way to distinguish this from a real sign-in, so it happily
+creates a brand-new, real `User` row for it. This is almost certainly how
+the club ended up with multiple "Simulator" member accounts over time — each
+one a leftover from a DEBUG-against-Production test run before the
+Simulator had a real Apple ID signed in. **Before testing scenario 2, sign
+the Simulator into your real Apple ID via Settings first** (same as a
+physical device) — otherwise every test run mints another throwaway
+account.
+
+**Pushing to yourself from a second device on the same account doesn't
+work, and isn't a bug.** `NotificationDispatch` excludes the sender's
+`UserId` from the push fan-out entirely (by design — you shouldn't get
+pushed your own message). Since there's currently one `DeviceToken` per
+*user* (not per device — #25), a sim and a phone signed into the same real
+account are, as far as the server's concerned, the same recipient being
+excluded — the phone will never get a push for a message the sim (or any
+other device on that account) sent, even though the send/receive path
+itself (SignalR, DB, in-app display) works fine. Testing push delivery
+end-to-end needs either a second real club member to send from, or #25
+landing with per-device (not per-account) fan-out exclusion — see the
+2026-08-27 comment on #25 for the design discussion (not yet settled).
 
 ## Looking ahead: a CI regression / build-acceptance suite
 
