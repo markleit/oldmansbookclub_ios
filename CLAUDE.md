@@ -103,6 +103,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #83 — Photo/video viewing & multi-photo sharing (`feedback`)
 - #122 — Chat photos cropped to a square (`feedback`) — FIXED in 1.9.1, awaiting release
 - #98 — Enhance add-book search quality (metadata accuracy)
+- #128 — Home screen icon label should read "OMBC" (`CFBundleDisplayName`; requires a new build/release, not App Store metadata) — targeted for the release after 1.9.2
 
 **Perf**
 - #9 — Voice-bubble rendering: re-render storm + layout
