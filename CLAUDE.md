@@ -84,11 +84,10 @@ machine's egress IP (`az sql server firewall-rule create` if it changes).
 
 ## Known gaps / next up
 
-The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-22) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
+The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) — that's the source of truth, with labels `bug` / `enhancement` / `perf` / `tech-debt`. This slim index is a SNAPSHOT (2026-08-27) to keep the list in AI context; it goes stale as issues close — re-derive with `gh issue list` when it matters, and fetch full notes with `gh issue view <N>`. (The in-app Feedback view filters by the `feedback` label, so these dev labels stay out of the user-facing list.) **Security items are deliberately NOT filed as public issues (the repo is public) — they live inline below.**
 
 **Bugs**
 - #25 — Single `DeviceToken` per user → `UserDevices` table (also blocks cross-device badge sync)
-- #119 — Unread counts: heard-state divergence (server vs device) — FIXED in 1.9.1, awaiting release
 - #121 — Verify on device: does the app recover from a server outage without backgrounding?
 
 **Features / enhancements**
@@ -101,8 +100,8 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #22 — Saved Messages indexing & auto title/label
 - #51 — Transcribe-on-send for own voice messages
 - #83 — Photo/video viewing & multi-photo sharing (`feedback`)
-- #122 — Chat photos cropped to a square (`feedback`) — FIXED in 1.9.1, awaiting release
 - #98 — Enhance add-book search quality (metadata accuracy)
+- #128 — Home screen icon label should read "OMBC" (`CFBundleDisplayName`; requires a new build/release, not App Store metadata) — targeted for the release after 1.9.2
 - #128 — Home screen icon label should read "OMBC" (`CFBundleDisplayName`; requires a new build/release, not App Store metadata) — targeted for the release after 1.9.2
 
 **Perf**
