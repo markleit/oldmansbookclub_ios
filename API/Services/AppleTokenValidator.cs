@@ -20,14 +20,17 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
     private static List<SecurityKey>? _cachedKeys;
     private static DateTimeOffset _cachedAt;
 
-    public async Task<string?> ValidateAsync(string identityToken, string bundleId)
+    // Returns the Apple subject and which of validAudiences the token was actually issued to —
+    // callers need the matched bundle id, not just any of the candidates, for the client_id used
+    // in subsequent Apple token-exchange/revoke calls.
+    public async Task<(string Subject, string MatchedBundleId)?> ValidateAsync(string identityToken, IReadOnlyList<string> validAudiences)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
 
         TokenValidationParameters Params(IEnumerable<SecurityKey> keys) => new()
         {
             ValidIssuer = AppleIssuer,
-            ValidAudience = bundleId,
+            ValidAudiences = validAudiences,
             IssuerSigningKeys = keys,
             ValidateLifetime = true
         };
@@ -35,18 +38,22 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
         try
         {
             var keys = await GetApplePublicKeysAsync(forceRefresh: false);
+            ClaimsPrincipal principal;
             try
             {
-                var principal = handler.ValidateToken(identityToken, Params(keys), out _);
-                return principal.FindFirst("sub")?.Value;
+                principal = handler.ValidateToken(identityToken, Params(keys), out _);
             }
             catch (SecurityTokenSignatureKeyNotFoundException)
             {
                 // Keys likely rotated since we cached — refresh once and retry.
                 var fresh = await GetApplePublicKeysAsync(forceRefresh: true);
-                var principal = handler.ValidateToken(identityToken, Params(fresh), out _);
-                return principal.FindFirst("sub")?.Value;
+                principal = handler.ValidateToken(identityToken, Params(fresh), out _);
             }
+
+            var subject = principal.FindFirst("sub")?.Value;
+            var audience = principal.FindFirst("aud")?.Value;
+            if (subject is null || audience is null) return null;
+            return (subject, audience);
         }
         catch (Exception ex)
         {

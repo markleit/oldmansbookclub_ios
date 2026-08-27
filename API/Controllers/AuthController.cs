@@ -124,9 +124,15 @@ public class AuthController(
         var bundleId = config["Apple:BundleId"]
             ?? throw new InvalidOperationException("Apple:BundleId not configured");
 
-        var appleSubject = await appleValidator.ValidateAsync(request.IdentityToken, bundleId);
-        if (appleSubject is null)
+        // DEBUG builds sign as "<bundleId>.dev" (see project.yml's OMBC_BUNDLE_SUFFIX) — accept
+        // both so Sign In with Apple works from a DEBUG build pointed at Production, not just the
+        // shipped App Store bundle. The .dev App ID must be grouped with the primary App ID's
+        // Sign In with Apple capability in the Apple Developer portal, or this yields a different
+        // `sub` per bundle id instead of resolving to the same account.
+        var result = await appleValidator.ValidateAsync(request.IdentityToken, [bundleId, $"{bundleId}.dev"]);
+        if (result is null)
             return Unauthorized("Invalid Apple identity token");
+        var (appleSubject, matchedBundleId) = result.Value;
 
         var user = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == appleSubject);
 
@@ -150,7 +156,7 @@ public class AuthController(
         // Exchange authorization code for refresh token (only provided on first sign-in)
         if (request.AuthorizationCode is not null && user.AppleRefreshToken is null)
         {
-            var refreshToken = await appleValidator.ExchangeCodeForRefreshTokenAsync(request.AuthorizationCode, bundleId);
+            var refreshToken = await appleValidator.ExchangeCodeForRefreshTokenAsync(request.AuthorizationCode, matchedBundleId);
             if (refreshToken is not null)
             {
                 user.AppleRefreshToken = refreshToken;
@@ -238,6 +244,10 @@ public class AuthController(
 
         if (user.AppleRefreshToken is not null)
         {
+            // Best-effort: always revokes as the prod bundle id, even if the refresh token was
+            // originally issued to the .dev client_id (Apple ties refresh tokens to the client_id
+            // that requested them). Fire-and-forget and non-blocking either way, so a mismatch
+            // here just means the token isn't revoked, not a failed deletion.
             var bundleId = config["Apple:BundleId"] ?? throw new InvalidOperationException("Apple:BundleId not configured");
             _ = appleValidator.RevokeRefreshTokenAsync(user.AppleRefreshToken, bundleId);
         }
