@@ -1,5 +1,6 @@
 using BookClubApi.Data;
 using BookClubApi.Models;
+using BookClubApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -9,7 +10,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class ClubsController(AppDbContext db) : ControllerBase
+public class ClubsController(AppDbContext db, BlobService blob) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -52,7 +53,7 @@ public class ClubsController(AppDbContext db) : ControllerBase
         if (before.HasValue)
             query = query.Where(m => m.SentAt < before.Value);
 
-        return await query
+        var messages = await query
             .OrderByDescending(m => m.SentAt)
             .Take(limit)
             .Select(m => new MessageDto(
@@ -69,6 +70,18 @@ public class ClubsController(AppDbContext db) : ControllerBase
                 m.IsForwarded,
                 m.DeletedAt == null ? m.ClientId : null))
             .ToListAsync();
+
+        if (messages.Any(m => m.MediaUrl != null || m.SenderAvatarUrl != null))
+        {
+            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+            messages = messages.Select(m => m with
+            {
+                MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry),
+                SenderAvatarUrl = blob.GenerateFreshReadUrl(m.SenderAvatarUrl, key, keyExpiry)
+            }).ToList();
+        }
+
+        return messages;
     }
 
     [HttpPost("{clubId}/join-request")]

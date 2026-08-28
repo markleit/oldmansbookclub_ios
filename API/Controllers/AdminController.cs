@@ -10,7 +10,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class AdminController(AppDbContext db, IConfiguration config, NotificationService notifications) : ControllerBase
+public class AdminController(AppDbContext db, IConfiguration config, NotificationService notifications, BlobService blob) : ControllerBase
 {
     private static readonly string[] SampleTexts =
     [
@@ -192,10 +192,13 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
 
         if (deviceTokens.Count > 0)
         {
+            var senderAvatarUrl = sender.AvatarUrl is not null
+                ? await blob.GenerateAvatarReadUrlAsync(sender.Id, sender.AvatarUpdatedAt)
+                : null;
             foreach (var msg in messages)
             {
                 var dto = new MessageDto(msg.Id, msg.ClubId, msg.SenderId,
-                    sender.EffectiveName, sender.AvatarUrl, msg.Type,
+                    sender.EffectiveName, senderAvatarUrl, msg.Type,
                     msg.Body, msg.MediaUrl, msg.DurationSeconds, msg.SentAt,
                     IsDeleted: false, IsForwarded: false);
                 await notifications.SendNewMessageAsync(deviceTokens, dto, book.Title);

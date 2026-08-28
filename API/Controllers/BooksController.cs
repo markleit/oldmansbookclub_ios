@@ -22,10 +22,11 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     private async Task BroadcastReadAsync(Guid bookId, Guid lastSeenMessageId)
     {
         var u = await db.Users.Where(x => x.Id == UserId)
-            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl }).FirstOrDefaultAsync();
+            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl, x.AvatarUpdatedAt }).FirstOrDefaultAsync();
+        var avatarUrl = u?.AvatarUrl is not null ? await blob.GenerateAvatarReadUrlAsync(UserId, u.AvatarUpdatedAt) : null;
         await hub.Clients.Group(bookId.ToString()).SendAsync("ReadReceipt", new
         {
-            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl = u?.AvatarUrl, lastSeenMessageId
+            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl, lastSeenMessageId
         });
     }
 
@@ -33,10 +34,11 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     {
         if (messageIds.Count == 0) return;
         var u = await db.Users.Where(x => x.Id == UserId)
-            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl }).FirstOrDefaultAsync();
+            .Select(x => new { Name = x.Nickname ?? x.DisplayName, x.AvatarUrl, x.AvatarUpdatedAt }).FirstOrDefaultAsync();
+        var avatarUrl = u?.AvatarUrl is not null ? await blob.GenerateAvatarReadUrlAsync(UserId, u.AvatarUpdatedAt) : null;
         await hub.Clients.Group(bookId.ToString()).SendAsync("HeardReceipt", new
         {
-            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl = u?.AvatarUrl, messageIds
+            bookId, userId = UserId, displayName = u?.Name ?? "", avatarUrl, messageIds
         });
     }
 
@@ -394,19 +396,21 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                 m.DeletedAt == null ? m.Transcript : null))
             .ToListAsync();
 
-        if (messages.Any(m => m.MediaUrl != null))
+        if (messages.Any(m => m.MediaUrl != null || m.SenderAvatarUrl != null))
         {
             try
             {
                 var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-                messages = messages.Select(m => m.MediaUrl != null
-                    ? m with { MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry) }
-                    : m).ToList();
+                messages = messages.Select(m => m with
+                {
+                    MediaUrl = blob.GenerateFreshReadUrl(m.MediaUrl, key, keyExpiry),
+                    SenderAvatarUrl = blob.GenerateFreshReadUrl(m.SenderAvatarUrl, key, keyExpiry)
+                }).ToList();
             }
             catch (Exception ex)
             {
                 // Delegation key unavailable (e.g. local dev without Storage Blob Delegator role).
-                // Return messages with plain URLs — images won't render but chat history loads.
+                // Return messages with plain URLs — images/avatars won't render but chat history loads.
                 logger.LogWarning(ex, "[GetMessages] could not get delegation key; serving plain URLs");
             }
         }
@@ -567,6 +571,21 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                 .ToListAsync())
             .GroupBy(h => h.UserId)
             .ToDictionary(g => g.Key, g => g.Select(x => x.MessageId).ToList());
+
+        if (readers.Any(r => r.AvatarUrl != null))
+        {
+            try
+            {
+                var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
+                readers = readers.Select(r => r.AvatarUrl != null
+                    ? r with { AvatarUrl = blob.GenerateFreshReadUrl(r.AvatarUrl, key, keyExpiry) }
+                    : r).ToList();
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[GetReads] could not get delegation key; serving plain URLs");
+            }
+        }
 
         return readers
             .Select(r => new ChatReadDto(r.UserId, r.Name, r.AvatarUrl, r.LastSeen, heardByUser.GetValueOrDefault(r.UserId, [])))
