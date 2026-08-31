@@ -127,13 +127,14 @@ struct NotificationsOffBanner: View {
     var onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: 8) {
             Image(systemName: "bell.slash.fill")
                 .font(.footnote)
+                .padding(.top, 2)
             Text("Notifications are off — you won't get new-message alerts.")
                 .font(.footnote)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
             Button("Turn On") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
