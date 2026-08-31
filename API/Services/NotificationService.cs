@@ -97,7 +97,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         await SendToAllAsync(adminTokens, payload);
     }
 
-    public async Task SendJoinResponseNotificationAsync(string deviceToken, string clubName, bool approved)
+    public async Task SendJoinResponseNotificationAsync(IEnumerable<string> deviceTokens, string clubName, bool approved)
     {
         var payload = JsonSerializer.Serialize(new
         {
@@ -114,7 +114,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             },
             type = approved ? "join_approved" : "join_declined"
         });
-        await SendToAllAsync([deviceToken], payload);
+        await SendToAllAsync(deviceTokens, payload);
     }
 
     public async Task SendNewMessageAsync(IEnumerable<string> deviceTokens, MessageDto message, string bookTitle = "Book Club", Guid bookId = default, int badge = 1, int bookUnread = -1)
@@ -239,7 +239,7 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
             await PruneDeadTokensAsync(deadTokens.Distinct().ToList());
     }
 
-    // Null out any User rows still holding a dead token. The DeviceToken == token guard makes this
+    // Delete any UserDevices rows still holding a dead token. The DeviceToken match makes this
     // race-safe: if the device has already re-registered a fresh token, the row won't match and is
     // left alone. NotificationService is a singleton, so we resolve a scoped DbContext per prune.
     private async Task PruneDeadTokensAsync(List<string> deadTokens)
@@ -248,9 +248,9 @@ public class NotificationService(IConfiguration config, IHttpClientFactory httpC
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var pruned = await db.Users
-                .Where(u => u.DeviceToken != null && deadTokens.Contains(u.DeviceToken))
-                .ExecuteUpdateAsync(s => s.SetProperty(u => u.DeviceToken, (string?)null));
+            var pruned = await db.UserDevices
+                .Where(d => deadTokens.Contains(d.DeviceToken))
+                .ExecuteDeleteAsync();
             if (pruned > 0)
                 logger.LogWarning("Pruned {Count} dead device token(s)", pruned);
         }

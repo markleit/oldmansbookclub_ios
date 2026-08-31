@@ -16,6 +16,7 @@ final class TokenStore {
     private let avatarUrlKey = "user_avatar_url"
     private let isAdminKey = "user_is_admin"
     private let isClubAdminKey = "user_is_club_admin"
+    private let deviceTokenKey = "apns_device_token"
 
     private init() {
         // Migrate any existing UserDefaults token into Keychain on first run
@@ -100,6 +101,16 @@ final class TokenStore {
     var avatarUrl: String? {
         get { UserDefaults.standard.string(forKey: avatarUrlKey) }
         set { UserDefaults.standard.set(newValue, forKey: avatarUrlKey) }
+    }
+
+    // #25 — the APNs token this device last successfully registered with the server. Not
+    // sensitive (it's meaningless without the account it's tied to server-side), so plain
+    // UserDefaults is fine, same as the other fields here. ChatService reads this to tell the
+    // hub which device it's connecting from, so the server can exclude just this device from a
+    // message's push fan-out instead of every device the signed-in user owns.
+    var registeredDeviceToken: String? {
+        get { UserDefaults.standard.string(forKey: deviceTokenKey) }
+        set { UserDefaults.standard.set(newValue, forKey: deviceTokenKey) }
     }
 
     var clubId: UUID? {

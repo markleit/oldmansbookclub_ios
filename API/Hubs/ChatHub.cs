@@ -339,7 +339,8 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
         // #24 — hand the APNs fan-out (per-member badge query + APNs round-trip, which used to run
         // inline here and made send latency scale with club size) to the background dispatcher, so
         // the sender's invoke() returns right after the in-memory SignalR broadcast.
-        notificationQueue.Enqueue(new NotificationJob(bookId, dto, bookTitle));
+        var senderDeviceToken = Context.Items["deviceToken"] as string;
+        notificationQueue.Enqueue(new NotificationJob(bookId, dto, bookTitle, senderDeviceToken));
     }
 
     private Guid GetUserId() =>
@@ -366,6 +367,10 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
     public override async Task OnConnectedAsync()
     {
         await GetConnUserAsync();   // warm the cache up front
+        // #25 — the connecting client's own APNs token, if it sent one (an unupdated client
+        // won't). Cached per-connection so BroadcastAndNotify can exclude just this one device
+        // from a message's fan-out instead of every device the sender owns.
+        Context.Items["deviceToken"] = Context.GetHttpContext()?.Request.Query["deviceId"].FirstOrDefault();
         await base.OnConnectedAsync();
     }
 

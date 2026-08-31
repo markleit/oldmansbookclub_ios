@@ -7,7 +7,10 @@ namespace BookClubApi.Services;
 
 // #24 — a new-message push job handed off from the hub so the sender's invoke() returns without
 // waiting on the per-member badge queries + APNs round-trips.
-public record NotificationJob(Guid BookId, MessageDto Dto, string BookTitle);
+// SenderDeviceToken (#25) — the token of the specific device that sent this message, if the hub
+// connection supplied one; null for a connection that didn't (e.g. an unupdated client). Lets the
+// fan-out exclude only that one device instead of every device the sender owns.
+public record NotificationJob(Guid BookId, MessageDto Dto, string BookTitle, string? SenderDeviceToken);
 
 // Singleton mailbox between the hub (producer) and the dispatch worker (consumer). TryWrite never
 // blocks the hub; a book club's send rate can't realistically back this up.
@@ -38,31 +41,32 @@ public class NotificationDispatchService(
         }
     }
 
-    // Same fan-out that used to run inline in the hub: exclude the sender's own device token(s),
-    // dedupe shared tokens, and send each recipient their own unread badge total.
+    // #25 — per-device fan-out: send to every device in the club except the one that sent this
+    // message (not every device the sender owns — a multi-device user's other devices SHOULD get
+    // pushed for their own message, same as any other member's).
     private async Task DispatchAsync(NotificationJob job, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var dto = job.Dto;
 
-        var senderTokens = await db.Users
-            .Where(u => u.Id == dto.SenderId && u.DeviceToken != null)
-            .Select(u => u.DeviceToken!)
-            .ToListAsync(ct);
-
+        // A connection that didn't supply a device id (an unupdated client) can't be pinpointed to
+        // one device, so fall back to excluding the whole sender — today's behavior — rather than
+        // risk pushing the message straight back to whichever device sent it.
         var recipients = await db.Memberships
-            .Where(m => m.ClubId == dto.ClubId && m.UserId != dto.SenderId && m.User.DeviceToken != null)
-            .Select(m => new { m.UserId, Token = m.User.DeviceToken! })
+            .Where(m => m.ClubId == dto.ClubId)
+            .Where(m => job.SenderDeviceToken != null || m.UserId != dto.SenderId)
+            .SelectMany(m => db.UserDevices.Where(d => d.UserId == m.UserId),
+                (m, d) => new { m.UserId, d.DeviceToken })
+            .Where(x => x.DeviceToken != job.SenderDeviceToken)
             .Distinct()
             .ToListAsync(ct);
 
-        var seenTokens = new HashSet<string>(senderTokens);
-        foreach (var r in recipients)
+        foreach (var group in recipients.GroupBy(r => r.UserId))
         {
-            if (!seenTokens.Add(r.Token)) continue;   // skip sender's device + dupes
-            var (badge, perBook) = await UnreadCalculator.TotalWithPerBookAsync(db, r.UserId);
-            await notifications.SendNewMessageAsync([r.Token], dto, job.BookTitle, job.BookId, badge,
+            var (badge, perBook) = await UnreadCalculator.TotalWithPerBookAsync(db, group.Key);
+            var tokens = group.Select(r => r.DeviceToken).ToList();
+            await notifications.SendNewMessageAsync(tokens, dto, job.BookTitle, job.BookId, badge,
                 perBook.GetValueOrDefault(job.BookId));
         }
     }

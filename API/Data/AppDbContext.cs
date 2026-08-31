@@ -18,6 +18,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MessageHeard> MessageHeards => Set<MessageHeard>();
     public DbSet<MessageReaction> MessageReactions => Set<MessageReaction>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -67,6 +68,20 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
         modelBuilder.Entity<User>()
             .OwnsOne(u => u.Preferences, b => b.ToJson());
+
+        modelBuilder.Entity<UserDevice>()
+            .HasIndex(d => d.DeviceToken)
+            .IsUnique();
+
+        // Cascade (unlike most FKs in this file, which are NoAction + manual controller-side
+        // cleanup): a device row has no soft-delete/audit reason to survive its user, and cascade
+        // means deleting a user can never hit the FK-violation trap #133 found for MessageHeards/
+        // MessageReactions — there's no manual cleanup step to forget.
+        modelBuilder.Entity<UserDevice>()
+            .HasOne(d => d.User)
+            .WithMany()
+            .HasForeignKey(d => d.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<SavedMessage>()
             .HasIndex(s => new { s.UserId, s.MessageId })

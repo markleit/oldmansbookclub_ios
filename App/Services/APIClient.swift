@@ -601,6 +601,8 @@ final class APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(RegisterDeviceRequest(deviceToken: token))
         try await sendAuthorized(request)
+        // #25 — stash it so ChatService can hand it to the hub at connect time.
+        TokenStore.shared.registeredDeviceToken = token
     }
 
     func deleteBook(bookId: UUID) async throws {

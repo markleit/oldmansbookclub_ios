@@ -185,9 +185,7 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
 
         var deviceTokens = await db.Memberships
             .Where(m => m.ClubId == book.ClubId && m.UserId != sender.Id)
-            .Select(m => m.User.DeviceToken)
-            .Where(t => t != null)
-            .Cast<string>()
+            .SelectMany(m => db.UserDevices.Where(d => d.UserId == m.UserId).Select(d => d.DeviceToken))
             .ToListAsync();
 
         if (deviceTokens.Count > 0)
@@ -409,8 +407,9 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
             db.Memberships.Add(new Membership { UserId = jr.UserId, ClubId = jr.ClubId });
         await db.SaveChangesAsync();
 
-        if (jr.User.DeviceToken is not null)
-            _ = notifications.SendJoinResponseNotificationAsync(jr.User.DeviceToken, jr.Club.Name, approved: true);
+        var jrDeviceTokens = await db.UserDevices.Where(d => d.UserId == jr.UserId).Select(d => d.DeviceToken).ToListAsync();
+        if (jrDeviceTokens.Count > 0)
+            _ = notifications.SendJoinResponseNotificationAsync(jrDeviceTokens, jr.Club.Name, approved: true);
 
         return Ok();
     }
@@ -429,8 +428,9 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         jr.Status = JoinRequestStatus.Declined;
         await db.SaveChangesAsync();
 
-        if (jr.User.DeviceToken is not null)
-            _ = notifications.SendJoinResponseNotificationAsync(jr.User.DeviceToken, jr.Club.Name, approved: false);
+        var jrDeviceTokens = await db.UserDevices.Where(d => d.UserId == jr.UserId).Select(d => d.DeviceToken).ToListAsync();
+        if (jrDeviceTokens.Count > 0)
+            _ = notifications.SendJoinResponseNotificationAsync(jrDeviceTokens, jr.Club.Name, approved: false);
 
         return Ok();
     }

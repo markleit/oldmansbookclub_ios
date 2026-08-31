@@ -161,6 +161,21 @@ public class MessageReaction
     public DateTime ReactedAt { get; set; } = DateTime.UtcNow;
 }
 
+// #25 — one row per physical device, replacing the old single User.DeviceToken column so a
+// user's push reaches every device they're signed into, not just whichever registered last.
+// DeviceToken is globally unique: registering re-points ("claims") the row to the current
+// user if the token previously belonged to someone else (e.g. dev-login/demo/test accounts
+// sharing one physical device).
+public class UserDevice
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid UserId { get; set; }
+    public User User { get; set; } = null!;
+    [Required, MaxLength(512)] public string DeviceToken { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
+}
+
 public class RefreshToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();

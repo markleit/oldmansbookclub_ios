@@ -2,6 +2,7 @@ using BookClubApi.Data;
 using BookClubApi.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace BookClubApi.Controllers;
 
@@ -15,10 +16,23 @@ public class NotificationsController(AppDbContext db) : ControllerBase
     [HttpPost("register")]
     public async Task<IActionResult> RegisterDevice([FromBody] RegisterDeviceRequest request)
     {
-        var user = await db.Users.FindAsync(UserId);
-        if (user is null) return NotFound();
+        var userExists = await db.Users.AnyAsync(u => u.Id == UserId);
+        if (!userExists) return NotFound();
 
-        user.DeviceToken = request.DeviceToken;
+        // #25 — a physical device's token is globally unique, so this is a claim, not a plain
+        // insert: dev-login/demo/test sessions on the same device previously smeared one token
+        // across multiple User rows because the old model let every account hold its own copy.
+        var existing = await db.UserDevices.FirstOrDefaultAsync(d => d.DeviceToken == request.DeviceToken);
+        if (existing is not null)
+        {
+            existing.UserId = UserId;
+            existing.LastSeenAt = DateTime.UtcNow;
+        }
+        else
+        {
+            db.UserDevices.Add(new UserDevice { UserId = UserId, DeviceToken = request.DeviceToken });
+        }
+
         await db.SaveChangesAsync();
         return Ok();
     }

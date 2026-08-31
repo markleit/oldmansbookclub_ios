@@ -119,7 +119,17 @@ actor ChatService {
 
         // Same resolver as APIClient (#120) — these two must never disagree, or chat would keep
         // talking to production while REST calls went somewhere else.
-        let url = "\(ServerEnvironment.baseURLString)/hubs/chat"
+        var url = "\(ServerEnvironment.baseURLString)/hubs/chat"
+
+        // #25 — tell the hub which physical device this connection is, so a message this device
+        // sends can be excluded from its OWN push without also excluding this account's other
+        // devices. Omitted (not empty-string) if this device hasn't registered a token yet — the
+        // server treats that the same as an unupdated client and falls back to excluding the
+        // whole sender.
+        if let deviceToken = TokenStore.shared.registeredDeviceToken,
+           let encoded = deviceToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+            url += "?deviceId=\(encoded)"
+        }
 
         // Called on every negotiate (including auto-reconnect) and on a 401 — refresh, then hand
         // over the current token. The client appends it as `access_token` on the transport URL.
