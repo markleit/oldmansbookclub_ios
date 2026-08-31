@@ -53,6 +53,9 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var books = await db.Books
             .Where(b => myClubIds.Contains(b.ClubId))
             .OrderBy(b => b.Status == "current" ? 0 : b.Status == "future" ? 1 : 2)
+            // #137 — future reads follow the club's manual queue order; current/past (where
+            // FutureReadOrder is stale/unused) keep the old newest-first ordering.
+            .ThenBy(b => b.Status == "future" ? b.FutureReadOrder : 0)
             .ThenByDescending(b => b.AddedAt)
             .ToListAsync();
 
@@ -249,13 +252,21 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
         if (!isClubAdmin) return Forbid();
 
+        // #137 — append to the back of this club's future-read queue, not the front, so adding
+        // a book never silently jumps ahead of whatever an admin already ordered.
+        var maxOrder = await db.Books
+            .Where(b => b.ClubId == request.ClubId && b.Status == "future")
+            .Select(b => (int?)b.FutureReadOrder)
+            .MaxAsync() ?? -1;
+
         var book = new Book
         {
             ClubId = request.ClubId,
             Title = request.Title,
             Author = request.Author,
             CoverBlobUrl = request.CoverUrl,
-            Status = "future"
+            Status = "future",
+            FutureReadOrder = maxOrder + 1
         };
 
         db.Books.Add(book);
@@ -313,6 +324,37 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         await db.SaveChangesAsync();
 
         return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
+    }
+
+    // #137 — persist a club-admin's drag-and-drop reorder of Future Reads. The whole list is
+    // sent every time (not a single move) — simplest to reason about, and this list is never
+    // long enough for that to matter.
+    [HttpPut("future-read-order")]
+    public async Task<IActionResult> SetFutureReadOrder([FromBody] SetFutureReadOrderRequest request)
+    {
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
+
+        var books = await db.Books
+            .Where(b => b.ClubId == request.ClubId && b.Status == "future")
+            .ToListAsync();
+
+        // Reject rather than silently drop/ignore a mismatch — a stale client (someone else
+        // added/removed a book while this admin was mid-reorder) shouldn't overwrite the queue
+        // with an order that doesn't reflect the current list. The client just refetches and
+        // retries.
+        if (books.Count != request.OrderedBookIds.Count ||
+            !books.Select(b => b.Id).ToHashSet().SetEquals(request.OrderedBookIds))
+        {
+            return Conflict("Future reads changed — refresh and try again.");
+        }
+
+        for (var i = 0; i < request.OrderedBookIds.Count; i++)
+            books.First(b => b.Id == request.OrderedBookIds[i]).FutureReadOrder = i;
+
+        await db.SaveChangesAsync();
+        return NoContent();
     }
 
     [HttpDelete("{bookId}")]

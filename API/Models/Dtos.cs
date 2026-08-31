@@ -82,6 +82,7 @@ public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string?
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl);
 public record UpdateBookRequest(string Title, string Author);
 public record SetBookStatusRequest(string Status);
+public record SetFutureReadOrderRequest(Guid ClubId, List<Guid> OrderedBookIds);
 public record SetTranscriptRequest(string Transcript);
 public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);
 public record ChatReadDto(Guid UserId, string DisplayName, string? AvatarUrl, Guid LastSeenMessageId, List<Guid> HeardMessageIds);

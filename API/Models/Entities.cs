@@ -207,5 +207,10 @@ public class Book
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
     [Required] public string Status { get; set; } = "future"; // "future", "current", "past"
+    // #137 — manual queue order within "future" for this book's club. Only meaningful while
+    // Status == "future"; ignored (and left stale) once a book moves to current/past. Lower
+    // sorts first ("read sooner"). New books are appended (max + 1), not reset to 0, so adding
+    // a book never silently jumps it ahead of an admin's existing order.
+    public int FutureReadOrder { get; set; }
     public ICollection<Message> Messages { get; set; } = [];
 }

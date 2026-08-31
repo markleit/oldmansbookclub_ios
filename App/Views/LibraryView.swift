@@ -4,6 +4,7 @@ struct LibraryView: View {
     @StateObject private var viewModel = LibraryViewModel()
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingAddBook = false
+    @State private var showingReorderFutureReads = false
     @State private var bookListExpanded = true
     @State private var pastReadsExpanded = true
     @State private var navigationPath = NavigationPath()
@@ -140,15 +141,41 @@ struct LibraryView: View {
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showingAddBook = true } label: {
-                        Image(systemName: "plus")
+                    Menu {
+                        addBookButton
+                        // #137 — reordering is club-admin only; a regular member wouldn't see a
+                        // control they can't use.
+                        if canReorderFutureReads {
+                            reorderFutureReadsButton
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
             .sheet(isPresented: $showingAddBook) {
                 AddBookSheetWrapper(viewModel: viewModel)
             }
+            .sheet(isPresented: $showingReorderFutureReads) {
+                FutureReadOrderView(viewModel: viewModel)
+            }
             } // VStack
+        }
+    }
+
+    private var canReorderFutureReads: Bool {
+        TokenStore.shared.isClubAdmin && !viewModel.bookList.isEmpty
+    }
+
+    private var addBookButton: some View {
+        Button { showingAddBook = true } label: {
+            Label("Add Book", systemImage: "plus")
+        }
+    }
+
+    private var reorderFutureReadsButton: some View {
+        Button { showingReorderFutureReads = true } label: {
+            Label("Manage Future Read Order", systemImage: "arrow.up.arrow.down")
         }
     }
 

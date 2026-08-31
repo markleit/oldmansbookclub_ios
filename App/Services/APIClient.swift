@@ -611,6 +611,22 @@ final class APIClient {
         try await sendAuthorized(request)
     }
 
+    struct SetFutureReadOrderRequest: Encodable {
+        let clubId: UUID
+        let orderedBookIds: [UUID]
+    }
+
+    // #137 — throws APIError.serverError(409) if the server's future-read list no longer
+    // matches what this reorder was based on (someone else added/removed a book meanwhile);
+    // the caller should refetch and let the admin retry rather than silently losing the edit.
+    func setFutureReadOrder(clubId: UUID, orderedBookIds: [UUID]) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/future-read-order")!)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(SetFutureReadOrderRequest(clubId: clubId, orderedBookIds: orderedBookIds))
+        try await sendAuthorized(request)
+    }
+
     // MARK: - Admin
 
     struct PendingUser: Identifiable, Decodable {
