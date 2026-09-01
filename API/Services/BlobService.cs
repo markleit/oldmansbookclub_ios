@@ -15,11 +15,18 @@ public class BlobService
     private DateTimeOffset _cachedKeyExpiry;
     private readonly SemaphoreSlim _keySemaphore = new(1, 1);
 
-    public BlobService()
+    // Dev and prod are two separate real Azure Storage accounts (not Azurite — SAS generation
+    // goes through GetUserDelegationKeyAsync, an Azure AD user-delegation SAS, which Azurite only
+    // supports via account-key SAS). Same branch pattern as Program.cs's SignalR dev/prod split.
+    // NOTE: `oldmansbookclubdev` needs "Storage Blob Data Contributor" + "Storage Blob Delegator"
+    // granted to whichever identity runs locally (DefaultAzureCredential falls back to your `az
+    // login` session outside Azure) — without those roles, GetUserDelegationKeyAsync 403s.
+    public BlobService(IHostEnvironment env)
     {
-        _client = new BlobServiceClient(
-            new Uri("https://oldmansbookclubstore.blob.core.windows.net"),
-            new DefaultAzureCredential());
+        var accountUri = env.IsDevelopment()
+            ? "https://oldmansbookclubdev.blob.core.windows.net"
+            : "https://oldmansbookclubstore.blob.core.windows.net";
+        _client = new BlobServiceClient(new Uri(accountUri), new DefaultAzureCredential());
     }
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { "m4a", "jpg", "jpeg", "mp4" };

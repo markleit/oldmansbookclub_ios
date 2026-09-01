@@ -179,6 +179,20 @@ matched it; **new storage accounts default this to `false`**, which silently
 no-ops a public container creation with exit code 0 — caught by re-checking
 the container rather than trusting the CLI's exit status).
 
+**Correction (2026-09-01):** the account/containers/secret described above
+were provisioned, but `BlobService`'s constructor was never actually switched
+to use them — it stayed hardcoded to `oldmansbookclubstore` for every
+environment, so every "isolated" dev/local media send had in fact been
+landing in production blob storage the whole time despite this section
+marking the work "verified." Root cause: the IAM role grants
+(`Storage Blob Data Contributor` + `Storage Blob Delegator`) needed for
+`GetUserDelegationKeyAsync` to work were granted on `oldmansbookclubstore`
+only — never on `oldmansbookclubdev` — so switching `BlobService` without
+first granting those roles would have 403'd every media send in dev instead
+of isolating it. Fixed in `fix/dev-blob-isolation`: role grants added, and
+`BlobService`'s constructor now branches on `IHostEnvironment.IsDevelopment()`
+the same way `Program.cs`'s SignalR setup does.
+
 **4. Seed data — `/admin/seed-baseline`, not a sanitized snapshot.**
 Turned out smaller than scoped: `AuthController.DevLogin` already
 auto-creates a club and joins the calling user as club admin the moment
