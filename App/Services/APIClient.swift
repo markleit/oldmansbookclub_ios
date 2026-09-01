@@ -387,6 +387,70 @@ final class APIClient {
 
     // MARK: - Messages
 
+    // Shared with BackgroundUploadService, which builds the identical JSON body itself for its
+    // background-URLSession-driven send (it can't call through APIClient's async methods since
+    // that path runs from a URLSessionDelegate callback, not a normal Task).
+    struct SendMessagePayload: Encodable {
+        let type: String
+        let body: String?
+        let mediaUrl: String?
+        let durationSeconds: Int?
+        let clientId: UUID
+        let parentMessageId: UUID?
+        let deviceId: String?
+    }
+
+    private struct SendMessageErrorBody: Decodable { let error: String }
+
+    // Posts a message over REST instead of invoking the SignalR hub. This is the send path for
+    // everything now (text here directly; media via BackgroundUploadService's background-session
+    // variant of the same call) — a live socket is no longer required to post a message, only to
+    // receive the broadcast, so a send survives being backgrounded regardless of how long the
+    // upload/round-trip takes (#131). The response IS the confirmation: no more racing a
+    // SignalR self-echo against a timeout.
+    func sendMessage(bookId: UUID, type: MessageType, body: String? = nil, mediaUrl: String? = nil,
+                      durationSeconds: Int? = nil, clientId: UUID, parentMessageId: UUID? = nil) async throws -> Message {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/messages")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let payload = SendMessagePayload(
+            type: type.rawValue, body: body, mediaUrl: mediaUrl, durationSeconds: durationSeconds,
+            clientId: clientId, parentMessageId: parentMessageId, deviceId: TokenStore.shared.registeredDeviceToken)
+        request.httpBody = try encoder.encode(payload)
+        let data = try await sendMessageAuthorized(request)
+        return try decoder.decode(Message.self, from: data)
+    }
+
+    // Same 401-refresh-retry contract as sendAuthorized, but surfaces the server's {error} body
+    // text on a 4xx (rate limit, validation, etc.) as ChatError.serverError instead of collapsing
+    // it to a bare status code — so the UI shows the same message regardless of which transport
+    // (REST or the SignalR hub) rejected the send.
+    private func sendMessageAuthorized(_ request: URLRequest, retried: Bool = false) async throws -> Data {
+        var req = request
+        if let token = TokenStore.shared.token {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        if http.statusCode == 401 {
+            if !retried {
+                switch await attemptRefresh() {
+                case .refreshed: return try await sendMessageAuthorized(request, retried: true)
+                case .transient: throw URLError(.timedOut)
+                case .rejected: break
+                }
+            }
+            handleAuthFailure(); throw URLError(.userAuthenticationRequired)
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            if let body = try? decoder.decode(SendMessageErrorBody.self, from: data) {
+                throw ChatError.serverError(body.error)
+            }
+            throw APIError.serverError(http.statusCode)
+        }
+        return data
+    }
+
     func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {
         var path = "/books/\(bookId)/messages?limit=\(limit)"
         if let before {

@@ -59,6 +59,7 @@ builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddSingleton<NotificationQueue>();               // #24
 builder.Services.AddHostedService<NotificationDispatchService>();  // #24
 builder.Services.AddSingleton<HubRateLimiter>();
+builder.Services.AddScoped<MessageSendService>();  // shared by ChatHub and the REST send endpoint
 builder.Services.AddSingleton<GitHubService>();
 builder.Services.AddHttpClient("github", client =>
 {

@@ -52,6 +52,18 @@ public record MessageDto(
     IReadOnlyList<MessageReactionDto>? Reactions = null
 );
 
+// Client-required ClientId (unlike the hub's optional overloads) — every client build that
+// can reach the REST send endpoint already generates one per send for dedup/reconciliation.
+public record SendMessageRequest(
+    MessageType Type,
+    string? Body,
+    string? MediaUrl,
+    int? DurationSeconds,
+    Guid ClientId,
+    Guid? ParentMessageId,
+    string? DeviceId
+);
+
 // #47 — per-user reactions carried on each message; the client derives emoji counts + "mine"
 // and applies live ReactionReceipts against this set. Names for the tap-to-see-who popup come
 // from GET .../reactions (ReactionReactorDto) to keep the message payload light.
