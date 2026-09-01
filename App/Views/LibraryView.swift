@@ -188,7 +188,7 @@ struct SectionHeader: View {
         Text(title)
             .font(.caption)
             .fontWeight(.semibold)
-            .foregroundColor(.secondary)
+            .foregroundColor(.primary.opacity(0.7))   // darker than .secondary, still lighter than titles
             .padding(.horizontal)
     }
 }
@@ -204,11 +204,11 @@ struct CollapsibleSectionHeader: View {
                 Text(title)
                     .font(.caption)
                     .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary.opacity(0.7))   // darker than .secondary
                 Spacer()
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary.opacity(0.7))
             }
             .padding(.horizontal)
         }
@@ -282,11 +282,23 @@ struct ReadItemRow: View {
 
         case .series(let name, let books):
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(name.uppercased()) · \(books.count) BOOK\(books.count == 1 ? "" : "S")")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-                    .padding(.top, 6)
+                // Deliberately NOT styled like SectionHeader/CollapsibleSectionHeader (caption,
+                // semibold, all-caps) — a series is a sub-grouping WITHIN Future/Past Reads, not
+                // another top-level section, and the two read as the same kind of thing at a
+                // glance if they share that treatment. Regular weight + lighter color + title
+                // case (not all-caps) + an icon makes the hierarchy unambiguous.
+                Label {
+                    Text("\(name) · \(books.count) book\(books.count == 1 ? "" : "s")")
+                        .font(.caption2)
+                } icon: {
+                    Image(systemName: "books.vertical")
+                        .font(.caption2)
+                }
+                // Darker than plain .tertiary, but still visibly lighter than the section
+                // headers' 0.7 above it — keeps the hierarchy (section > series > book) legible.
+                .foregroundStyle(.primary.opacity(0.55))
+                .padding(.horizontal)
+                .padding(.top, 6)
                 ForEach(books) { book in
                     NavigationLink(value: book) {
                         PastBookRow(book: book, refreshToken: refreshToken)

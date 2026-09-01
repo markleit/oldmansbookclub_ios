@@ -65,7 +65,7 @@ final class LibraryUITests: XCTestCase {
         addBook(title: "\(seriesName) — Book One", series: seriesName)
         addBook(title: "\(seriesName) — Book Two", series: seriesName)
 
-        let header = app.staticTexts["\(seriesName.uppercased()) · 2 BOOKS"]
+        let header = app.staticTexts["\(seriesName) · 2 books"]
         XCTAssertTrue(header.waitForExistence(timeout: 10), "Series header never appeared grouping the two books")
     }
 
