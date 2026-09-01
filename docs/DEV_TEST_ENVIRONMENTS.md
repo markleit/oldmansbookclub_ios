@@ -294,10 +294,21 @@ scoped in detail, but worth stating the constraints now:
 **A GitHub Actions runner is not this dev machine.** `ci.yml` currently only
 builds (`xcodebuild ... clean build`, simulator only, no test target — this is
 also #32, "No test target"); it doesn't touch the API or a database at all.
-For an automated suite to exercise real client-server behaviour, the runner
-needs to reach an isolated backend the same way this Mac does today, which
-raises questions worth deciding before building the suite, without blocking
-anything already done above:
+
+**#32 partially done (2026-09-01):** a `OldMansBookClubUITests` XCUITest
+target now exists (`UITests/`), driving the app through its accessibility
+hierarchy (element identifiers, not screen coordinates — coordinate-based
+simulator automation proved unreliable for anything beyond a single
+confirmed tap). Covers text send, text send with immediate backgrounding,
+and voice send, run locally against `bookclubdb-dev`. **Not wired into
+`ci.yml`** — that still only builds — because the questions below are
+unresolved, and running it locally already answers "does the send path
+actually work," which was the immediate need.
+
+For an automated suite to exercise real client-server behaviour in CI, the
+runner needs to reach an isolated backend the same way this Mac does today,
+which raises questions worth deciding before building the suite, without
+blocking anything already done above:
 
 - **Reachability** — a GitHub-hosted runner's egress IP isn't static, so the
   firewall-upsert approach that works for one dev machine doesn't generalize
