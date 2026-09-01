@@ -61,7 +61,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
 
         var unread = await ComputeUnreadCountsAsync(books.Select(b => b.Id).ToList());
 
-        return books.Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount, unread.GetValueOrDefault(b.Id)));
+        return books.Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount, unread.GetValueOrDefault(b.Id), b.SeriesName, b.SeriesOrder));
     }
 
     private Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
@@ -259,6 +259,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .Select(b => (int?)b.FutureReadOrder)
             .MaxAsync() ?? -1;
 
+        var seriesName = NormalizeSeriesName(request.SeriesName);
         var book = new Book
         {
             ClubId = request.ClubId,
@@ -266,14 +267,36 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             Author = request.Author,
             CoverBlobUrl = request.CoverUrl,
             Status = "future",
-            FutureReadOrder = maxOrder + 1
+            FutureReadOrder = maxOrder + 1,
+            SeriesName = seriesName,
+            SeriesOrder = seriesName is null ? null : await NextSeriesOrderAsync(request.ClubId, seriesName)
         };
 
         db.Books.Add(book);
         await db.SaveChangesAsync();
 
         return CreatedAtAction(nameof(GetMyBooks),
-            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount));
+            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder));
+    }
+
+    // #138 — empty/whitespace-only means "not in a series", same as null. Trimmed so "Dune "
+    // and "Dune" match instead of silently creating two groups.
+    private static string? NormalizeSeriesName(string? raw)
+    {
+        var trimmed = raw?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed;
+    }
+
+    // Append to the end of this club's existing series (case-sensitive match, matching
+    // NormalizeSeriesName's trim-only normalization — see #138 for why free-text over a proper
+    // Series entity).
+    private async Task<int> NextSeriesOrderAsync(Guid clubId, string seriesName)
+    {
+        var maxSeriesOrder = await db.Books
+            .Where(b => b.ClubId == clubId && b.SeriesName == seriesName)
+            .Select(b => (int?)b.SeriesOrder)
+            .MaxAsync() ?? -1;
+        return maxSeriesOrder + 1;
     }
 
     // Book details. Lazily backfills metadata (description / published year / page
@@ -302,7 +325,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             await db.SaveChangesAsync();
         }
 
-        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
+        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
     }
 
     // Edit a book's title/author (backs the "Edit Book" action). Club-admin only, like
@@ -321,9 +344,19 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         if (string.IsNullOrEmpty(title)) return BadRequest("Title is required.");
         book.Title = title;
         book.Author = request.Author?.Trim() ?? "";
+
+        // #138 — only touch SeriesOrder when the series actually changes: re-saving the same
+        // series shouldn't re-append the book to the end of it and lose its place.
+        var newSeriesName = NormalizeSeriesName(request.SeriesName);
+        if (newSeriesName != book.SeriesName)
+        {
+            book.SeriesName = newSeriesName;
+            book.SeriesOrder = newSeriesName is null ? null : await NextSeriesOrderAsync(book.ClubId, newSeriesName);
+        }
+
         await db.SaveChangesAsync();
 
-        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount);
+        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
     }
 
     // #137 — persist a club-admin's drag-and-drop reorder of Future Reads. The whole list is

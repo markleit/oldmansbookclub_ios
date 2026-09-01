@@ -212,5 +212,12 @@ public class Book
     // sorts first ("read sooner"). New books are appended (max + 1), not reset to 0, so adding
     // a book never silently jumps it ahead of an admin's existing order.
     public int FutureReadOrder { get; set; }
+    // #138 — free-text series grouping (mirrors Author: a plain string, not a Series entity —
+    // see the issue for why). Null = not in a series. SeriesOrder is this book's position
+    // within the series (1st, 2nd, ...) and is meaningless when SeriesName is null. Persists
+    // across future/current/past — series membership is a property of the book, not of where
+    // it sits in the library.
+    [MaxLength(200)] public string? SeriesName { get; set; }
+    public int? SeriesOrder { get; set; }
     public ICollection<Message> Messages { get; set; } = [];
 }

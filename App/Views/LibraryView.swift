@@ -52,13 +52,8 @@ struct LibraryView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             CollapsibleSectionHeader(title: "FUTURE READS", isExpanded: $bookListExpanded)
                             if bookListExpanded {
-                                ForEach(viewModel.bookList) { book in
-                                    NavigationLink(value: book) {
-                                        PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.horizontal)
-                                    Divider().padding(.leading)
+                                ForEach(viewModel.futureReadGroups) { item in
+                                    ReadItemRow(item: item, refreshToken: viewModel.imageRefreshToken)
                                 }
                             }
                         }
@@ -69,13 +64,8 @@ struct LibraryView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             CollapsibleSectionHeader(title: "PAST READS", isExpanded: $pastReadsExpanded)
                             if pastReadsExpanded {
-                                ForEach(viewModel.pastReads) { book in
-                                    NavigationLink(value: book) {
-                                        PastBookRow(book: book, refreshToken: viewModel.imageRefreshToken)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.horizontal)
-                                    Divider().padding(.leading)
+                                ForEach(viewModel.pastReadGroups) { item in
+                                    ReadItemRow(item: item, refreshToken: viewModel.imageRefreshToken)
                                 }
                             }
                         }
@@ -151,6 +141,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
+                    .accessibilityIdentifier("libraryMenuButton")
                 }
             }
             .sheet(isPresented: $showingAddBook) {
@@ -270,6 +261,43 @@ struct CurrentBookCard: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)
+    }
+}
+
+// #138 — renders one Future/Past Reads entry: a standalone book (unchanged from before), or a
+// series as a small header followed by its members, each still an individually-tappable row.
+struct ReadItemRow: View {
+    let item: ReadItem
+    var refreshToken: UUID = UUID()
+
+    var body: some View {
+        switch item {
+        case .single(let book):
+            NavigationLink(value: book) {
+                PastBookRow(book: book, refreshToken: refreshToken)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            Divider().padding(.leading)
+
+        case .series(let name, let books):
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(name.uppercased()) · \(books.count) BOOK\(books.count == 1 ? "" : "S")")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+                ForEach(books) { book in
+                    NavigationLink(value: book) {
+                        PastBookRow(book: book, refreshToken: refreshToken)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.leading, 28)
+                    .padding(.trailing)
+                    Divider().padding(.leading, 28)
+                }
+            }
+        }
     }
 }
 

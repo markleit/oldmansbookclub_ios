@@ -59,6 +59,7 @@
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
 		DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3797FC65323C0493452D32B2 /* CachedBookCover.swift */; };
 		F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78B795F384775724D68C0D6 /* ClubSetupView.swift */; };
+		F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */; };
 		F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */; };
 		F9AE685BB9F682A14AACA8CF /* DiagnosticsReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */; };
 		FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010D3939D82C530D2050FDBA /* LoginView.swift */; };
@@ -81,6 +82,7 @@
 		0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OldMansBookClubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubApp.swift; sourceTree = "<group>"; };
+		1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryUITests.swift; sourceTree = "<group>"; };
 		22282622C7A5BEAAEE8961CE /* AudioCue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCue.swift; sourceTree = "<group>"; };
 		2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViewModel.swift; sourceTree = "<group>"; };
@@ -216,6 +218,7 @@
 		9A1BF6C3C31EB3876DCC209D /* UITests */ = {
 			isa = PBXGroup;
 			children = (
+				1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */,
 				F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */,
 			);
 			path = UITests;
@@ -436,6 +439,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */,
 				669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

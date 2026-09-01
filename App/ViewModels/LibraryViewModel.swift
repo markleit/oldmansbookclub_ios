@@ -16,6 +16,11 @@ final class LibraryViewModel: ObservableObject {
     var bookList: [Book] { books.filter { $0.clubId == clubId && $0.status == .future } }
     var pastReads: [Book] { books.filter { $0.clubId == clubId && $0.status == .past } }
 
+    // #138 — series-grouped views of the two lists that actually display series (Currently
+    // Reading only ever shows one book, so it never needed this).
+    var futureReadGroups: [ReadItem] { Self.grouped(bookList) }
+    var pastReadGroups: [ReadItem] { Self.grouped(pastReads) }
+
     private static let cacheKey = "cached_books"
     private static let decoder = { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }()
     private static let encoder = { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e }()
@@ -164,8 +169,36 @@ final class LibraryViewModel: ObservableObject {
         if let idx = books.firstIndex(where: { $0.id == book.id }) {
             books[idx].title = book.title
             books[idx].author = book.author
+            books[idx].seriesName = book.seriesName
+            books[idx].seriesOrder = book.seriesOrder
             saveCache(books)
         }
+    }
+
+    // #138 — one entry per standalone book, or one per series (its members collapsed into a
+    // single draggable/displayable unit). Pure and order-preserving: a series' position in the
+    // result is wherever its FIRST member appears in `books`, so it inherits that book's spot in
+    // whatever ordering the caller already applied (FutureReadOrder, AddedAt, ...) rather than
+    // needing its own sort pass. Members within a series are always sorted by SeriesOrder,
+    // regardless of the surrounding order, so a series reads in sequence even if its books
+    // aren't contiguous in `books` (e.g. one was just added and hasn't been re-sequenced yet).
+    static func grouped(_ books: [Book]) -> [ReadItem] {
+        var result: [ReadItem] = []
+        var consumed = Set<UUID>()
+        for book in books {
+            guard !consumed.contains(book.id) else { continue }
+            if let name = book.seriesName {
+                let members = books
+                    .filter { $0.seriesName == name }
+                    .sorted { ($0.seriesOrder ?? 0) < ($1.seriesOrder ?? 0) }
+                members.forEach { consumed.insert($0.id) }
+                result.append(.series(name: name, books: members))
+            } else {
+                consumed.insert(book.id)
+                result.append(.single(book))
+            }
+        }
+        return result
     }
 
     func bookStatusChanged(_ book: Book, status: BookStatus) {
@@ -195,6 +228,30 @@ final class LibraryViewModel: ObservableObject {
         TokenStore.shared.clubName = name
         clubId = id
         clubName = name
+    }
+}
+
+// #138 — a Future/Past Reads row: either one standalone book, or a whole series collapsed
+// into a single unit (see LibraryViewModel.grouped).
+enum ReadItem: Identifiable {
+    case single(Book)
+    case series(name: String, books: [Book])
+
+    var id: String {
+        switch self {
+        case .single(let book): return "book-\(book.id)"
+        case .series(let name, _): return "series-\(name)"
+        }
+    }
+
+    // Every book id this item represents, in display order — used to flatten a reordered
+    // list of items back into a flat book-id list for the server (#137's SetFutureReadOrder
+    // contract didn't change; this is where a series stays contiguous in FutureReadOrder).
+    var bookIds: [UUID] {
+        switch self {
+        case .single(let book): return [book.id]
+        case .series(_, let books): return books.map(\.id)
+        }
     }
 }
 

@@ -14,6 +14,7 @@ struct AddBookView: View {
         _title = State(initialValue: editingBook?.title ?? "")
         _author = State(initialValue: editingBook?.author ?? "")
         _coverUrl = State(initialValue: editingBook?.coverBlobUrl)
+        _seriesName = State(initialValue: editingBook?.seriesName ?? "")
     }
 
     private var isEditing: Bool { editingBook != nil }
@@ -21,6 +22,7 @@ struct AddBookView: View {
     @State private var title = ""
     @State private var author = ""
     @State private var coverUrl: String?
+    @State private var seriesName = ""
     @State private var isSearching = false
     @State private var isLoading = false
     @State private var errorMessage: String?
@@ -36,6 +38,7 @@ struct AddBookView: View {
             Form {
                 Section {
                     TextField("e.g. Dune", text: $title)
+                        .accessibilityIdentifier("bookTitleField")
                         .onChange(of: title) { _ in
                             // Editing an existing book is manual only — no live search
                             // clobbering the title/author/cover the admin is correcting.
@@ -90,6 +93,29 @@ struct AddBookView: View {
                     }
                 }
 
+                Section {
+                    TextField("e.g. Dune", text: $seriesName)
+                        .accessibilityIdentifier("bookSeriesField")
+                    // A native Menu instead of a horizontal-scroll chip row (that had no visible
+                    // scroll affordance past 2-3 items) — matches the Menu pattern already used
+                    // elsewhere in this app (club switcher, toolbar ⋯), and scales to any number
+                    // of series without extra layout code.
+                    if !existingSeriesNames.isEmpty {
+                        Menu {
+                            ForEach(existingSeriesNames, id: \.self) { name in
+                                Button(name) { seriesName = name }
+                            }
+                        } label: {
+                            Label("Choose existing series", systemImage: "chevron.up.chevron.down")
+                                .font(.subheadline)
+                        }
+                    }
+                } header: {
+                    Text("Series (optional)")
+                } footer: {
+                    Text("Books with the same series name group together in Future Reads and reorder as one block.")
+                }
+
                 if let error = errorMessage {
                     Section {
                         Text(error).foregroundColor(.red).font(.caption)
@@ -107,6 +133,7 @@ struct AddBookView: View {
                         ProgressView()
                     } else {
                         Button(isEditing ? "Save" : "Add") { Task { await save() } }
+                            .accessibilityIdentifier("saveBookButton")
                             .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                 }
@@ -161,17 +188,30 @@ struct AddBookView: View {
         coverUrl = result.coverUrl
     }
 
+    // #138 — series names already used in this club, offered as one-tap suggestions so a typo
+    // doesn't silently create a second, orphaned group (free-text has no FK to catch that).
+    // Sourced from the local book cache rather than a new endpoint — LibraryViewModel already
+    // keeps this current for every club the user is in.
+    private var existingSeriesNames: [String] {
+        var seen = Set<String>()
+        return LibraryViewModel.cachedBooks()
+            .filter { $0.clubId == clubId }
+            .compactMap { $0.seriesName }
+            .filter { seen.insert($0).inserted }
+    }
+
     private func save() async {
         isLoading = true
         errorMessage = nil
         let t = title.trimmingCharacters(in: .whitespaces)
         let a = author.trimmingCharacters(in: .whitespaces)
+        let s = seriesName.trimmingCharacters(in: .whitespaces)
         do {
             let book: Book
             if let editing = editingBook {
-                book = try await APIClient.shared.updateBook(bookId: editing.id, title: t, author: a)
+                book = try await APIClient.shared.updateBook(bookId: editing.id, title: t, author: a, seriesName: s.isEmpty ? nil : s)
             } else {
-                book = try await APIClient.shared.createBook(clubId: clubId, title: t, author: a, coverUrl: coverUrl)
+                book = try await APIClient.shared.createBook(clubId: clubId, title: t, author: a, coverUrl: coverUrl, seriesName: s.isEmpty ? nil : s)
             }
             onSaved(book)
             dismiss()

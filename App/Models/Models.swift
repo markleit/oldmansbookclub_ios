@@ -38,6 +38,10 @@ struct Book: Identifiable, Codable, Hashable {
     var description: String?
     var publishedYear: Int?
     var pageCount: Int?
+    // #138 — free-text series grouping (mirrors author: a plain string, no Series entity).
+    // seriesOrder is this book's position within the series; meaningless when seriesName is nil.
+    var seriesName: String?
+    var seriesOrder: Int?
     // NOTE: unread is deliberately NOT a property of a book (#119). It is per-user, changes
     // without the book changing, and a Book is a value type copied into every view — so a count
     // living here would go stale in each copy independently. UnreadStore owns it; the wire
