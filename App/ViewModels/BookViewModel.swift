@@ -230,6 +230,7 @@ final class BookViewModel: ObservableObject {
     private var appActiveObserver: NSObjectProtocol?
     private var appBackgroundObserver: NSObjectProtocol?
     private var uploadCompletedObserver: NSObjectProtocol?
+    private var sendCompletedObserver: NSObjectProtocol?
     private var audioInterruptionObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
@@ -348,33 +349,7 @@ final class BookViewModel: ObservableObject {
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
             guard !self.messages.contains(where: { $0.id == message.id }) else { return }
 
-            // Optimistic echo match by clientId — the server echoes back the clientId we
-            // sent for both text and media. Replace the optimistic bubble in place. Using
-            // the id (not the body) fixes identical consecutive text sends racing (#35).
-            if message.senderId == TokenStore.shared.userId,
-               let clientId = message.clientId,
-               let idx = self.messages.firstIndex(where: { $0.id == clientId }) {
-                let oldUrlString = self.messages[idx].mediaUrl
-                self.messages[idx] = message
-                self.pendingTextIds.remove(clientId)
-                if message.type != .text {
-                    // Media: confirmed delivery — clear the send queue + local file.
-                    MediaSendQueue.shared.remove(id: clientId)
-                    if let oldUrlString,
-                       let oldUrl = URL(string: oldUrlString),
-                       oldUrl.scheme == "file" {
-                        MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
-                    }
-                }
-                self.saveMessagesCache()
-                return
-            }
-
-            self.messages.insert(message, at: 0)
-            self.saveMessagesCache()
-            // The read receipt's response carries this book's fresh unread count — an arriving
-            // voice message raises it (unheard), non-voice nets to zero (read on arrival).
-            Task { await ReceiptQueue.shared.markRead(bookId: self.book.id, messageId: message.id) }
+            self.reconcileConfirmedMessage(message)
         }
 
         await ChatService.shared.setOnMessageDeleted { [weak self] messageId in
@@ -484,30 +459,27 @@ final class BookViewModel: ObservableObject {
         messages.insert(optimistic, at: 0)
         pendingTextIds.insert(clientId)
 
+        // REST send instead of a SignalR invoke (#131) — doesn't need a live socket, so it
+        // isn't stranded if the user backgrounds right after hitting send. A text body is
+        // small, so the foreground BackgroundTaskBox's ~30s grace is ample; no background
+        // URLSession needed here (that's reserved for media, which can be much larger/slower).
+        let bgTask = BackgroundTaskBox(name: "send-text-\(clientId.uuidString)")
+        defer { bgTask.end() }
         do {
-            try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId, parentMessageId: reply?.id)
+            let sent = try await APIClient.shared.sendMessage(
+                bookId: book.id, type: .text, body: text, clientId: clientId, parentMessageId: reply?.id)
             markOnline()
-        } catch let outer {
-            // Server-side rejection (rate limit, validation) — don't retry, just surface it.
-            if case ChatError.serverError(let msg) = outer {
-                messages.removeAll { $0.id == clientId }
-                pendingTextIds.remove(clientId)
+            reconcileConfirmedMessage(sent)
+        } catch {
+            // Text has no retry queue (unlike media's MediaSendQueue) — a .failed bubble would
+            // show a "Retry" control with nothing behind it. Match the pre-existing behavior:
+            // drop the optimistic bubble and surface the error; the user just retypes/resends.
+            messages.removeAll { $0.id == clientId }
+            pendingTextIds.remove(clientId)
+            if case ChatError.serverError(let msg) = error {
                 errorMessage = msg
-                return
-            }
-            await ChatService.shared.disconnect()
-            await ChatService.shared.connect(bookId: book.id)
-            do {
-                try await ChatService.shared.sendText(bookId: book.id, body: text, clientId: clientId)
-                markOnline()
-            } catch let inner {
-                messages.removeAll { $0.id == clientId }
-                pendingTextIds.remove(clientId)
-                if case ChatError.serverError(let msg) = inner {
-                    errorMessage = msg
-                } else {
-                    errorMessage = "Failed to send — connection lost. Please try again."
-                }
+            } else {
+                errorMessage = "Failed to send — connection lost. Please try again."
             }
         }
     }
@@ -771,45 +743,28 @@ final class BookViewModel: ObservableObject {
             return
         }
 
-        // Invoke phase: the blob is uploaded; only SignalR remains.
-        do {
-            do {
-                try await invokeHub(for: item, mediaUrl: mediaUrl)
-            } catch let invokeErr {
-                // Server-side rejection — don't reconnect+retry, it'll fail the same way.
-                if case ChatError.serverError = invokeErr { throw invokeErr }
-                // Stale-connection recovery — clientId idempotency prevents server-side duplicates.
-                await ChatService.shared.disconnect()
-                await ChatService.shared.connect(bookId: item.bookId)
-                try? await Task.sleep(for: .milliseconds(500))
-                try await invokeHub(for: item, mediaUrl: mediaUrl)
-            }
-            // Invoke succeeded — round trip proves we're online.
-            markOnline()
-            // Don't remove from queue here — wait for the server echo to confirm delivery.
-            // Echo handler (onMessageReceived) removes the queue entry + schedules file
-            // cleanup. If no echo arrives within the timeout, the bubble flips to .failed
-            // and the queue entry stays so retry works.
-            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                messages[idx].sendState = nil
-            }
-            scheduleEchoTimeout(for: item.id)
-        } catch {
-            MediaSendQueue.shared.incrementRetry(id: item.id)
-            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                messages[idx].sendState = .failed
-            }
-            // Surface server-thrown error text (rate limit, etc.) since the failed bubble
-            // alone doesn't explain why.
-            if case ChatError.serverError(let msg) = error {
-                errorMessage = msg
-            }
+        // Send phase: the blob is uploaded; only posting the message remains. This POSTs over
+        // the same background URLSession as the upload (#131) instead of a SignalR invoke, so
+        // it isn't bounded by the ~30s BackgroundTaskBox window — a slow/large send can take as
+        // long as it needs, backgrounded or not. Fire-and-forget: completion (success + the
+        // confirmed Message, or failure) arrives via .mediaSendCompleted → handleSendCompleted,
+        // which is the actual confirmation now (no SignalR echo wait needed).
+        if await BackgroundUploadService.shared.hasInflightSend(itemId: item.id) {
+            scheduleSendWatchdog(for: item.id)
+            return
         }
+        BackgroundUploadService.shared.sendMessage(
+            itemId: item.id, bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
+            durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
+        if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+            messages[idx].sendState = .sending
+        }
+        scheduleSendWatchdog(for: item.id)
     }
 
-    // Drive the invoke once a background upload finishes. On success the queue item now has
-    // uploadedMediaUrl set, so re-entering sendMediaItem skips straight to the invoke; on
-    // failure it re-fetches a fresh SAS and re-uploads (auto-retry up to the cap).
+    // Drive the send once a background upload finishes. On success the queue item now has
+    // uploadedMediaUrl set, so re-entering sendMediaItem skips straight to posting the message;
+    // on failure it re-fetches a fresh SAS and re-uploads (auto-retry up to the cap).
     private func handleUploadCompleted(_ itemId: UUID) async {
         guard let item = MediaSendQueue.shared.items.first(where: { $0.id == itemId }),
               item.bookId == book.id else { return }
@@ -819,19 +774,77 @@ final class BookViewModel: ObservableObject {
         await sendMediaItem(item)
     }
 
-    private func invokeHub(for item: MediaQueueItem, mediaUrl: String) async throws {
-        switch item.kind {
-        case .voice:
-            try await ChatService.shared.sendVoice(
-                bookId: item.bookId, mediaUrl: mediaUrl,
-                durationSeconds: item.durationSeconds ?? 0, clientId: item.id, parentMessageId: item.parentMessageId)
-        case .photo:
-            try await ChatService.shared.sendPhoto(
-                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id, parentMessageId: item.parentMessageId)
-        case .video:
-            try await ChatService.shared.sendVideo(
-                bookId: item.bookId, mediaUrl: mediaUrl, clientId: item.id, parentMessageId: item.parentMessageId)
+    private static func messageType(for kind: MediaQueueKind) -> MessageType {
+        switch kind {
+        case .voice: return .voice
+        case .photo: return .photo
+        case .video: return .video
         }
+    }
+
+    // Reconcile a confirmed server message (from a REST send response, or a live SignalR
+    // echo) with its optimistic bubble. Shared by both transports so "the message posted" is
+    // handled identically regardless of which one delivered the confirmation first — a race
+    // between them (e.g. another of this account's devices still has a live socket) is
+    // resolved by the `messages.contains(where: { $0.id == message.id })` no-op guard below.
+    @MainActor
+    private func reconcileConfirmedMessage(_ message: Message) {
+        guard message.clubId == book.clubId else { return }
+
+        // Prefetch the audio so tapping play is instant by the time the user does.
+        if message.type == .voice, let u = message.mediaUrl, let url = URL(string: u) {
+            AudioCache.shared.prefetch(url)
+        }
+
+        // Already applied (the other transport got here first) — no-op.
+        guard !messages.contains(where: { $0.id == message.id }) else { return }
+
+        // Optimistic match by clientId — the server echoes back the clientId we sent for both
+        // text and media. Replace the optimistic bubble in place. Using the id (not the body)
+        // fixes identical consecutive text sends racing (#35).
+        if message.senderId == TokenStore.shared.userId,
+           let clientId = message.clientId,
+           let idx = messages.firstIndex(where: { $0.id == clientId }) {
+            let oldUrlString = messages[idx].mediaUrl
+            messages[idx] = message
+            pendingTextIds.remove(clientId)
+            echoTimeoutTasks[clientId]?.cancel()
+            echoTimeoutTasks[clientId] = nil
+            if message.type != .text {
+                // Media: confirmed delivery — clear the send queue + local file.
+                MediaSendQueue.shared.remove(id: clientId)
+                if let oldUrlString,
+                   let oldUrl = URL(string: oldUrlString),
+                   oldUrl.scheme == "file" {
+                    MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
+                }
+            }
+            saveMessagesCache()
+            return
+        }
+
+        messages.insert(message, at: 0)
+        saveMessagesCache()
+        // The read receipt's response carries this book's fresh unread count — an arriving
+        // voice message raises it (unheard), non-voice nets to zero (read on arrival).
+        Task { await ReceiptQueue.shared.markRead(bookId: book.id, messageId: message.id) }
+    }
+
+    // Completion of the background-session send POST kicked from sendMediaItem (#131). This
+    // is the send confirmation now — no SignalR echo wait needed, since the REST response
+    // itself proves the message reached the server (or tells us definitively why it didn't).
+    @MainActor
+    private func handleSendCompleted(itemId: UUID, success: Bool, message: Message?, errorMessage: String?) {
+        guard success, let message else {
+            MediaSendQueue.shared.incrementRetry(id: itemId)
+            if let idx = messages.firstIndex(where: { $0.id == itemId }) {
+                messages[idx].sendState = .failed
+            }
+            if let errorMessage { self.errorMessage = errorMessage }
+            return
+        }
+        markOnline()
+        reconcileConfirmedMessage(message)
     }
 
     // Preview text for the quoted-reply chip (mirrors the server's ParentPreviewText).
@@ -894,41 +907,47 @@ final class BookViewModel: ObservableObject {
         ChatCache.save(messages, bookId: book.id, excludingPending: pending)
     }
 
-    // Safety net for silent SignalR failures: if invoke() returns success but the
-    // server echo never arrives within the timeout, treat the send as failed so the
-    // user knows (and can retry). The queue entry is preserved so retry works.
+    // Send-phase safety net (#131): a media item hands its "post the message" call to a
+    // background-URLSession POST (BackgroundUploadService.sendMessage), which has no time
+    // limit but could still, in principle, have its completion callback silently dropped. If
+    // that happens the bubble would spin in .sending forever. This flips a genuinely-stuck item
+    // to .failed so the user can retry — but re-arms instead of failing while a send is still
+    // actually in flight, so it can never false-fail a slow-but-healthy transfer.
     //
-    // The watchdog is tracked + cancellable so backgrounding can tear it down: otherwise
-    // its sleep would elapse against wall-clock while suspended and fire the instant we
-    // resume, falsely failing a send that was simply waiting out a suspension (#70/#72).
-    // A fresh send/re-send replaces any prior watchdog for the same item.
-    private func scheduleEchoTimeout(for itemId: UUID, after seconds: TimeInterval = 15) {
+    // The watchdog is tracked + cancellable so backgrounding can tear it down: otherwise its
+    // sleep would elapse against wall-clock while suspended and fire the instant we resume,
+    // falsely failing a send that was simply waiting out a suspension (#70/#72). A fresh
+    // send/re-send replaces any prior watchdog for the same item.
+    private func scheduleSendWatchdog(for itemId: UUID, after seconds: TimeInterval = 90) {
         echoTimeoutTasks[itemId]?.cancel()
         echoTimeoutTasks[itemId] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(seconds))
             guard let self, !Task.isCancelled else { return }
-            self.echoTimeoutTasks[itemId] = nil
-            // Echo would have replaced the optimistic message's id with the server's id;
-            // if we still find the optimistic id, no echo arrived in time.
-            guard let idx = self.messages.firstIndex(where: { $0.id == itemId }) else { return }
-            // Only flip to failed if not already terminal — covers user-cancelled or
-            // late-arriving echo edge cases.
-            if self.messages[idx].sendState == nil {
-                self.messages[idx].sendState = .failed
+            // Still sending — give it more time rather than failing an in-progress POST.
+            if await BackgroundUploadService.shared.hasInflightSend(itemId: itemId) {
+                self.scheduleSendWatchdog(for: itemId, after: seconds)
+                return
             }
+            self.echoTimeoutTasks[itemId] = nil
+            // Only fail an item that's still an un-confirmed optimistic send stuck in .sending
+            // (a confirmed send would have reconciled the bubble's id via handleSendCompleted).
+            guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }),
+                  let idx = self.messages.firstIndex(where: { $0.id == itemId }),
+                  self.messages[idx].sendState == .sending else { return }
+            self.messages[idx].sendState = .failed
         }
     }
 
     // Upload-phase safety net (#91): a media send hands its blob to the background upload and
-    // leaves the bubble .sending, relying on the upload-completion → invoke → echo chain to
-    // finish it. If any link in that chain silently breaks (a missed completion callback, a
+    // leaves the bubble .sending, relying on the upload-completion → send → confirmation chain
+    // to finish it. If any link in that chain silently breaks (a missed completion callback, a
     // dropped connection on re-entry), the bubble would spin forever — which is the reported
     // "voice message stuck spinning, later messages went through". This flips a genuinely-stuck
     // item to .failed so the user can retry.
     //
     // Guarded so it can't false-fail a legitimately slow transfer: if the upload is still in
-    // flight when it fires, it re-arms instead of failing. The invoke phase's own
-    // scheduleEchoTimeout supersedes this (both key echoTimeoutTasks by id), and backgrounding
+    // flight when it fires, it re-arms instead of failing. The send phase's own
+    // scheduleSendWatchdog supersedes this (both key echoTimeoutTasks by id), and backgrounding
     // cancels it (cancelEchoTimeouts) so a suspended wall-clock can't fire it on resume.
     private func scheduleUploadWatchdog(for itemId: UUID, after seconds: TimeInterval = 90) {
         echoTimeoutTasks[itemId]?.cancel()
@@ -1123,12 +1142,23 @@ final class BookViewModel: ObservableObject {
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
             Task { @MainActor in self?.discardRecording() }
         }
-        // A background blob upload finished — drive the invoke for that item (B).
+        // A background blob upload finished — drive the send for that item (B).
         uploadCompletedObserver = center.addObserver(
             forName: .mediaUploadCompleted, object: nil, queue: .main
         ) { [weak self] note in
             guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
             Task { @MainActor in await self?.handleUploadCompleted(itemId) }
+        }
+        // A background message-send POST finished (#131) — reconcile the bubble directly from
+        // the response, no echo wait needed.
+        sendCompletedObserver = center.addObserver(
+            forName: .mediaSendCompleted, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
+            let success = note.userInfo?["success"] as? Bool ?? false
+            let message = note.userInfo?["message"] as? Message
+            let errorMessage = note.userInfo?["errorMessage"] as? String
+            Task { @MainActor in self?.handleSendCompleted(itemId: itemId, success: success, message: message, errorMessage: errorMessage) }
         }
     }
 
@@ -1136,10 +1166,12 @@ final class BookViewModel: ObservableObject {
         if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
         if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
         if let o = uploadCompletedObserver { NotificationCenter.default.removeObserver(o) }
+        if let o = sendCompletedObserver { NotificationCenter.default.removeObserver(o) }
         if let o = audioInterruptionObserver { NotificationCenter.default.removeObserver(o) }
         appActiveObserver = nil
         appBackgroundObserver = nil
         uploadCompletedObserver = nil
+        sendCompletedObserver = nil
         audioInterruptionObserver = nil
     }
 

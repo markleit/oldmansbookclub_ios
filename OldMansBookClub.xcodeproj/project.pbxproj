@@ -32,6 +32,7 @@
 		59ECDF29F8EB5F808607ADAC /* BackgroundTaskBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */; };
 		5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DBF0F42D59478B1E09CB57 /* AccountScope.swift */; };
 		5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */; };
+		669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */; };
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
 		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
@@ -63,10 +64,21 @@
 		FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010D3939D82C530D2050FDBA /* LoginView.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		B6C8EAEE40092C593387F7E8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0D9567298232DB276576078E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C643C6351EFA917C7252CD36;
+			remoteInfo = OldMansBookClub;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		010D3939D82C530D2050FDBA /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		024037128BCBBAFA0312E443 /* BookViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookViewModel.swift; sourceTree = "<group>"; };
 		02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
+		0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OldMansBookClubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubApp.swift; sourceTree = "<group>"; };
 		22282622C7A5BEAAEE8961CE /* AudioCue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCue.swift; sourceTree = "<group>"; };
@@ -118,6 +130,7 @@
 		E2ABB613BFB149719A00A493 /* AudioCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCache.swift; sourceTree = "<group>"; };
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
+		F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubUITests.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
 		FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptQueue.swift; sourceTree = "<group>"; };
 		FF5A48CCFD136D8940110FEF /* UnreadStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnreadStore.swift; sourceTree = "<group>"; };
@@ -195,8 +208,17 @@
 			isa = PBXGroup;
 			children = (
 				EC9C81D3801D0356FF73748D /* App */,
+				9A1BF6C3C31EB3876DCC209D /* UITests */,
 				C233EB74D84CEEA828746EDD /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		9A1BF6C3C31EB3876DCC209D /* UITests */ = {
+			isa = PBXGroup;
+			children = (
+				F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */,
+			);
+			path = UITests;
 			sourceTree = "<group>";
 		};
 		C231CF59609A7C1EBB9301F5 /* Views */ = {
@@ -229,6 +251,7 @@
 			isa = PBXGroup;
 			children = (
 				35BB903519CCBE31B68D8F6A /* OldMansBookClub.app */,
+				0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -257,6 +280,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0AB8D60332D85354B0E2584A /* OldMansBookClubUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9E12B420DA453C2AECEF7162 /* Build configuration list for PBXNativeTarget "OldMansBookClubUITests" */;
+			buildPhases = (
+				D87F2707C98416CDF2A9A289 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				698C156F99C4BA77451158C4 /* PBXTargetDependency */,
+			);
+			name = OldMansBookClubUITests;
+			packageProductDependencies = (
+			);
+			productName = OldMansBookClubUITests;
+			productReference = 0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		C643C6351EFA917C7252CD36 /* OldMansBookClub */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F2C3D5A838426597DA2A52DC /* Build configuration list for PBXNativeTarget "OldMansBookClub" */;
@@ -286,6 +327,11 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					0AB8D60332D85354B0E2584A = {
+						DevelopmentTeam = BCH6CDU76R;
+						ProvisioningStyle = Automatic;
+						TestTargetID = C643C6351EFA917C7252CD36;
+					};
 					C643C6351EFA917C7252CD36 = {
 						DevelopmentTeam = BCH6CDU76R;
 						ProvisioningStyle = Automatic;
@@ -310,6 +356,7 @@
 			projectRoot = "";
 			targets = (
 				C643C6351EFA917C7252CD36 /* OldMansBookClub */,
+				0AB8D60332D85354B0E2584A /* OldMansBookClubUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -385,7 +432,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D87F2707C98416CDF2A9A289 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		698C156F99C4BA77451158C4 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C643C6351EFA917C7252CD36 /* OldMansBookClub */;
+			targetProxy = B6C8EAEE40092C593387F7E8 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		0F90BCBE4BF98B21334F261E /* Release */ = {
@@ -444,6 +507,26 @@
 			};
 			name = Release;
 		};
+		4CF0CBDC1050F4A79AEBAB92 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BCH6CDU76R;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.OldMansBookClubUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = OldMansBookClub;
+			};
+			name = Debug;
+		};
 		8D44AC36A5794BD61C77CB75 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -466,6 +549,26 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)";
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C1293597C8C442046DBF41DE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = BCH6CDU76R;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.markleit.OldMansBookClubUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = OldMansBookClub;
 			};
 			name = Release;
 		};
@@ -565,6 +668,15 @@
 			buildConfigurations = (
 				DCB1A7D9AE777A05881681A2 /* Debug */,
 				0F90BCBE4BF98B21334F261E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9E12B420DA453C2AECEF7162 /* Build configuration list for PBXNativeTarget "OldMansBookClubUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4CF0CBDC1050F4A79AEBAB92 /* Debug */,
+				C1293597C8C442046DBF41DE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

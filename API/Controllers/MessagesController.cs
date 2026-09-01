@@ -10,9 +10,42 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class MessagesController(AppDbContext db, BlobService blob, ILogger<MessagesController> logger) : ControllerBase
+public class MessagesController(AppDbContext db, BlobService blob, MessageSendService messageSend, ILogger<MessagesController> logger) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
+
+    // Background-safe send path: the client posts here (over a background URLSession, so it
+    // survives arbitrary time in the background, not just the ~30s a BackgroundTaskBox grants)
+    // instead of invoking the SignalR hub, which needs a live WebSocket and so can't run once
+    // the app is suspended. Shares MessageSendService with ChatHub — same validation, same
+    // clientId dedup, same broadcast to the book group — so behavior is identical either way.
+    // ClientId is required here (unlike the hub's optional overloads) since every client build
+    // that can reach this endpoint already generates one for every send.
+    [HttpPost("~/books/{bookId}/messages")]
+    public async Task<ActionResult<MessageDto>> SendMessage(Guid bookId, [FromBody] SendMessageRequest request)
+    {
+        try
+        {
+            var sender = await messageSend.LoadSenderContextAsync(UserId);
+            MessageDto dto = request.Type switch
+            {
+                MessageType.Text => await messageSend.SendTextAsync(
+                    UserId, sender, bookId, request.Body ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                MessageType.Voice => await messageSend.SendVoiceAsync(
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.DurationSeconds ?? 0, request.ClientId, request.ParentMessageId, request.DeviceId),
+                MessageType.Photo => await messageSend.SendPhotoAsync(
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                MessageType.Video => await messageSend.SendVideoAsync(
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                _ => throw new MessageSendException("Unsupported message type.")
+            };
+            return Ok(dto);
+        }
+        catch (MessageSendException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 
     [HttpGet("saved")]
     public async Task<IEnumerable<SavedMessageDto>> GetSaved()

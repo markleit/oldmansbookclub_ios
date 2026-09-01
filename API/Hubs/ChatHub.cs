@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace BookClubApi.Hubs;
 
 [Authorize]
-public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notificationQueue, HubRateLimiter rateLimiter) : Hub
+public class ChatHub(AppDbContext db, MessageSendService messageSend) : Hub
 {
     public async Task JoinBook(Guid bookId)
     {
@@ -45,6 +45,13 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
     // original 1.5.0 arity (bookId, body) forever: the live App Store client invokes it
     // with exactly 2 args. clientId (dedup) and replies go through SEPARATE method names.
     // (A "default" param here doesn't help — SignalR still requires that arg count.)
+    //
+    // The actual save+broadcast logic lives in MessageSendService, shared with the REST
+    // POST /books/{bookId}/messages endpoint (MessagesController) — that endpoint is what
+    // the client now uses for a send that has to survive being backgrounded, since it can
+    // run over a background URLSession with no time limit, unlike a SignalR invoke which
+    // needs a live WebSocket. These hub methods stay for older installed clients and for
+    // the live foreground path.
     public Task SendTextMessage(Guid bookId, string body)
         => SendTextCore(bookId, body, null, null);
     public Task SendTextWithClientId(Guid bookId, string body, Guid clientId)
@@ -54,31 +61,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
 
     private async Task SendTextCore(Guid bookId, string body, Guid? clientId, Guid? parentMessageId)
     {
-        EnforceRateLimit();
-        if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
-            throw new HubException("Message must be 1–4000 characters.");
-        // Idempotent re-send + echo the clientId back so the client matches the optimistic
-        // bubble by id (not by body — identical consecutive sends raced the body key).
-        if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        var saved = await SaveMessageAsync(bookId, MessageType.Text, body: body, clientId: clientId, parentMessageId: parentMessageId);
-        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
-        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
-    }
-
-    // Per-type upload caps, enforced server-side so a misbehaving client can't bypass
-    // the client-side checks. Generous headroom over the expected encoded sizes.
-    private const long MaxVoiceBytes = 25L * 1024 * 1024;   // ~15 min voice is a few MB
-    private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to ~<1 MB
-    private const long MaxVideoBytes = 100L * 1024 * 1024;  // 100 MB cap (matches client)
-
-    // Reject if the already-uploaded blob exceeds the type's cap. (A rejected upload
-    // orphans its blob — only hit by a misbehaving client past the client check; the
-    // lifecycle GC in #31 will reap it.)
-    private async Task EnforceBlobSizeAsync(string mediaUrl, long maxBytes, string label)
-    {
-        var size = await blob.GetBlobSizeAsync(mediaUrl);
-        if (size is > 0 && size > maxBytes)
-            throw new HubException($"{label} is too large (max {maxBytes / (1024 * 1024)} MB).");
+        try
+        {
+            var sender = await GetConnUserAsync();
+            await messageSend.SendTextAsync(GetUserId(), sender, bookId, body, clientId, parentMessageId, DeviceToken);
+        }
+        catch (MessageSendException ex) { throw new HubException(ex.Message); }
     }
 
     public Task SendVoiceMessage(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId = null)
@@ -88,15 +76,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
 
     private async Task SendVoiceCore(Guid bookId, string mediaUrl, int durationSeconds, Guid? clientId, Guid? parentMessageId)
     {
-        EnforceRateLimit();
-        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
-
-        var saved = await SaveMessageAsync(bookId, MessageType.Voice,
-            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId, parentMessageId: parentMessageId);
-        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
-        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
+        try
+        {
+            var sender = await GetConnUserAsync();
+            await messageSend.SendVoiceAsync(GetUserId(), sender, bookId, mediaUrl, durationSeconds, clientId, parentMessageId, DeviceToken);
+        }
+        catch (MessageSendException ex) { throw new HubException(ex.Message); }
     }
 
     public Task SendPhotoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
@@ -106,15 +91,12 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
 
     private async Task SendPhotoCore(Guid bookId, string mediaUrl, Guid? clientId, Guid? parentMessageId)
     {
-        EnforceRateLimit();
-        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
-
-        var saved = await SaveMessageAsync(bookId, MessageType.Photo,
-            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
-        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
-        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
+        try
+        {
+            var sender = await GetConnUserAsync();
+            await messageSend.SendPhotoAsync(GetUserId(), sender, bookId, mediaUrl, clientId, parentMessageId, DeviceToken);
+        }
+        catch (MessageSendException ex) { throw new HubException(ex.Message); }
     }
 
     public Task SendVideoMessage(Guid bookId, string mediaUrl, Guid? clientId = null)
@@ -124,45 +106,13 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
 
     private async Task SendVideoCore(Guid bookId, string mediaUrl, Guid? clientId, Guid? parentMessageId)
     {
-        EnforceRateLimit();
-        if (!IsOwnBlobUrl(mediaUrl)) throw new HubException("Invalid media URL.");
-        if (await TryRebroadcastExistingAsync(bookId, clientId)) return;
-        await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
-
-        var saved = await SaveMessageAsync(bookId, MessageType.Video,
-            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
-        if (saved is not { } s) return;   // duplicate clientId — winner already rebroadcast
-        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
-    }
-
-    // Idempotent re-send protection: if a message with this clientId already exists
-    // for this user, re-broadcast the stored version with a fresh SAS instead of creating
-    // a duplicate. Returns true if rebroadcast happened and the caller should bail out.
-    private async Task<bool> TryRebroadcastExistingAsync(Guid bookId, Guid? clientId)
-    {
-        if (!clientId.HasValue) return false;
-        var userId = GetUserId();
-        var existing = await db.Messages
-            .Include(m => m.Sender)
-            .FirstOrDefaultAsync(m => m.ClientId == clientId && m.SenderId == userId);
-        if (existing == null) return false;
-
-        string? broadcastUrl = existing.MediaUrl;
-        if (broadcastUrl != null)
+        try
         {
-            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-            broadcastUrl = blob.GenerateFreshReadUrl(broadcastUrl, key, keyExpiry);
+            var sender = await GetConnUserAsync();
+            await messageSend.SendVideoAsync(GetUserId(), sender, bookId, mediaUrl, clientId, parentMessageId, DeviceToken);
         }
-        await Clients.Group(bookId.ToString())
-            .SendAsync("NewMessage", ToDto(existing, existing.Sender.EffectiveName, existing.Sender.AvatarUrl, broadcastUrl));
-        return true;
+        catch (MessageSendException ex) { throw new HubException(ex.Message); }
     }
-
-    // SQL Server: 2627 = unique constraint violation, 2601 = unique index violation. Either
-    // means a row with this (SenderId, ClientId) already exists — i.e. a duplicate re-send.
-    private static bool IsUniqueClientIdViolation(DbUpdateException ex)
-        => ex.InnerException is Microsoft.Data.SqlClient.SqlException sql
-           && (sql.Number == 2601 || sql.Number == 2627);
 
     public async Task EditTextMessage(Guid messageId, string newBody)
     {
@@ -214,152 +164,31 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
 
     public async Task ForwardMessage(Guid bookId, Guid messageId)
     {
-        EnforceRateLimit();
-        var userId = GetUserId();
-
-        var hasSaved = await db.SavedMessages
-            .AnyAsync(s => s.UserId == userId && s.MessageId == messageId);
-        if (!hasSaved) throw new HubException("Message not in your saved list.");
-
-        var original = await db.Messages.FindAsync(messageId)
-            ?? throw new HubException("Message not found.");
-
-        if (original.DeletedAt != null) throw new HubException("Cannot forward a deleted message.");
-
-        var book = await db.Books.FindAsync(bookId)
-            ?? throw new HubException("Book not found.");
-
-        var conn = await GetConnUserAsync();
-        if (!conn.ClubIds.Contains(book.ClubId)) throw new HubException("Not a member of this club.");
-
-        // Strip any stale SAS from the stored URL — SaveMessageAsync stores plain URL and generates fresh SAS for broadcast
-        var plainMediaUrl = original.MediaUrl?.Split('?')[0];
-        var saved = await SaveMessageAsync(bookId, original.Type,
-            body: original.Body, mediaUrl: plainMediaUrl,
-            durationSeconds: original.DurationSeconds, isForwarded: true);
-        if (saved is not { } s) return;   // forwards carry no clientId, so this won't trip — defensive
-        await BroadcastAndNotify(bookId, s.dto, s.bookTitle);
-    }
-
-    // Returns null when a concurrent invoke with the same clientId won the insert race:
-    // the existing winner is rebroadcast in here and the caller must skip BroadcastAndNotify
-    // (no second broadcast, no duplicate push). The DB unique index on (SenderId, ClientId)
-    // is what makes this race-safe — TryRebroadcastExistingAsync alone is check-then-insert.
-    private async Task<(MessageDto dto, string bookTitle)?> SaveMessageAsync(Guid bookId, MessageType type,
-        string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false,
-        Guid? clientId = null, Guid? parentMessageId = null)
-    {
-        var userId = GetUserId();
-        var conn = await GetConnUserAsync();
-        if (!conn.IsApproved) throw new HubException("Account not approved.");
-
-        var book = await db.Books.FindAsync(bookId)
-            ?? throw new HubException("Book not found");
-
-        if (!conn.ClubIds.Contains(book.ClubId)) throw new HubException("Not a member of this club.");
-
-        var message = new Message
-        {
-            BookId = bookId,
-            ClubId = book.ClubId,
-            SenderId = userId,
-            Type = type,
-            Body = body,
-            MediaUrl = mediaUrl,
-            DurationSeconds = durationSeconds,
-            IsForwarded = isForwarded,
-            ClientId = clientId,
-            ParentMessageId = parentMessageId
-        };
-
-        db.Messages.Add(message);
         try
         {
-            await db.SaveChangesAsync();
+            var sender = await GetConnUserAsync();
+            await messageSend.ForwardAsync(GetUserId(), sender, bookId, messageId, DeviceToken);
         }
-        catch (DbUpdateException ex) when (IsUniqueClientIdViolation(ex))
-        {
-            // Another invoke with the same clientId committed first. Drop our would-be
-            // duplicate and rebroadcast the winner; signal the caller to bail.
-            db.Entry(message).State = EntityState.Detached;
-            await TryRebroadcastExistingAsync(bookId, clientId);
-            return null;
-        }
-
-        string? broadcastMediaUrl = mediaUrl;
-        if (mediaUrl != null)
-        {
-            var (key, keyExpiry) = await blob.GetReadDelegationKeyAsync();
-            broadcastMediaUrl = blob.GenerateFreshReadUrl(mediaUrl, key, keyExpiry);
-        }
-
-        // Build the quoted-reply preview from the parent, if this is a reply.
-        string? parentSenderName = null, parentPreview = null;
-        DateTime? parentSentAt = null;
-        if (parentMessageId is Guid pid)
-        {
-            var p = await db.Messages.Where(x => x.Id == pid)
-                .Select(x => new { x.Type, x.Body, x.Transcript, x.SentAt, Deleted = x.DeletedAt != null, Name = x.Sender.Nickname ?? x.Sender.DisplayName })
-                .FirstOrDefaultAsync();
-            if (p is not null)
-            {
-                parentSenderName = p.Deleted ? null : p.Name;
-                parentPreview = ParentPreviewText(p.Type, p.Body, p.Transcript, p.Deleted);
-                parentSentAt = p.Deleted ? null : p.SentAt;
-            }
-        }
-
-        return (ToDto(message, conn.EffectiveName, conn.AvatarUrl, broadcastMediaUrl,
-            parentMessageId, parentSenderName, parentPreview, parentSentAt), book.Title);
-    }
-
-    // Short text shown in a quoted-reply chip for the parent message. For voice, prefer
-    // the uploaded transcript ("🎤 first words…") over the generic label.
-    private const int ParentPreviewMaxChars = 120;
-    private static string? ParentPreviewText(MessageType type, string? body, string? transcript, bool deleted) =>
-        deleted ? "Deleted message" : type switch
-        {
-            MessageType.Text => Snippet(body),
-            MessageType.Voice => string.IsNullOrWhiteSpace(transcript) ? "🎤 Voice message" : "🎤 " + Snippet(transcript),
-            MessageType.Photo => "📷 Photo",
-            MessageType.Video => "🎬 Video",
-            _ => null
-        };
-
-    private static string? Snippet(string? s)
-    {
-        if (string.IsNullOrEmpty(s)) return s;
-        return s.Length <= ParentPreviewMaxChars ? s : s[..ParentPreviewMaxChars].TrimEnd() + "…";
-    }
-
-    private async Task BroadcastAndNotify(Guid bookId, MessageDto dto, string bookTitle)
-    {
-        await Clients.Group(bookId.ToString()).SendAsync("NewMessage", dto);
-
-        // #24 — hand the APNs fan-out (per-member badge query + APNs round-trip, which used to run
-        // inline here and made send latency scale with club size) to the background dispatcher, so
-        // the sender's invoke() returns right after the in-memory SignalR broadcast.
-        var senderDeviceToken = Context.Items["deviceToken"] as string;
-        notificationQueue.Enqueue(new NotificationJob(bookId, dto, bookTitle, senderDeviceToken));
+        catch (MessageSendException ex) { throw new HubException(ex.Message); }
     }
 
     private Guid GetUserId() =>
         Guid.Parse(Context.User?.FindFirst("sub")?.Value
             ?? throw new HubException("Unauthorized"));
 
+    // #25 — the connecting client's own APNs token, if it sent one (an unupdated client
+    // won't). Cached per-connection so a send can exclude just this one device from a
+    // message's fan-out instead of every device the sender owns.
+    private string? DeviceToken => Context.Items["deviceToken"] as string;
+
     // Per-connection cache of the sender's identity + club memberships, so each send
     // doesn't re-query Users + Memberships (H10). Loaded on connect; refreshed on
     // reconnect, so a membership/approval change mid-connection is picked up next
     // connection (acceptable for this app).
-    private sealed record ConnUser(bool IsApproved, string EffectiveName, string? AvatarUrl, HashSet<Guid> ClubIds);
-
-    private async Task<ConnUser> GetConnUserAsync()
+    private async Task<SenderContext> GetConnUserAsync()
     {
-        if (Context.Items["connUser"] is ConnUser cached) return cached;
-        var userId = GetUserId();
-        var user = await db.Users.FindAsync(userId) ?? throw new HubException("User not found");
-        var clubIds = await db.Memberships.Where(m => m.UserId == userId).Select(m => m.ClubId).ToListAsync();
-        var conn = new ConnUser(user.IsApproved, user.EffectiveName, user.AvatarUrl, clubIds.ToHashSet());
+        if (Context.Items["connUser"] is SenderContext cached) return cached;
+        var conn = await messageSend.LoadSenderContextAsync(GetUserId());
         Context.Items["connUser"] = conn;
         return conn;
     }
@@ -367,45 +196,7 @@ public class ChatHub(AppDbContext db, BlobService blob, NotificationQueue notifi
     public override async Task OnConnectedAsync()
     {
         await GetConnUserAsync();   // warm the cache up front
-        // #25 — the connecting client's own APNs token, if it sent one (an unupdated client
-        // won't). Cached per-connection so BroadcastAndNotify can exclude just this one device
-        // from a message's fan-out instead of every device the sender owns.
         Context.Items["deviceToken"] = Context.GetHttpContext()?.Request.Query["deviceId"].FirstOrDefault();
         await base.OnConnectedAsync();
-    }
-
-    private void EnforceRateLimit()
-    {
-        if (!rateLimiter.TryAcquire(GetUserId()))
-            throw new HubException("Slow down — too many messages. Try again in a minute.");
-    }
-
-    private const string AllowedBlobHost = "oldmansbookclubstore.blob.core.windows.net";
-
-    private static bool IsOwnBlobUrl(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
-        uri.Scheme == "https" &&
-        uri.Host == AllowedBlobHost;
-
-    private static MessageDto ToDto(Message m, string senderName, string? senderAvatarUrl, string? broadcastMediaUrl = null,
-        Guid? parentMessageId = null, string? parentSenderName = null, string? parentPreview = null, DateTime? parentSentAt = null)
-    {
-        var deleted = m.DeletedAt != null;
-        return new MessageDto(
-            m.Id, m.ClubId,
-            deleted ? Guid.Empty : m.SenderId,
-            deleted ? "" : senderName,
-            deleted ? null : senderAvatarUrl,
-            m.Type,
-            deleted ? null : m.Body,
-            deleted ? null : (broadcastMediaUrl ?? m.MediaUrl),
-            deleted ? null : m.DurationSeconds,
-            m.SentAt,
-            deleted, m.IsForwarded, m.ClientId,
-            deleted ? null : parentMessageId,
-            deleted ? null : parentSenderName,
-            deleted ? null : parentPreview,
-            deleted ? null : parentSentAt,
-            deleted ? null : m.Transcript);
     }
 }

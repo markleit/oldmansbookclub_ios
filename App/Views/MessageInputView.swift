@@ -155,6 +155,7 @@ struct MessageInputView: View {
                             .foregroundColor(.secondary)
                             .frame(width: 44, height: 44)
                     }
+                    .accessibilityIdentifier("attachmentMenuButton")
 
                     // Growing text input
                     GrowingTextEditor(text: $text, placeholder: "Message…")
@@ -178,6 +179,7 @@ struct MessageInputView: View {
                                 .foregroundColor(.accentColor)
                                 .frame(width: 44, height: 44)
                         }
+                        .accessibilityIdentifier("sendButton")
                     } else {
                         micButton
                     }
@@ -258,10 +260,12 @@ struct MessageInputView: View {
     private var micButton: some View {
         if tapToTalk {
             Button { onToggleRecording() } label: { micIcon }
+                .accessibilityIdentifier("micButton")
                 .task(id: isRecording) { await runPulseTimer() }
         } else {
             micIcon
                 .contentShape(Rectangle())
+                .accessibilityIdentifier("micButton")
                 .onLongPressGesture(minimumDuration: 0, maximumDistance: 50, perform: {}) { isPressing in
                     if isPressing {
                         onStartRecording()
@@ -348,6 +352,7 @@ struct GrowingTextView: UIViewRepresentable {
         tv.backgroundColor = .clear
         tv.delegate = context.coordinator
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tv.accessibilityIdentifier = "messageTextField"
         return tv
     }
 

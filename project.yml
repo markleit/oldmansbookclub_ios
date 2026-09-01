@@ -55,3 +55,30 @@ targets:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: SignalRClient
+
+  OldMansBookClubUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: UITests
+    settings:
+      base:
+        DEVELOPMENT_TEAM: BCH6CDU76R
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: OldMansBookClub
+
+schemes:
+  OldMansBookClub:
+    build:
+      targets:
+        OldMansBookClub: all
+        OldMansBookClubUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - OldMansBookClubUITests

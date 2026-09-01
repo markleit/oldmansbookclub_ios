@@ -1492,6 +1492,7 @@ struct SendStateBadge: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white, .red)
+                    .accessibilityIdentifier("failedSendIndicator")
                     .padding(4)
                     .background(Color.black.opacity(0.3))
                     .clipShape(Circle())

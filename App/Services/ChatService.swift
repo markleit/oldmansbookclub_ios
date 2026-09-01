@@ -258,53 +258,12 @@ actor ChatService {
         return conn
     }
 
-    // SignalR matches by exact arg count. The bare "SendTextMessage" is reserved for the
-    // live 1.5.0 client's 2-arg call (bookId, body) and must NOT be invoked with extra
-    // args here — the clientId/reply variants use distinct method names so all client
-    // versions coexist.
-    func sendText(bookId: UUID, body: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
-        do {
-            let conn = try await readyConnection()
-            if let pid = parentMessageId {
-                try await conn.invoke(method: "SendTextReply", arguments: bookId.uuidString, body, clientId.uuidString, pid.uuidString)
-            } else {
-                try await conn.invoke(method: "SendTextWithClientId", arguments: bookId.uuidString, body, clientId.uuidString)
-            }
-        } catch { throw translateInvokeError(error) }
-    }
-
-    func sendPhoto(bookId: UUID, mediaUrl: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
-        do {
-            let conn = try await readyConnection()
-            if let pid = parentMessageId {
-                try await conn.invoke(method: "SendPhotoReply", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
-            } else {
-                try await conn.invoke(method: "SendPhotoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
-            }
-        } catch { throw translateInvokeError(error) }
-    }
-
-    func sendVideo(bookId: UUID, mediaUrl: String, clientId: UUID, parentMessageId: UUID? = nil) async throws {
-        do {
-            let conn = try await readyConnection()
-            if let pid = parentMessageId {
-                try await conn.invoke(method: "SendVideoReply", arguments: bookId.uuidString, mediaUrl, clientId.uuidString, pid.uuidString)
-            } else {
-                try await conn.invoke(method: "SendVideoMessage", arguments: bookId.uuidString, mediaUrl, clientId.uuidString)
-            }
-        } catch { throw translateInvokeError(error) }
-    }
-
-    func sendVoice(bookId: UUID, mediaUrl: String, durationSeconds: Int, clientId: UUID, parentMessageId: UUID? = nil) async throws {
-        do {
-            let conn = try await readyConnection()
-            if let pid = parentMessageId {
-                try await conn.invoke(method: "SendVoiceReply", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString, pid.uuidString)
-            } else {
-                try await conn.invoke(method: "SendVoiceMessage", arguments: bookId.uuidString, mediaUrl, durationSeconds, clientId.uuidString)
-            }
-        } catch { throw translateInvokeError(error) }
-    }
+    // NOTE: sending no longer goes through the hub from this client (#131) — see
+    // APIClient.sendMessage / BackgroundUploadService.sendMessage, which POST over REST
+    // instead, so a send doesn't need a live WebSocket and isn't stranded by backgrounding.
+    // The server's hub SendTextMessage/SendPhotoMessage/SendVideoMessage/SendVoiceMessage (and
+    // their *Reply variants) stay in place for older installed clients — this actor just
+    // doesn't invoke them anymore.
 
     func deleteMessage(messageId: UUID) async throws {
         do { try await readyConnection().invoke(method: "DeleteMessage", arguments: messageId.uuidString) }
