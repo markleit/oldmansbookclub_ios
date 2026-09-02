@@ -30,7 +30,7 @@ enum ServerEnvironment {
     /// The dev Mac's LAN address, for a physical device pointed at a local `dotnet run`
     /// (`ipconfig getifaddr en0`). Update this whenever the network changes — it's a preset for
     /// convenience, not a source of truth.
-    static let devMachineURLString = "http://192.168.122.200:5235"
+    static let devMachineURLString = "http://10.24.1.83:5235"
 
     /// What the compile-time fork used to do. Still the default, so an untouched DEBUG build
     /// behaves exactly as it did before: simulator → localhost, device → production.
