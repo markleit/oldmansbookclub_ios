@@ -74,4 +74,41 @@ final class LibraryUITests: XCTestCase {
     func testAddBookWithoutSeries_appearsStandalone() {
         addBook(title: "UITest Standalone \(Int(Date().timeIntervalSince1970))")
     }
+
+    // #144 — the three per-status reorder entries exist and open the right screen. Doesn't drive
+    // an actual drag (XCUITest drag gestures on a List are flaky/slow for little signal beyond
+    // what this already proves); this is really about the row-tap-into-a-series navigation,
+    // which needed a Button + navigationDestination(isPresented:) fix after a List forced into
+    // permanent edit mode was found to swallow plain NavigationLink row taps.
+    func testReorderMenu_opensCorrectScreenForEachStatus() {
+        for (label, title) in [
+            ("Manage Currently Reading Order", "Currently Reading Order"),
+            ("Manage Future Read Order", "Future Read Order"),
+            ("Manage Past Read Order", "Past Read Order"),
+        ] {
+            tapMenuItem(label)
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "\(label) didn't open '\(title)'")
+            app.buttons["Cancel"].tap()
+        }
+    }
+
+    // #144 — tapping a series row inside the Future Read Order reorder screen (which is
+    // permanently in edit mode for drag-to-reorder) must still navigate into that series'
+    // own reorder screen.
+    func testTapSeriesRowInReorderScreen_opensSeriesOrderView() {
+        let seriesName = "UITest Series \(Int(Date().timeIntervalSince1970))"
+        addBook(title: "\(seriesName) — Book One", series: seriesName)
+        addBook(title: "\(seriesName) — Book Two", series: seriesName)
+
+        tapMenuItem("Manage Future Read Order")
+        XCTAssertTrue(app.navigationBars["Future Read Order"].waitForExistence(timeout: 5))
+
+        let seriesRow = app.staticTexts[seriesName]
+        XCTAssertTrue(seriesRow.waitForExistence(timeout: 5), "Series row never appeared in the reorder list")
+        seriesRow.tap()
+
+        XCTAssertTrue(app.navigationBars[seriesName].waitForExistence(timeout: 5), "Tapping the series row never opened its SeriesOrderView")
+        XCTAssertTrue(app.staticTexts["\(seriesName) — Book One"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["\(seriesName) — Book Two"].waitForExistence(timeout: 5))
+    }
 }

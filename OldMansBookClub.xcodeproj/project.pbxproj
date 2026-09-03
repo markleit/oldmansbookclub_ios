@@ -24,7 +24,6 @@
 		3CC240C8A15A7B6730EBC4E1 /* CarPlaySceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */; };
 		3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B561ED5FA32D5FF7BE41DA80 /* Models.swift */; };
 		42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A518484880F73D42F012B0EA /* FeedbackView.swift */; };
-		4A43864C5CCCE00BD8884BFC /* FutureReadOrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CE960BB2F5346FD40F1FB0 /* FutureReadOrderView.swift */; };
 		4E4F8AC49ACEA00517171954 /* MemberProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */; };
 		54E906D217E3615C95F93FD4 /* MessagePrefetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */; };
 		57BC3832C81CA5CE8287DB9F /* AudioCue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22282622C7A5BEAAEE8961CE /* AudioCue.swift */; };
@@ -58,6 +57,7 @@
 		D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */; };
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
 		DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3797FC65323C0493452D32B2 /* CachedBookCover.swift */; };
+		DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */; };
 		F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78B795F384775724D68C0D6 /* ClubSetupView.swift */; };
 		F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */; };
 		F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */; };
@@ -113,7 +113,6 @@
 		8EAD4C42E18CA66F1B4759B3 /* OldMansBookClub.Debug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.Debug.entitlements; sourceTree = "<group>"; };
 		9166A20FFC2B637533597918 /* ImageAspectStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageAspectStore.swift; sourceTree = "<group>"; };
 		95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsReporter.swift; sourceTree = "<group>"; };
-		98CE960BB2F5346FD40F1FB0 /* FutureReadOrderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FutureReadOrderView.swift; sourceTree = "<group>"; };
 		A518484880F73D42F012B0EA /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		B561ED5FA32D5FF7BE41DA80 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -132,6 +131,7 @@
 		E2ABB613BFB149719A00A493 /* AudioCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCache.swift; sourceTree = "<group>"; };
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
+		F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadOrderView.swift; sourceTree = "<group>"; };
 		F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubUITests.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
 		FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptQueue.swift; sourceTree = "<group>"; };
@@ -236,7 +236,6 @@
 				F78B795F384775724D68C0D6 /* ClubSetupView.swift */,
 				7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */,
 				A518484880F73D42F012B0EA /* FeedbackView.swift */,
-				98CE960BB2F5346FD40F1FB0 /* FutureReadOrderView.swift */,
 				88754FFD53578C83DEC2294D /* LibraryView.swift */,
 				010D3939D82C530D2050FDBA /* LoginView.swift */,
 				345BF07C510F9CAACFA8BD0C /* ManageClubsView.swift */,
@@ -244,6 +243,7 @@
 				6531FD0CE01104B5FBC19167 /* MessageInputView.swift */,
 				EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */,
 				DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */,
+				F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */,
 				846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */,
 				36B897A6BA8DF56597F8CFEF /* SettingsView.swift */,
 			);
@@ -408,7 +408,6 @@
 				19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */,
 				D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */,
 				42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */,
-				4A43864C5CCCE00BD8884BFC /* FutureReadOrderView.swift in Sources */,
 				16A27074D46A1A1F4135B7E1 /* HeardStore.swift in Sources */,
 				98F1C24B88DD320D01538463 /* ImageAspectStore.swift in Sources */,
 				A8A1088928ABDD4A68D7BDCB /* LibraryView.swift in Sources */,
@@ -425,6 +424,7 @@
 				0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */,
 				26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */,
 				3812F9272805FBFC5C21741C /* ProfileViewModel.swift in Sources */,
+				DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */,
 				062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
 				9E206FCEBF6C0A9A52AD2378 /* ServerEnvironment.swift in Sources */,

@@ -677,19 +677,38 @@ final class APIClient {
         try await sendAuthorized(request)
     }
 
-    struct SetFutureReadOrderRequest: Encodable {
+    struct SetReadOrderRequest: Encodable {
         let clubId: UUID
+        let status: String
         let orderedBookIds: [UUID]
     }
 
-    // #137 — throws APIError.serverError(409) if the server's future-read list no longer
-    // matches what this reorder was based on (someone else added/removed a book meanwhile);
-    // the caller should refetch and let the admin retry rather than silently losing the edit.
-    func setFutureReadOrder(clubId: UUID, orderedBookIds: [UUID]) async throws {
-        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/future-read-order")!)
+    // #137/#144 — throws APIError.serverError(409) if the server's list for this status no
+    // longer matches what this reorder was based on (someone else added/removed/moved a book
+    // meanwhile); the caller should refetch and let the admin retry rather than silently losing
+    // the edit. Hits the generalized /books/read-order route (#144) — the old
+    // /books/future-read-order route stays server-side only, for any client still on a
+    // pre-#144 build.
+    func setReadOrder(clubId: UUID, status: BookStatus, orderedBookIds: [UUID]) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/read-order")!)
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(SetFutureReadOrderRequest(clubId: clubId, orderedBookIds: orderedBookIds))
+        request.httpBody = try encoder.encode(SetReadOrderRequest(clubId: clubId, status: status.rawValue, orderedBookIds: orderedBookIds))
+        try await sendAuthorized(request)
+    }
+
+    struct SetSeriesOrderRequest: Encodable {
+        let clubId: UUID
+        let seriesName: String
+        let orderedBookIds: [UUID]
+    }
+
+    // #144 — same conflict semantics as setReadOrder, scoped to one series' books.
+    func setSeriesOrder(clubId: UUID, seriesName: String, orderedBookIds: [UUID]) async throws {
+        var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/series-order")!)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(SetSeriesOrderRequest(clubId: clubId, seriesName: seriesName, orderedBookIds: orderedBookIds))
         try await sendAuthorized(request)
     }
 

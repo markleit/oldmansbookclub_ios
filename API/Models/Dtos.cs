@@ -94,7 +94,13 @@ public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string?
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl, string? SeriesName = null);
 public record UpdateBookRequest(string Title, string Author, string? SeriesName = null);
 public record SetBookStatusRequest(string Status);
+// #137 — kept for backward compat: a still-live old client may call the future-read-order
+// route with this shape for days after a server deploy (App Store review lag). #144 added the
+// generalized SetReadOrderRequest/SetSeriesOrderRequest below instead of reshaping this one.
 public record SetFutureReadOrderRequest(Guid ClubId, List<Guid> OrderedBookIds);
+// #144 — generalized SetFutureReadOrderRequest: any status, not just "future".
+public record SetReadOrderRequest(Guid ClubId, string Status, List<Guid> OrderedBookIds);
+public record SetSeriesOrderRequest(Guid ClubId, string SeriesName, List<Guid> OrderedBookIds);
 public record SetTranscriptRequest(string Transcript);
 public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);
 public record ChatReadDto(Guid UserId, string DisplayName, string? AvatarUrl, Guid LastSeenMessageId, List<Guid> HeardMessageIds);
