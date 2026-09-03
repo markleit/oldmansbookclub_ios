@@ -93,6 +93,33 @@ final class OldMansBookClubUITests: XCTestCase {
         XCTAssertFalse(failed.waitForExistence(timeout: 3), "Voice message failed to send")
     }
 
+    // MARK: - #145 emoji reaction picker
+
+    // Covers the wiring up to the system Emoji keyboard, not typing through the keyboard itself
+    // (a separate, Apple-owned process XCUITest can reach but which is brittle to script
+    // reliably) — long-press opens the bar, the fixed 6-emoji quick row is still there, and "+"
+    // opens the full picker sheet. toggleReaction itself (used by both the quick row and the
+    // picker) already has coverage via the existing quick-row reactions, unchanged by #145.
+    func testEmojiReactionBar_plusButtonOpensFullPicker() {
+        // Long-presses a pre-existing seeded message rather than sending a fresh one first —
+        // decouples this from the send path entirely, which this session hit unrelated flakiness
+        // in (GET requests reached the local API fine throughout; only fresh POSTs from a UITest
+        // run intermittently never arrived — didn't reproduce by hand, not chased further here).
+        let bubble = app.staticTexts["Testing REST send fallback"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "Seeded message never appeared in chat")
+        bubble.press(forDuration: 0.6)
+
+        let plusButton = app.buttons["addEmojiReactionButton"]
+        XCTAssertTrue(plusButton.waitForExistence(timeout: 5), "Reaction bar's + button never appeared")
+        XCTAssertTrue(app.buttons["👍"].exists, "Existing fixed reaction row should still be present")
+        plusButton.tap()
+
+        let cancelButton = app.buttons["Cancel"]
+        XCTAssertTrue(cancelButton.waitForExistence(timeout: 5), "Emoji picker sheet never appeared")
+        cancelButton.tap()
+        XCTAssertFalse(cancelButton.waitForExistence(timeout: 3), "Emoji picker sheet never dismissed")
+    }
+
     private func isTapToTalk() -> Bool {
         // A press-and-hold mic never enters the `.selected`/toggled state XCUITest can see from
         // a single tap; the two modes are visually and behaviorally distinct enough in practice
