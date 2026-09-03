@@ -640,8 +640,14 @@ struct MessageRow: View {
     @ViewBuilder
     private var actionMenuButtons: some View {
         if message.sendState == .failed {
-            menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
-            menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+            // #146 — text now reaches .failed too (previously only media could); route by type.
+            if message.type == .text {
+                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryTextMessage(id: message.id) } }
+                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelTextMessage(id: message.id) }
+            } else {
+                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
+                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+            }
         } else if !message.isDeleted && message.sendState == nil {
             menuRow("Reply", "arrowshape.turn.up.left") {
                 viewModel.replyingTo = message
@@ -888,22 +894,36 @@ struct MessageRow: View {
     private var messageBubble: some View {
         switch message.type {
         case .text:
-            Text(linkified(message.body ?? ""))
-                .tint(isMe ? .white : .blue)   // link color on blue vs grey bubbles
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
-                .foregroundColor(isMe ? .white : .primary)
-                .cornerRadius(16)
-                // Tapping a detected link opens web URLs in an in-app Safari sheet;
-                // mailto:/tel:/etc. fall through to the system handler.
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "http" || url.scheme == "https" {
-                        safariItem = SafariItem(url: url)
-                        return .handled
-                    }
-                    return .systemAction
-                })
+            ZStack(alignment: .bottomTrailing) {
+                Text(linkified(message.body ?? ""))
+                    .tint(isMe ? .white : .blue)   // link color on blue vs grey bubbles
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
+                    .foregroundColor(isMe ? .white : .primary)
+                    .cornerRadius(16)
+                    // Tapping a detected link opens web URLs in an in-app Safari sheet;
+                    // mailto:/tel:/etc. fall through to the system handler.
+                    .environment(\.openURL, OpenURLAction { url in
+                        if url.scheme == "http" || url.scheme == "https" {
+                            safariItem = SafariItem(url: url)
+                            return .handled
+                        }
+                        return .systemAction
+                    })
+                // #146 — text could never reach .sending/.failed visibly before (no retry
+                // queue existed, so a failed send was just removed); now that it can, give it
+                // the same overlay media bubbles already have.
+                if message.sendState == .sending {
+                    SendStateBadge(state: .sending).padding(4)
+                } else if message.sendState == .failed {
+                    SendStateBadge(
+                        state: .failed,
+                        onRetry: { Task { await viewModel.retryTextMessage(id: message.id) } },
+                        onCancel: { viewModel.cancelTextMessage(id: message.id) }
+                    ).padding(4)
+                }
+            }
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
