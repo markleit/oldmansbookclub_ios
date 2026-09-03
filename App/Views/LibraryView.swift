@@ -4,9 +4,7 @@ struct LibraryView: View {
     @StateObject private var viewModel = LibraryViewModel()
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingAddBook = false
-    @State private var showingReorderCurrentReads = false
-    @State private var showingReorderFutureReads = false
-    @State private var showingReorderPastReads = false
+    @State private var showingReorder = false
     @State private var bookListExpanded = true
     @State private var pastReadsExpanded = true
     @State private var navigationPath = NavigationPath()
@@ -136,10 +134,10 @@ struct LibraryView: View {
                     Menu {
                         addBookButton
                         // #137/#144 — reordering is club-admin only; a regular member wouldn't
-                        // see a control they can't use. One entry per non-empty status group.
-                        if canReorder(.current) { reorderButton(.current) }
-                        if canReorder(.future) { reorderButton(.future) }
-                        if canReorder(.past) { reorderButton(.past) }
+                        // see a control they can't use. One entry covers all three status
+                        // groups (was three separate menu items — one screen with a section per
+                        // group is the same capability with one control instead of three).
+                        if canReorder { reorderButton }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -149,26 +147,16 @@ struct LibraryView: View {
             .sheet(isPresented: $showingAddBook) {
                 AddBookSheetWrapper(viewModel: viewModel)
             }
-            .sheet(isPresented: $showingReorderCurrentReads) {
-                ReadOrderView(viewModel: viewModel, status: .current)
-            }
-            .sheet(isPresented: $showingReorderFutureReads) {
-                ReadOrderView(viewModel: viewModel, status: .future)
-            }
-            .sheet(isPresented: $showingReorderPastReads) {
-                ReadOrderView(viewModel: viewModel, status: .past)
+            .sheet(isPresented: $showingReorder) {
+                ReadOrderView(viewModel: viewModel)
             }
             } // VStack
         }
     }
 
-    private func canReorder(_ status: BookStatus) -> Bool {
-        guard TokenStore.shared.isClubAdmin else { return false }
-        switch status {
-        case .current: return !viewModel.currentReads.isEmpty
-        case .future: return !viewModel.bookList.isEmpty
-        case .past: return !viewModel.pastReads.isEmpty
-        }
+    private var canReorder: Bool {
+        TokenStore.shared.isClubAdmin
+            && !(viewModel.currentReads.isEmpty && viewModel.bookList.isEmpty && viewModel.pastReads.isEmpty)
     }
 
     private var addBookButton: some View {
@@ -177,22 +165,9 @@ struct LibraryView: View {
         }
     }
 
-    private func reorderButton(_ status: BookStatus) -> some View {
-        let title: String
-        let binding: Binding<Bool>
-        switch status {
-        case .current:
-            title = "Manage Currently Reading Order"
-            binding = $showingReorderCurrentReads
-        case .future:
-            title = "Manage Future Read Order"
-            binding = $showingReorderFutureReads
-        case .past:
-            title = "Manage Past Read Order"
-            binding = $showingReorderPastReads
-        }
-        return Button { binding.wrappedValue = true } label: {
-            Label(title, systemImage: "arrow.up.arrow.down")
+    private var reorderButton: some View {
+        Button { showingReorder = true } label: {
+            Label("Manage Reading Order", systemImage: "arrow.up.arrow.down")
         }
     }
 

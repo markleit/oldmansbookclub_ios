@@ -75,33 +75,28 @@ final class LibraryUITests: XCTestCase {
         addBook(title: "UITest Standalone \(Int(Date().timeIntervalSince1970))")
     }
 
-    // #144 — the three per-status reorder entries exist and open the right screen. Doesn't drive
-    // an actual drag (XCUITest drag gestures on a List are flaky/slow for little signal beyond
-    // what this already proves); this is really about the row-tap-into-a-series navigation,
-    // which needed a Button + navigationDestination(isPresented:) fix after a List forced into
-    // permanent edit mode was found to swallow plain NavigationLink row taps.
-    func testReorderMenu_opensCorrectScreenForEachStatus() {
-        for (label, title) in [
-            ("Manage Currently Reading Order", "Currently Reading Order"),
-            ("Manage Future Read Order", "Future Read Order"),
-            ("Manage Past Read Order", "Past Read Order"),
-        ] {
-            tapMenuItem(label)
-            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 5), "\(label) didn't open '\(title)'")
-            app.buttons["Cancel"].tap()
-        }
+    // #144 — a single "Manage Reading Order" entry opens one screen covering all three status
+    // groups (was three separate menu items — feedback after reviewing #144 in the simulator).
+    // Doesn't drive an actual drag (XCUITest drag gestures on a List are flaky/slow for little
+    // signal beyond what this already proves); this is really about the menu collapsing
+    // correctly and each section rendering.
+    func testReorderMenu_opensOneScreenWithAllSections() {
+        tapMenuItem("Manage Reading Order")
+        XCTAssertTrue(app.navigationBars["Reading Order"].waitForExistence(timeout: 5), "Reorder menu item didn't open the Reading Order screen")
+        XCTAssertTrue(app.staticTexts["CURRENTLY READING"].waitForExistence(timeout: 5), "Reading Order screen missing its Currently Reading section")
+        XCTAssertTrue(app.staticTexts["FUTURE READS"].waitForExistence(timeout: 5), "Reading Order screen missing its Future Reads section")
+        app.buttons["Cancel"].tap()
     }
 
-    // #144 — tapping a series row inside the Future Read Order reorder screen (which is
-    // permanently in edit mode for drag-to-reorder) must still navigate into that series'
-    // own reorder screen.
+    // #144 — tapping a series row inside the Reading Order screen (which is permanently in edit
+    // mode for drag-to-reorder) must still navigate into that series' own reorder screen.
     func testTapSeriesRowInReorderScreen_opensSeriesOrderView() {
         let seriesName = "UITest Series \(Int(Date().timeIntervalSince1970))"
         addBook(title: "\(seriesName) — Book One", series: seriesName)
         addBook(title: "\(seriesName) — Book Two", series: seriesName)
 
-        tapMenuItem("Manage Future Read Order")
-        XCTAssertTrue(app.navigationBars["Future Read Order"].waitForExistence(timeout: 5))
+        tapMenuItem("Manage Reading Order")
+        XCTAssertTrue(app.navigationBars["Reading Order"].waitForExistence(timeout: 5))
 
         let seriesRow = app.staticTexts[seriesName]
         XCTAssertTrue(seriesRow.waitForExistence(timeout: 5), "Series row never appeared in the reorder list")
