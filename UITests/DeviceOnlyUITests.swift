@@ -40,6 +40,7 @@ final class DeviceOnlyUITests: XCTestCase {
         app.launch()
         SystemAlerts.dismissAny()
         loginIfNeeded()
+        SystemAlerts.dismissAny()
         #endif
     }
 

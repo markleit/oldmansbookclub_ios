@@ -16,6 +16,9 @@ final class OldMansBookClubUITests: XCTestCase {
         // this, every tap below lands on the alert's shield. See SystemAlerts.
         SystemAlerts.dismissAny()
         loginIfNeeded()
+        // Again after login: push registration triggers the notification prompt, so on a clean
+        // install it arrives here rather than on the launch screen. See SystemAlerts.
+        SystemAlerts.dismissAny()
         openFirstBookDiscussion()
     }
 

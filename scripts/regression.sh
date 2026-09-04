@@ -204,7 +204,12 @@ if [[ $LANE_LIVE -eq 1 ]]; then
     if curl -fsS --max-time 2 http://localhost:5235/health >/dev/null 2>&1; then
         note "an API is already listening on :5235 — using it, and leaving it running"
     else
-        ( cd API && ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://localhost:5235 ) \
+        # 0.0.0.0, not localhost. Binding to loopback makes the API unreachable from the iOS
+        # Simulator on this setup (the app renders "Unable to load. Check your connection." while
+        # curl from the Mac succeeds, which is a genuinely confusing pair of symptoms), and it
+        # would make the device lane impossible outright — a phone cannot reach the Mac's
+        # loopback at all.
+        ( cd API && ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://0.0.0.0:5235 ) \
             >"$REPO_ROOT/.regression-api.log" 2>&1 &
         API_PID=$!
         note "waiting for http://localhost:5235/health/ready"

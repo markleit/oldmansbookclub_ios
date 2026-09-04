@@ -44,6 +44,8 @@ final class HermeticUITests: XCTestCase {
 
         let devLogin = app.buttons["Dev Login (Debug)"]
         if devLogin.waitForExistence(timeout: 5) { devLogin.tap() }
+        // Push registration fires after login, so the notification prompt arrives here.
+        SystemAlerts.dismissAny()
     }
 
     private func openCurrentBook() {

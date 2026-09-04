@@ -5,8 +5,14 @@ import XCTest
 /// These tests used to run only against a simulator where permission had already been granted at
 /// some point by hand, so nothing dismissed them — and the moment the regression script started
 /// uninstalling the app between lanes (which it must, or a session from one lane poisons the
-/// next), every test failed at "Library screen never showed a Discussion link". The alert was
-/// sitting on top of the login screen the whole time, swallowing the taps.
+/// next), they began failing.
+///
+/// **Call it AFTER logging in, not just before.** The notification prompt is triggered by push
+/// registration, which happens once the user is authenticated — so on a clean install it lands a
+/// second or two INTO the first screen, on top of whatever the test has just opened. The symptom
+/// is bizarre: the tap on a menu button registers, the popover opens, the alert appears over it,
+/// XCUITest auto-dismisses the alert (taking the popover with it), and the next tap lands on
+/// nothing. The failure is then reported against the menu item, several steps from the cause.
 ///
 /// SpringBoard is queried directly rather than using `addUIInterruptionMonitor`, which only fires
 /// on the NEXT interaction with the app and so races the very tap it is supposed to unblock.

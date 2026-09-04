@@ -83,6 +83,12 @@ each `setUp`. The existing UI tests never needed this because they only ever ran
 where permission had been granted by hand at some point — which is exactly the kind of hidden
 state a regression suite is supposed to remove.
 
+**Known unvalidated (2026-09-04):** on this machine the live XCUITests currently fail at the first
+authenticated request — the library shows *"Unable to load. Check your connection."* while `curl`
+against the same API from the Mac succeeds. **Unmodified `main` fails identically**, so it is not a
+regression from the suite; it looks environmental (it began after a network change) and is not yet
+root-caused. Lanes A and the reset/seed path are verified; the XCUITests themselves are not.
+
 ### Lane C — device
 
 Everything in lane B, retargeted at `OMBC_DEVICE_UDID` (`xcrun devicectl list devices`), plus the
