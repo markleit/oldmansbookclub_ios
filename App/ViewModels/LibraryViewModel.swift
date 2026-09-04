@@ -16,8 +16,11 @@ final class LibraryViewModel: ObservableObject {
     var bookList: [Book] { books.filter { $0.clubId == clubId && $0.status == .future } }
     var pastReads: [Book] { books.filter { $0.clubId == clubId && $0.status == .past } }
 
-    // #138 — series-grouped views of the two lists that actually display series (Currently
-    // Reading only ever shows one book, so it never needed this).
+    // #138 — series-grouped views of each status list. Currently Reading usually shows one
+    // book, but #144's reorder view needs a [ReadItem] for every status uniformly; `.grouped`
+    // degrades to one `.single` per book when nothing shares a `seriesName`, so this is a no-op
+    // for the common case.
+    var currentReadGroups: [ReadItem] { Self.grouped(currentReads) }
     var futureReadGroups: [ReadItem] { Self.grouped(bookList) }
     var pastReadGroups: [ReadItem] { Self.grouped(pastReads) }
 
@@ -233,7 +236,7 @@ final class LibraryViewModel: ObservableObject {
 
 // #138 — a Future/Past Reads row: either one standalone book, or a whole series collapsed
 // into a single unit (see LibraryViewModel.grouped).
-enum ReadItem: Identifiable {
+enum ReadItem: Identifiable, Hashable {
     case single(Book)
     case series(name: String, books: [Book])
 

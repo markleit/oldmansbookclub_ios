@@ -53,9 +53,10 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var books = await db.Books
             .Where(b => myClubIds.Contains(b.ClubId))
             .OrderBy(b => b.Status == "current" ? 0 : b.Status == "future" ? 1 : 2)
-            // #137 — future reads follow the club's manual queue order; current/past (where
-            // FutureReadOrder is stale/unused) keep the old newest-first ordering.
-            .ThenBy(b => b.Status == "future" ? b.FutureReadOrder : 0)
+            // #137/#144 — every status now follows its own manual DisplayOrder (set on
+            // create/status-change, reordered via #144's endpoints). AddedAt stays as a
+            // tie-break safety net, matching pre-#144 behavior for any rows not yet backfilled.
+            .ThenBy(b => b.DisplayOrder)
             .ThenByDescending(b => b.AddedAt)
             .ToListAsync();
 
@@ -252,12 +253,10 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
         if (!isClubAdmin) return Forbid();
 
-        // #137 — append to the back of this club's future-read queue, not the front, so adding
-        // a book never silently jumps ahead of whatever an admin already ordered.
-        var maxOrder = await db.Books
-            .Where(b => b.ClubId == request.ClubId && b.Status == "future")
-            .Select(b => (int?)b.FutureReadOrder)
-            .MaxAsync() ?? -1;
+        // #137/#144 — append to the back of this club's future queue (the only status a book
+        // can be created into), not the front, so adding a book never silently jumps ahead of
+        // whatever an admin already ordered.
+        var maxOrder = await MaxDisplayOrderAsync(request.ClubId, "future");
 
         var seriesName = NormalizeSeriesName(request.SeriesName);
         var book = new Book
@@ -267,7 +266,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             Author = request.Author,
             CoverBlobUrl = request.CoverUrl,
             Status = "future",
-            FutureReadOrder = maxOrder + 1,
+            DisplayOrder = maxOrder + 1,
             SeriesName = seriesName,
             SeriesOrder = seriesName is null ? null : await NextSeriesOrderAsync(request.ClubId, seriesName)
         };
@@ -298,6 +297,14 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .MaxAsync() ?? -1;
         return maxSeriesOrder + 1;
     }
+
+    // #144 — highest DisplayOrder currently in use within one (club, status) group, or -1 if
+    // the group is empty. Callers add 1 to append a book to the end of that group.
+    private async Task<int> MaxDisplayOrderAsync(Guid clubId, string status)
+        => await db.Books
+            .Where(b => b.ClubId == clubId && b.Status == status)
+            .Select(b => (int?)b.DisplayOrder)
+            .MaxAsync() ?? -1;
 
     // Book details. Lazily backfills metadata (description / published year / page
     // count, and upgrades the cover) from Google Books the first time a book without
@@ -359,32 +366,70 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
     }
 
-    // #137 — persist a club-admin's drag-and-drop reorder of Future Reads. The whole list is
-    // sent every time (not a single move) — simplest to reason about, and this list is never
-    // long enough for that to matter.
+    // #137 — kept as-is for backward compat: a client still on a pre-#144 build may call this
+    // route for days after this deploys (App Store review lag) — see #144's SetReadOrder for the
+    // generalized replacement. Just future-reads, delegating to the shared implementation.
     [HttpPut("future-read-order")]
     public async Task<IActionResult> SetFutureReadOrder([FromBody] SetFutureReadOrderRequest request)
+        => await SetDisplayOrderAsync(request.ClubId, "future", request.OrderedBookIds);
+
+    // #144 — generalized #137: persist a club-admin's drag-and-drop reorder within any one
+    // status group (current/future/past). Status boundaries don't change here, only order
+    // within the group.
+    [HttpPut("read-order")]
+    public async Task<IActionResult> SetReadOrder([FromBody] SetReadOrderRequest request)
+        => await SetDisplayOrderAsync(request.ClubId, request.Status, request.OrderedBookIds);
+
+    // #137/#144 — persist a manual reorder of every book in one (club, status) group. The whole
+    // list is sent every time (not a single move) — simplest to reason about, and this list is
+    // never long enough for that to matter.
+    private async Task<IActionResult> SetDisplayOrderAsync(Guid clubId, string status, List<Guid> orderedBookIds)
+    {
+        var isClubAdmin = await db.Memberships
+            .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId && m.IsClubAdmin);
+        if (!isClubAdmin) return Forbid();
+
+        var books = await db.Books
+            .Where(b => b.ClubId == clubId && b.Status == status)
+            .ToListAsync();
+
+        // Reject rather than silently drop/ignore a mismatch — a stale client (someone else
+        // added/removed/moved a book while this admin was mid-reorder) shouldn't overwrite the
+        // group with an order that doesn't reflect its current members. The client just
+        // refetches and retries.
+        if (books.Count != orderedBookIds.Count ||
+            !books.Select(b => b.Id).ToHashSet().SetEquals(orderedBookIds))
+        {
+            return Conflict("This list changed — refresh and try again.");
+        }
+
+        for (var i = 0; i < orderedBookIds.Count; i++)
+            books.First(b => b.Id == orderedBookIds[i]).DisplayOrder = i;
+
+        await db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    // #144 — persist a club-admin's drag-and-drop reorder of one series' books (SeriesOrder).
+    [HttpPut("series-order")]
+    public async Task<IActionResult> SetSeriesOrder([FromBody] SetSeriesOrderRequest request)
     {
         var isClubAdmin = await db.Memberships
             .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
         if (!isClubAdmin) return Forbid();
 
         var books = await db.Books
-            .Where(b => b.ClubId == request.ClubId && b.Status == "future")
+            .Where(b => b.ClubId == request.ClubId && b.SeriesName == request.SeriesName)
             .ToListAsync();
 
-        // Reject rather than silently drop/ignore a mismatch — a stale client (someone else
-        // added/removed a book while this admin was mid-reorder) shouldn't overwrite the queue
-        // with an order that doesn't reflect the current list. The client just refetches and
-        // retries.
         if (books.Count != request.OrderedBookIds.Count ||
             !books.Select(b => b.Id).ToHashSet().SetEquals(request.OrderedBookIds))
         {
-            return Conflict("Future reads changed — refresh and try again.");
+            return Conflict("This series changed — refresh and try again.");
         }
 
         for (var i = 0; i < request.OrderedBookIds.Count; i++)
-            books.First(b => b.Id == request.OrderedBookIds[i]).FutureReadOrder = i;
+            books.First(b => b.Id == request.OrderedBookIds[i]).SeriesOrder = i;
 
         await db.SaveChangesAsync();
         return NoContent();
@@ -418,6 +463,14 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var isClubAdmin = await db.Memberships
             .AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId && m.IsClubAdmin);
         if (!isClubAdmin) return Forbid();
+
+        // #144 — append to the end of the new status group's manual order, same "append, don't
+        // reset to 0" reasoning as CreateBook: a status change shouldn't silently jump a book
+        // ahead of whatever order an admin already set for that group. Only recompute if the
+        // status actually changes (matches #138's "only touch SeriesOrder when it actually
+        // changes" precedent) — a no-op status write shouldn't reshuffle the book to the end.
+        if (request.Status != book.Status)
+            book.DisplayOrder = await MaxDisplayOrderAsync(book.ClubId, request.Status) + 1;
 
         book.Status = request.Status;
         book.FinishedAt = request.Status == "past" ? DateTime.UtcNow : null;

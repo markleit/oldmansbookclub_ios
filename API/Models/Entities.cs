@@ -207,11 +207,13 @@ public class Book
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
     [Required] public string Status { get; set; } = "future"; // "future", "current", "past"
-    // #137 — manual queue order within "future" for this book's club. Only meaningful while
-    // Status == "future"; ignored (and left stale) once a book moves to current/past. Lower
-    // sorts first ("read sooner"). New books are appended (max + 1), not reset to 0, so adding
-    // a book never silently jumps it ahead of an admin's existing order.
-    public int FutureReadOrder { get; set; }
+    // #137/#144 — manual order within this book's (ClubId, Status) group. Was "FutureReadOrder"
+    // (future-only); #144 generalized it to current/past too, so it's renamed to reflect that —
+    // still meaningless once compared across different statuses. Lower sorts first ("read
+    // sooner" for future; display order for current/past). New books, and books moving into a
+    // new status, are appended (max + 1) rather than reset to 0, so neither action silently
+    // jumps a book ahead of an admin's existing order.
+    public int DisplayOrder { get; set; }
     // #138 — free-text series grouping (mirrors Author: a plain string, not a Series entity —
     // see the issue for why). Null = not in a series. SeriesOrder is this book's position
     // within the series (1st, 2nd, ...) and is meaningless when SeriesName is null. Persists

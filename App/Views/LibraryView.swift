@@ -4,7 +4,7 @@ struct LibraryView: View {
     @StateObject private var viewModel = LibraryViewModel()
     @ObservedObject private var deepLink = DeepLinkCoordinator.shared
     @State private var showingAddBook = false
-    @State private var showingReorderFutureReads = false
+    @State private var showingReorder = false
     @State private var bookListExpanded = true
     @State private var pastReadsExpanded = true
     @State private var navigationPath = NavigationPath()
@@ -133,11 +133,11 @@ struct LibraryView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         addBookButton
-                        // #137 — reordering is club-admin only; a regular member wouldn't see a
-                        // control they can't use.
-                        if canReorderFutureReads {
-                            reorderFutureReadsButton
-                        }
+                        // #137/#144 — reordering is club-admin only; a regular member wouldn't
+                        // see a control they can't use. One entry covers all three status
+                        // groups (was three separate menu items — one screen with a section per
+                        // group is the same capability with one control instead of three).
+                        if canReorder { reorderButton }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -147,15 +147,16 @@ struct LibraryView: View {
             .sheet(isPresented: $showingAddBook) {
                 AddBookSheetWrapper(viewModel: viewModel)
             }
-            .sheet(isPresented: $showingReorderFutureReads) {
-                FutureReadOrderView(viewModel: viewModel)
+            .sheet(isPresented: $showingReorder) {
+                ReadOrderView(viewModel: viewModel)
             }
             } // VStack
         }
     }
 
-    private var canReorderFutureReads: Bool {
-        TokenStore.shared.isClubAdmin && !viewModel.bookList.isEmpty
+    private var canReorder: Bool {
+        TokenStore.shared.isClubAdmin
+            && !(viewModel.currentReads.isEmpty && viewModel.bookList.isEmpty && viewModel.pastReads.isEmpty)
     }
 
     private var addBookButton: some View {
@@ -164,9 +165,9 @@ struct LibraryView: View {
         }
     }
 
-    private var reorderFutureReadsButton: some View {
-        Button { showingReorderFutureReads = true } label: {
-            Label("Manage Future Read Order", systemImage: "arrow.up.arrow.down")
+    private var reorderButton: some View {
+        Button { showingReorder = true } label: {
+            Label("Manage Reading Order", systemImage: "arrow.up.arrow.down")
         }
     }
 
