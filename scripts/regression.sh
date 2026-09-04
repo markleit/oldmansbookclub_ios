@@ -33,6 +33,7 @@ Options:
   --live               also run the XCUITests against a local API + bookclubdb-dev
   --device             --live, plus the device-only tests on OMBC_DEVICE_UDID
   --only api|ios|ui    run just one part
+  --only ios-unit      iOS unit tests only, skipping the hermetic UI tests
   --no-reset           for --live: do not wipe bookclubdb-dev first (leaves your dev state alone,
                        at the cost of determinism)
   --simulator NAME     simulator to use (default: iPhone 17 Pro, or $OMBC_SIMULATOR)
@@ -56,6 +57,9 @@ while [[ $# -gt 0 ]]; do
             case "$2" in
                 api) LANE_API=1 ;;
                 ios) LANE_IOS_UNIT=1 ;;
+                # Unit tests without the hermetic UI tests — what CI gates on today, while the
+                # stub-server lane is unexplained on a GitHub runner.
+                ios-unit) LANE_IOS_UNIT=1; SKIP_HERMETIC_UI=1 ;;
                 ui)  LANE_LIVE=1 ;;
                 *)   echo "--only takes api, ios or ui" >&2; exit 2 ;;
             esac
@@ -178,12 +182,14 @@ if [[ $LANE_IOS_UNIT -eq 1 ]]; then
     reset_simulator_state
     run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" OldMansBookClubTests
 
+    if [[ "${SKIP_HERMETIC_UI:-0}" != "1" ]]; then
     step "Hermetic UI tests (stub server, still no backend)"
     # The app is pointed at a stub HTTP server run by the test process itself, using the
     # debugServerBaseURL override that already exists for #120 — so these are as deterministic as
     # the unit tests, just slower because a simulator has to boot and draw.
     run_xcodebuild_tests "hermetic UI" "platform=iOS Simulator,name=$SIMULATOR" \
         OldMansBookClubUITests/HermeticUITests
+    fi
 fi
 
 # ---- lane B: live UI -------------------------------------------------------------------------

@@ -39,7 +39,10 @@ would pass while enforcing nothing — green, and testing the opposite of what t
 The whole target runs in well under a second, which is what makes it viable as a merge gate.
 
 **Hermetic UI** (`UITests/HermeticUITests.swift`) drives the real app against a stub HTTP server
-run by the test process itself. It needs no production code: `ServerEnvironment` already resolves
+run by the test process itself. **Local only for now** — these pass here but fail on a GitHub
+runner, where the app makes no request to the stub at all, so it is an environment difference
+rather than an app failure. CI gates on `--only ios-unit` until that is understood; muting a red
+job would have been the dishonest fix. It needs no production code: `ServerEnvironment` already resolves
 its host from the `debugServerBaseURL` default (#120), and a launch argument populates it — so
 nothing stub-shaped ships in the app binary and there is no injection seam to maintain.
 

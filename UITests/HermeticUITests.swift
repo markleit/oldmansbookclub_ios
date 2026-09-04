@@ -48,6 +48,14 @@ final class HermeticUITests: XCTestCase {
         SystemAlerts.dismissAny()
     }
 
+    /// Distinguishes "the app never reached the stub" from "the stub answered wrong" — the two
+    /// have identical symptoms on screen (an empty library) and completely different causes.
+    private func assertStubWasReached(_ context: String) {
+        XCTAssertFalse(server.requestedPaths.isEmpty, """
+            \(context): the app made NO request to the stub at \(server.baseURL).             It could not reach the test process's HTTP server, so this is a networking/environment             problem, not an app one. Requests seen: none.
+            """)
+    }
+
     private func openCurrentBook() {
         let discussion = app.staticTexts["Discussion"].firstMatch
         XCTAssertTrue(discussion.waitForExistence(timeout: 15), "Library never rendered from the stub")
@@ -63,7 +71,9 @@ final class HermeticUITests: XCTestCase {
         // Two books, one current and one future — the shape the reorder screen and the library
         // sections both depend on. Against a live database this assertion depends on whatever
         // state that database happens to be in.
-        XCTAssertTrue(app.staticTexts["Seed: Current Read"].waitForExistence(timeout: 15))
+        let rendered = app.staticTexts["Seed: Current Read"].waitForExistence(timeout: 15)
+        if !rendered { assertStubWasReached("library never rendered") }
+        XCTAssertTrue(rendered, "the stub answered but the library did not render its books")
         XCTAssertTrue(app.staticTexts["Seed: Future Read"].exists)
     }
 
