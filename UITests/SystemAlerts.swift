@@ -20,13 +20,16 @@ enum SystemAlerts {
     private static let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
     /// Answers whatever permission alert is up, if any. Cheap to call and safe when none is
-    /// showing — pass a short timeout when you are only checking.
-    static func dismissAny(timeout: TimeInterval = 5) {
+    /// showing — pass a short timeout when you are only checking. Returns whether it actually
+    /// dismissed something, which matters at a call site where an alert eating the interaction
+    /// underneath it (see below) means that interaction needs to be retried, not just followed.
+    @discardableResult
+    static func dismissAny(timeout: TimeInterval = 5) -> Bool {
         // Wait for an ALERT once, not for each button label in turn — checking four labels with a
         // five-second timeout each would add twenty seconds to every setUp on the common path
         // where no alert is showing at all.
         let alert = springboard.alerts.firstMatch
-        guard alert.waitForExistence(timeout: timeout) else { return }
+        guard alert.waitForExistence(timeout: timeout) else { return false }
 
         // "Allow" first: a test that needs a permission is better off having it, and notifications
         // are the prompt that actually covers the login screen. "While Using the App" is the
@@ -35,7 +38,27 @@ enum SystemAlerts {
             alert.buttons[label].tap()
             // A clean install can queue several in a row (notifications, then local network).
             dismissAny(timeout: 2)
-            return
+            return true
+        }
+        return false
+    }
+
+    /// For an interaction that can trigger a FIRST-USE system permission prompt (microphone,
+    /// speech recognition, camera, photo library) — the alert is requested lazily, mid-gesture,
+    /// not at a predictable point in `setUp` the way the notification prompt is. It can appear
+    /// exactly while a multi-second gesture like a long-press is in flight, which does not just
+    /// delay the gesture — it eats it: the alert steals the touch-up, the app's press-state
+    /// callback never fires, and nothing happens at all. No error, no crash, just silence, which
+    /// is indistinguishable on screen from the feature being broken.
+    ///
+    /// The fix is not "dismiss before" (the alert may not exist yet — first use IS the trigger)
+    /// or "dismiss after" alone (the gesture already failed by then) — it is retry-after-permission:
+    /// attempt once, and if an alert shows up as a RESULT, dismiss it and attempt exactly once
+    /// more now that the permission decision is already made and cannot interrupt a second time.
+    static func performRetryingPermissionPrompt(_ action: () -> Void) {
+        action()
+        if dismissAny(timeout: 3) {
+            action()
         }
     }
 }
