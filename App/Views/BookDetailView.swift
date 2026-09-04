@@ -1165,11 +1165,18 @@ struct VoiceMessageBubble: View {
             if isSending {
                 ProgressView()
                     .frame(width: 36, height: 36)
+                    // Voice draws its own inline send-state UI rather than using
+                    // SendStateBadge, so it needs to carry the same identifiers or its state is
+                    // invisible to tests. It genuinely was: testSendVoiceMessage asserted on
+                    // failedSendIndicator, which this bubble never renders under any state, so
+                    // the test passed even while every send was being rejected.
+                    .accessibilityIdentifier("sendingIndicator")
             } else if isFailed {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(isMe ? .white.opacity(0.85) : .orange)
                     .frame(width: 36, height: 36)
+                    .accessibilityIdentifier("failedSendIndicator")
             } else {
                 Button { audio.toggle(message: message, bookId: bookId) } label: {
                     Group {
@@ -1508,6 +1515,11 @@ struct SendStateBadge: View {
                 .padding(8)
                 .background(Color.black.opacity(0.55))
                 .clipShape(Circle())
+                // Paired with failedSendIndicator so a test can assert the discrete send state
+                // directly: a message is confirmed exactly when it carries neither badge
+                // (sendState == nil after reconciliation). Asserting "no failure appeared" alone
+                // can't tell a success apart from a send that is still in flight.
+                .accessibilityIdentifier("sendingIndicator")
         case .failed:
             Menu {
                 Button { onRetry?() } label: { Label("Retry", systemImage: "arrow.clockwise") }
