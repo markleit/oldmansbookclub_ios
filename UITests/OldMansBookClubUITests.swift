@@ -56,13 +56,23 @@ final class OldMansBookClubUITests: XCTestCase {
         app.buttons["sendButton"].tap()
 
         XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 10), "Sent message never appeared in chat")
-        XCTAssertFalse(app.otherElements["failedSendIndicator"].exists, "Message showed as failed")
+        // Queried type-agnostically: this badge is a Menu's label, so it's a *button*, and the
+        // original `app.otherElements[...]` form could never match — making the assertion
+        // vacuous. See #150.
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "failedSendIndicator").count, 0,
+                       "Message showed as failed")
     }
 
     // #146 — a send that can't reach the server (API stopped externally for this run) must go
     // .failed with a Retry option, not vanish. Requires the local dev API to be down when this
     // specific test runs.
-    func testSendTextMessage_offlineShowsFailedAndRetries() {
+    func testSendTextMessage_offlineShowsFailedAndRetries() throws {
+        // Needs the local dev API stopped, which can't be arranged from inside the test — so it
+        // is opt-in rather than silently failing every normal run (and CI). Run it with:
+        //   OMBC_OFFLINE_TEST=1, having stopped `dotnet run` first.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["OMBC_OFFLINE_TEST"] == "1",
+                          "Set OMBC_OFFLINE_TEST=1 with the local API stopped to run this.")
+
         let text = uniqueMessage("offline")
         let field = app.textViews["messageTextField"]
         field.tap()
@@ -116,7 +126,8 @@ final class OldMansBookClubUITests: XCTestCase {
         app.activate()
 
         XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 15), "Message did not survive backgrounding right after send")
-        XCTAssertFalse(app.otherElements["failedSendIndicator"].exists, "Message showed as failed after backgrounding")
+        XCTAssertEqual(app.descendants(matching: .any).matching(identifier: "failedSendIndicator").count, 0,
+                       "Message showed as failed after backgrounding")
     }
 
     // MARK: - Voice send
