@@ -486,6 +486,12 @@ final class BookViewModel: ObservableObject {
         let bgTask = BackgroundTaskBox(name: "send-text-\(clientId.uuidString)")
         defer { bgTask.end() }
         do {
+            // #146 — with no network path at all (airplane mode), skip the attempt rather than
+            // waiting for URLSession to exhaust name resolution and connect timeouts, measured
+            // on-device at ~20s before it errors. Thrown rather than handled inline so the catch
+            // below treats it exactly like any other transport failure: bubble goes .failed,
+            // entry stays queued, outbox retries when there's a network again.
+            guard NetworkReachability.shared.hasNetworkPath else { throw URLError(.notConnectedToInternet) }
             let sent = try await APIClient.shared.sendMessage(
                 bookId: book.id, type: .text, body: text, clientId: clientId, parentMessageId: reply?.id)
             markOnline()
@@ -520,6 +526,10 @@ final class BookViewModel: ObservableObject {
             messages[idx].sendState = .sending
         }
         do {
+            // Same no-path short-circuit as sendMessage — matters more here, since
+            // flushPendingText walks the queue serially and would otherwise stall ~20s per
+            // entry before any of them could go back to .failed.
+            guard NetworkReachability.shared.hasNetworkPath else { throw URLError(.notConnectedToInternet) }
             let sent = try await APIClient.shared.sendMessage(
                 bookId: item.bookId, type: .text, body: item.body, clientId: item.clientId,
                 parentMessageId: item.parentMessageId)

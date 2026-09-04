@@ -36,6 +36,7 @@
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
 		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
+		76074454E31FD4AECA61E60C /* NetworkReachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20856D8F1ADFB8460B25274 /* NetworkReachability.swift */; };
 		79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024037128BCBBAFA0312E443 /* BookViewModel.swift */; };
 		816EE2512B88D333513E347B /* SignalRClient in Frameworks */ = {isa = PBXBuildFile; productRef = 7FD60A7A3BF0536227F4D99B /* SignalRClient */; };
 		8473BD2BD1C386E337AFFCE1 /* AddBookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */; };
@@ -133,6 +134,7 @@
 		E2ABB613BFB149719A00A493 /* AudioCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCache.swift; sourceTree = "<group>"; };
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
 		EFAC3393804C75B80C2AE523 /* PendingApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalView.swift; sourceTree = "<group>"; };
+		F20856D8F1ADFB8460B25274 /* NetworkReachability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkReachability.swift; sourceTree = "<group>"; };
 		F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadOrderView.swift; sourceTree = "<group>"; };
 		F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubUITests.swift; sourceTree = "<group>"; };
 		F78B795F384775724D68C0D6 /* ClubSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClubSetupView.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				9166A20FFC2B637533597918 /* ImageAspectStore.swift */,
 				41D1EA92276516693D78B8D2 /* MediaSendQueue.swift */,
 				4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */,
+				F20856D8F1ADFB8460B25274 /* NetworkReachability.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */,
 				7A39EDBB008EDDF420B181A6 /* ServerEnvironment.swift */,
@@ -422,6 +425,7 @@
 				8EC170289459BCA2AB9E7C0F /* MessageInputView.swift in Sources */,
 				54E906D217E3615C95F93FD4 /* MessagePrefetcher.swift in Sources */,
 				3DF010E08C72A2C4327A1FE4 /* Models.swift in Sources */,
+				76074454E31FD4AECA61E60C /* NetworkReachability.swift in Sources */,
 				58F9D1B52296CCFF2E6F480A /* OldMansBookClubApp.swift in Sources */,
 				3B27C1FF28AAF5C988E42513 /* PendingApprovalView.swift in Sources */,
 				0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */,
