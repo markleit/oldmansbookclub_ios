@@ -27,10 +27,20 @@ enum ServerEnvironment {
     /// Mac's LAN address instead, which is what the editable field is for.
     static let localhostURLString = "http://localhost:5235"
 
-    /// The dev Mac's LAN address, for a physical device pointed at a local `dotnet run`
-    /// (`ipconfig getifaddr en0`). Update this whenever the network changes — it's a preset for
-    /// convenience, not a source of truth.
-    static let devMachineURLString = "http://10.24.1.83:5235"
+    /// The dev Mac, for a physical device pointed at a local `dotnet run`.
+    ///
+    /// Deliberately the Mac's Bonjour/mDNS name rather than its LAN IP: the IP changes with
+    /// every network (home vs. personal hotspot vs. office DHCP), and a hardcoded one is wrong
+    /// everywhere except where it was last edited. `.local` resolves to whatever address the Mac
+    /// currently holds on the same network, so this preset stops needing maintenance. Requires
+    /// `NSAllowsLocalNetworking` (set — it's what permits cleartext HTTP to `.local`) and the
+    /// local-network permission prompt (`NSLocalNetworkUsageDescription`, also set).
+    ///
+    /// Caveat: some corporate/guest Wi-Fi filters mDNS or isolates clients, so this can fail at
+    /// the office. That's what the editable Host field is for — type the IP
+    /// (`ipconfig getifaddr en0`) there; no rebuild needed, it persists in UserDefaults. This is
+    /// a convenience preset, not a source of truth.
+    static let devMachineURLString = "http://Marks-MacBook.local:5235"
 
     /// What the compile-time fork used to do. Still the default, so an untouched DEBUG build
     /// behaves exactly as it did before: simulator → localhost, device → production.
