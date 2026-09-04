@@ -29,7 +29,6 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     private const long MaxVoiceBytes = 25L * 1024 * 1024;   // ~15 min voice is a few MB
     private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to ~<1 MB
     private const long MaxVideoBytes = 100L * 1024 * 1024;  // 100 MB cap (matches client)
-    private const string AllowedBlobHost = "oldmansbookclubstore.blob.core.windows.net";
 
     public async Task<SenderContext> LoadSenderContextAsync(Guid userId)
     {
@@ -44,10 +43,15 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
             throw new MessageSendException("Slow down — too many messages. Try again in a minute.");
     }
 
-    private static bool IsOwnBlobUrl(string url) =>
+    // Still a strict allow-list — a client can only hand us a URL on our own storage account —
+    // but sourced from configuration rather than a literal. It was hardcoded to production's
+    // account, which meant dev rejected its own uploads ("Invalid media URL." on every voice,
+    // photo and video send) once #120 moved dev onto a separate storage account. Production
+    // behaviour is unchanged: BlobService resolves to the same host there.
+    private bool IsOwnBlobUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == "https" &&
-        uri.Host == AllowedBlobHost;
+        uri.Host == blob.AccountHost;
 
     private async Task EnforceBlobSizeAsync(string mediaUrl, long maxBytes, string label)
     {

@@ -249,7 +249,19 @@ final class BookViewModel: ObservableObject {
         // instantly instead of waiting on the fetch below.
         let cached = ChatCache.load(bookId: book.id)
         let hasCachedState = !cached.isEmpty
-        if hasCachedState { messages = cached }
+        if hasCachedState {
+            messages = cached
+            // #146 — the cache deliberately excludes un-confirmed sends, so seeding from it
+            // blanks any pending bubble. Restore immediately rather than waiting for the fetch
+            // below to resolve: on a dead network that fetch can park for its full resource
+            // timeout, and until #146 those seconds were a window where a failed send simply
+            // wasn't on screen (reported from device testing as "the message disappeared, then
+            // came back when airplane mode was toggled off" — it was queued and safe the whole
+            // time, just invisible). Also covers the early-return paths below, which skip the
+            // restore calls entirely.
+            restorePendingMediaBubbles()
+            restorePendingTextBubbles()
+        }
         isOffline = false
         isLoadingMessages = !hasCachedState
         reachedBeginning = false
@@ -280,16 +292,18 @@ final class BookViewModel: ObservableObject {
             saveMessagesCache()
             prefetchRecentVoiceAudio()
 
-            // Restore any media messages that were pending when the app was last closed
+            // Restore any media/text messages that were pending when the app was last closed
             restorePendingMediaBubbles()
+            restorePendingTextBubbles()
         } catch is CancellationError {
             isLoadingMessages = false
             return
         } catch {
             if hasCachedState {
                 isOffline = true
-                // Keep any pending media items visible while offline
+                // Keep any pending media/text items visible while offline
                 restorePendingMediaBubbles()
+                restorePendingTextBubbles()
             } else {
                 errorMessage = "Failed to load discussion."
             }
@@ -299,6 +313,15 @@ final class BookViewModel: ObservableObject {
         startLifecycleObservers()
 
         guard !isOffline else { return }
+
+        // #146 — drain queued sends on any successful load, mirroring how #119's receipt outbox
+        // drains. Previously the only trigger was didBecomeActive, which never fires if the app
+        // stays foregrounded — so toggling airplane mode back off from Control Center restored
+        // connectivity but left queued messages sitting there until something else woke the app
+        // (reported from device testing: "manual retry sends it, but it won't go on its own").
+        // The network monitor's offline→online transition calls load(), so hanging it here
+        // covers that, plus foreground and pull-to-refresh, in one place.
+        Task { await flushPendingText() }
 
         // Newest SERVER-known message: an optimistic send still in flight has an id the server
         // has never seen, and the read marker must point at a real message (#119).
@@ -459,28 +482,114 @@ final class BookViewModel: ObservableObject {
         messages.insert(optimistic, at: 0)
         pendingTextIds.insert(clientId)
 
-        // REST send instead of a SignalR invoke (#131) — doesn't need a live socket, so it
-        // isn't stranded if the user backgrounds right after hitting send. A text body is
-        // small, so the foreground BackgroundTaskBox's ~30s grace is ample; no background
-        // URLSession needed here (that's reserved for media, which can be much larger/slower).
+        // #146 — persisted BEFORE the network call, so a force-quit at any point (mid-call, or
+        // even before it starts) leaves a durable record: restorePendingTextBubbles() picks it
+        // back up on relaunch instead of losing it with zero trace (confirmed nothing else
+        // persists an in-flight text send). A text body is small enough that the network call
+        // itself always finishes well inside BackgroundTaskBox's ~30s grace — this queue exists
+        // for durability across a kill, not to extend how long the call is allowed to run.
+        TextSendQueue.shared.enqueue(TextSendQueue.PendingSend(
+            clientId: clientId, bookId: book.id, clubId: book.clubId,
+            body: text, parentMessageId: reply?.id, queuedAt: Date()))
+
         let bgTask = BackgroundTaskBox(name: "send-text-\(clientId.uuidString)")
         defer { bgTask.end() }
         do {
+            // #146 — with no network path at all (airplane mode), skip the attempt rather than
+            // waiting for URLSession to exhaust name resolution and connect timeouts, measured
+            // on-device at ~20s before it errors. Thrown rather than handled inline so the catch
+            // below treats it exactly like any other transport failure: bubble goes .failed,
+            // entry stays queued, outbox retries when there's a network again.
+            guard NetworkReachability.shared.hasNetworkPath else { throw URLError(.notConnectedToInternet) }
             let sent = try await APIClient.shared.sendMessage(
                 bookId: book.id, type: .text, body: text, clientId: clientId, parentMessageId: reply?.id)
             markOnline()
+            TextSendQueue.shared.remove(clientId: clientId)
             reconcileConfirmedMessage(sent)
         } catch {
-            // Text has no retry queue (unlike media's MediaSendQueue) — a .failed bubble would
-            // show a "Retry" control with nothing behind it. Match the pre-existing behavior:
-            // drop the optimistic bubble and surface the error; the user just retypes/resends.
-            messages.removeAll { $0.id == clientId }
-            pendingTextIds.remove(clientId)
+            // #146 — a permanent refusal (4xx: validation, rate limit) is a real answer, not an
+            // outage; retrying can't change it, so it's dropped rather than left to retry
+            // forever. Anything else (no network, 5xx) stays queued — the bubble goes .failed
+            // (not removed) and flushPendingText() retries it on the next foreground/load,
+            // same as a failed media send, instead of silently vanishing.
+            if TextSendQueue.shared.isPermanentRefusal(error) {
+                TextSendQueue.shared.remove(clientId: clientId)
+                pendingTextIds.remove(clientId)
+                messages.removeAll { $0.id == clientId }
+            } else if let idx = messages.firstIndex(where: { $0.id == clientId }) {
+                messages[idx].sendState = .failed
+            }
             if case ChatError.serverError(let msg) = error {
                 errorMessage = msg
             } else {
                 errorMessage = "Failed to send — connection lost. Please try again."
             }
+        }
+    }
+
+    // #146 — retry a failed text send (mirrors retryMediaMessage). Manual retry from the
+    // failed-message action menu, or driven automatically by flushPendingText().
+    func retryTextMessage(id: UUID) async {
+        guard let item = TextSendQueue.shared.items.first(where: { $0.clientId == id }) else { return }
+        if let idx = messages.firstIndex(where: { $0.id == id }) {
+            messages[idx].sendState = .sending
+        }
+        do {
+            // Same no-path short-circuit as sendMessage — matters more here, since
+            // flushPendingText walks the queue serially and would otherwise stall ~20s per
+            // entry before any of them could go back to .failed.
+            guard NetworkReachability.shared.hasNetworkPath else { throw URLError(.notConnectedToInternet) }
+            let sent = try await APIClient.shared.sendMessage(
+                bookId: item.bookId, type: .text, body: item.body, clientId: item.clientId,
+                parentMessageId: item.parentMessageId)
+            markOnline()
+            TextSendQueue.shared.remove(clientId: item.clientId)
+            reconcileConfirmedMessage(sent)
+        } catch {
+            if TextSendQueue.shared.isPermanentRefusal(error) {
+                TextSendQueue.shared.remove(clientId: item.clientId)
+                pendingTextIds.remove(item.clientId)
+                messages.removeAll { $0.id == item.clientId }
+            } else if let idx = messages.firstIndex(where: { $0.id == item.clientId }) {
+                messages[idx].sendState = .failed
+            }
+        }
+    }
+
+    private var isFlushingText = false
+
+    // #146 — same guard-against-overlap reasoning as flushPendingMedia (#37): foreground-resume
+    // and a fresh load() can both trigger this.
+    private func flushPendingText() async {
+        guard !isFlushingText else { return }
+        isFlushingText = true
+        defer { isFlushingText = false }
+        for item in TextSendQueue.shared.items(for: book.id) {
+            await retryTextMessage(id: item.clientId)
+        }
+    }
+
+    // Re-insert optimistic bubbles for any text sends still in the queue after a relaunch —
+    // mirrors restorePendingMediaBubbles(). Marked .failed; flushPendingText() will flip them
+    // to .sending and retry.
+    private func restorePendingTextBubbles() {
+        let pending = TextSendQueue.shared.items(for: book.id)
+        guard let userId = TokenStore.shared.userId else { return }
+        for item in pending where !messages.contains(where: { $0.id == item.clientId }) {
+            let restored = Message(
+                id: item.clientId,
+                clubId: item.clubId,
+                senderId: userId,
+                senderName: TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? "",
+                type: .text,
+                body: item.body,
+                sentAt: item.queuedAt,
+                sendState: .failed,
+                clientId: item.clientId,
+                parentMessageId: item.parentMessageId
+            )
+            messages.insert(restored, at: 0)
+            pendingTextIds.insert(item.clientId)
         }
     }
 
@@ -499,28 +608,91 @@ final class BookViewModel: ObservableObject {
 
     func sendVideo() async {
         guard let videoUrl = pendingVideo, let userId = TokenStore.shared.userId else { return }
+        // Consume the pending video up front, before any await. Everything below — the duration
+        // load, and especially compression — suspends for seconds, and leaving pendingVideo set
+        // across that window let a second invocation clear the guard above and send the same
+        // recording again as an independent message (observed on device: two videos, distinct
+        // clientIds and blobs, ~9s apart, so server-side clientId dedup couldn't catch it).
+        // sendPhoto is immune to this only because its work is synchronous — there's no
+        // suspension point between its guard and clearing pendingImage.
+        pendingVideo = nil
 
-        // Enforce limits before queueing: max 5 min duration, max 100 MB file.
+        // Duration isn't affected by compression, so check it against the source first —
+        // cheapest way to reject an obviously-too-long clip before spending time compressing it.
         let duration = (try? await AVURLAsset(url: videoUrl).load(.duration))?.seconds ?? 0
         if duration > 300 {
-            pendingVideo = nil
             errorMessage = "Video is too long (max 5 minutes). Please trim it and try again."
             return
         }
-        let attrs = try? FileManager.default.attributesOfItem(atPath: videoUrl.path)
+
+        // #146 — compress before the size check and before queueing (mirrors sendPhoto's
+        // resizedForUpload): video was previously sent unencoded, so a normal phone-shot clip a
+        // few minutes long routinely exceeded the 100MB cap well before hitting the 5-minute
+        // duration cap. Falls back to the original file if compression fails for any reason
+        // (unsupported format, disk pressure) rather than blocking the send outright.
+        // Show a spinner while compressing. Without it the UI sits unchanged for seconds after
+        // the tap, which is precisely what invited a second tap and produced duplicate sends
+        // before pendingVideo was consumed up front.
+        isUploading = true
+        let compressedUrl = await compressedVideo(from: videoUrl) ?? videoUrl
+        isUploading = false
+
+        let attrs = try? FileManager.default.attributesOfItem(atPath: compressedUrl.path)
         let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
         if fileSize > 100 * 1024 * 1024 {
-            pendingVideo = nil
             errorMessage = "Video is too large (max 100 MB)."
             return
         }
 
-        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: videoUrl, extension: "mp4") else { return }
-        pendingVideo = nil
+        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: compressedUrl, extension: "mp4") else {
+            // Couldn't stage the file (disk error) — hand the pending video back so the send
+            // button stays live and the user can try again, matching the pre-#146 behaviour
+            // where this early return happened before pendingVideo was cleared.
+            pendingVideo = videoUrl
+            return
+        }
         await enqueueAndSendMedia(
             kind: .video, contentType: "video/mp4", durationSeconds: nil,
             persistentUrl: persistentUrl, userId: userId
         )
+    }
+
+    // #146 — HEVC 1080p, matching sendPhoto's "resize before upload" treatment for video.
+    // Caps resolution rather than targeting a bitrate directly: AVAssetExportSession doesn't
+    // upscale, so an already-small source passes through roughly unchanged, while a 1080p/4K
+    // phone recording — the common case that blew past the 100MB cap — gets meaningfully smaller.
+    //
+    // HEVC rather than the H.264 720p preset this started as. H.264 at 720p is roughly 3 Mbps,
+    // which is both visibly softer than the 4K/1080p source AND still ~110MB over a full
+    // 5-minute clip — i.e. it gave up real quality without reliably clearing the 100MB cap it
+    // was added for. HEVC is about twice as efficient, so 1080p at ~2.5 Mbps looks considerably
+    // better and lands nearer 94MB at the duration limit. Playback is unaffected: this is an
+    // iOS 16+ app using AVPlayer, and HEVC has been supported since iOS 11.
+    //
+    // Falls back to the H.264 preset if HEVC isn't available for this asset, and returns nil
+    // (caller then sends the original file) if neither can be built or the export fails.
+    private func compressedVideo(from url: URL) async -> URL? {
+        let asset = AVURLAsset(url: url)
+        let preset = AVAssetExportSession.exportPresets(compatibleWith: asset)
+            .contains(AVAssetExportPresetHEVC1920x1080)
+            ? AVAssetExportPresetHEVC1920x1080
+            : AVAssetExportPreset1920x1080
+        guard let export = AVAssetExportSession(asset: asset, presetName: preset) else { return nil }
+        let outputUrl = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        export.outputURL = outputUrl
+        export.outputFileType = .mp4
+        // exportAsynchronously's completion-handler API, not the iOS 18+ `export(to:as:)` async
+        // method — deployment target here is iOS 16.
+        await withCheckedContinuation { continuation in
+            export.exportAsynchronously { continuation.resume() }
+        }
+        guard export.status == .completed else {
+            try? FileManager.default.removeItem(at: outputUrl)
+            return nil
+        }
+        return outputUrl
     }
 
     // Shared optimistic-insert + enqueue + send entry point for all media kinds.
@@ -684,6 +856,10 @@ final class BookViewModel: ObservableObject {
             MediaSendQueue.shared.remove(id: clientId)
             MediaSendQueue.shared.scheduleCleanup(fileName: item.fileName)
         }
+        // #146 — a fresh getMessages() fetch can reconcile a queued text send the server
+        // actually received even before flushPendingText() got to it (e.g. it landed right
+        // before a force-quit) — clear the queue entry so it isn't resent as a duplicate attempt.
+        TextSendQueue.shared.remove(clientId: clientId)
         pendingTextIds.remove(clientId)
     }
 
@@ -692,6 +868,13 @@ final class BookViewModel: ObservableObject {
             MediaSendQueue.shared.cleanupFile(for: item)
             MediaSendQueue.shared.remove(id: id)
         }
+        messages.removeAll { $0.id == id }
+    }
+
+    // #146 — mirrors cancelMediaMessage, for a failed text send the user chooses not to retry.
+    func cancelTextMessage(id: UUID) {
+        TextSendQueue.shared.remove(clientId: id)
+        pendingTextIds.remove(id)
         messages.removeAll { $0.id == id }
     }
 
@@ -1121,26 +1304,35 @@ final class BookViewModel: ObservableObject {
         appActiveObserver = center.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.flushPendingMedia() }
+            Task { @MainActor in
+                await self?.flushPendingMedia()
+                await self?.flushPendingText()
+            }
         }
         appBackgroundObserver = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.cancelEchoTimeouts()
-                // Actually backgrounded: iOS suspends capture seconds from now, so finalize
-                // (discard) any in-progress take rather than leave it stuck recording (#75).
-                self?.discardRecording()
+                // #146 — was discardRecording() (#75): iOS suspends capture seconds from now,
+                // so the take can't continue either way, but silently throwing away whatever was
+                // captured is the wrong default — finalize and send it instead, same as if the
+                // user had deliberately released the mic. stopRecording() already no-ops below
+                // 0.5s of audio, so an accidental instant background doesn't send a near-empty
+                // clip.
+                await self?.stopRecording()
             }
         }
-        // Recording interrupted by a phone call / Siri / alarm (#75). Only `.began`
-        // matters — a truncated take is discarded; we don't auto-resume on `.ended`.
+        // Recording interrupted by a phone call / Siri / alarm. Only `.began` matters — once
+        // interrupted, the audio session is gone and capture cannot resume, so `.ended` is still
+        // ignored; the only choice was ever finalize-vs-discard, and #146 changed that choice
+        // from discard (#75) to finalize-and-send, same reasoning as the backgrounding case above.
         audioInterruptionObserver = center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-            Task { @MainActor in self?.discardRecording() }
+            Task { @MainActor in await self?.stopRecording() }
         }
         // A background blob upload finished — drive the send for that item (B).
         uploadCompletedObserver = center.addObserver(

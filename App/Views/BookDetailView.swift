@@ -657,8 +657,14 @@ struct MessageRow: View {
     @ViewBuilder
     private var actionMenuButtons: some View {
         if message.sendState == .failed {
-            menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
-            menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+            // #146 — text now reaches .failed too (previously only media could); route by type.
+            if message.type == .text {
+                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryTextMessage(id: message.id) } }
+                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelTextMessage(id: message.id) }
+            } else {
+                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
+                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+            }
         } else if !message.isDeleted && message.sendState == nil {
             menuRow("Reply", "arrowshape.turn.up.left") {
                 viewModel.replyingTo = message
@@ -905,22 +911,36 @@ struct MessageRow: View {
     private var messageBubble: some View {
         switch message.type {
         case .text:
-            Text(linkified(message.body ?? ""))
-                .tint(isMe ? .white : .blue)   // link color on blue vs grey bubbles
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
-                .foregroundColor(isMe ? .white : .primary)
-                .cornerRadius(16)
-                // Tapping a detected link opens web URLs in an in-app Safari sheet;
-                // mailto:/tel:/etc. fall through to the system handler.
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "http" || url.scheme == "https" {
-                        safariItem = SafariItem(url: url)
-                        return .handled
-                    }
-                    return .systemAction
-                })
+            ZStack(alignment: .bottomTrailing) {
+                Text(linkified(message.body ?? ""))
+                    .tint(isMe ? .white : .blue)   // link color on blue vs grey bubbles
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isMe ? Color.myMessageBlue : Color(.systemGray5))
+                    .foregroundColor(isMe ? .white : .primary)
+                    .cornerRadius(16)
+                    // Tapping a detected link opens web URLs in an in-app Safari sheet;
+                    // mailto:/tel:/etc. fall through to the system handler.
+                    .environment(\.openURL, OpenURLAction { url in
+                        if url.scheme == "http" || url.scheme == "https" {
+                            safariItem = SafariItem(url: url)
+                            return .handled
+                        }
+                        return .systemAction
+                    })
+                // #146 — text could never reach .sending/.failed visibly before (no retry
+                // queue existed, so a failed send was just removed); now that it can, give it
+                // the same overlay media bubbles already have.
+                if message.sendState == .sending {
+                    SendStateBadge(state: .sending).padding(4)
+                } else if message.sendState == .failed {
+                    SendStateBadge(
+                        state: .failed,
+                        onRetry: { Task { await viewModel.retryTextMessage(id: message.id) } },
+                        onCancel: { viewModel.cancelTextMessage(id: message.id) }
+                    ).padding(4)
+                }
+            }
 
         case .photo:
             if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
@@ -1162,11 +1182,18 @@ struct VoiceMessageBubble: View {
             if isSending {
                 ProgressView()
                     .frame(width: 36, height: 36)
+                    // Voice draws its own inline send-state UI rather than using
+                    // SendStateBadge, so it needs to carry the same identifiers or its state is
+                    // invisible to tests. It genuinely was: testSendVoiceMessage asserted on
+                    // failedSendIndicator, which this bubble never renders under any state, so
+                    // the test passed even while every send was being rejected.
+                    .accessibilityIdentifier("sendingIndicator")
             } else if isFailed {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(isMe ? .white.opacity(0.85) : .orange)
                     .frame(width: 36, height: 36)
+                    .accessibilityIdentifier("failedSendIndicator")
             } else {
                 Button { audio.toggle(message: message, bookId: bookId) } label: {
                     Group {
@@ -1186,6 +1213,10 @@ struct VoiceMessageBubble: View {
                     .clipShape(Circle())
                     .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
                 }
+                // Gives the voice-send UITest something positive to assert on. It previously
+                // could only check for the absence of a failure badge, which is what let a
+                // completely broken dev voice send stay green.
+                .accessibilityIdentifier("voicePlayButton")
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -1501,6 +1532,11 @@ struct SendStateBadge: View {
                 .padding(8)
                 .background(Color.black.opacity(0.55))
                 .clipShape(Circle())
+                // Paired with failedSendIndicator so a test can assert the discrete send state
+                // directly: a message is confirmed exactly when it carries neither badge
+                // (sendState == nil after reconciliation). Asserting "no failure appeared" alone
+                // can't tell a success apart from a send that is still in flight.
+                .accessibilityIdentifier("sendingIndicator")
         case .failed:
             Menu {
                 Button { onRetry?() } label: { Label("Retry", systemImage: "arrow.clockwise") }
