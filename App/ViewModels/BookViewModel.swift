@@ -979,16 +979,14 @@ final class BookViewModel: ObservableObject {
             AudioCache.shared.prefetch(url)
         }
 
-        // Already applied (the other transport got here first) — no-op.
-        guard !messages.contains(where: { $0.id == message.id }) else { return }
+        // The rules themselves live in SendReconciler so they can be unit-tested without a view
+        // model or a network stack; what remains here is applying the decision.
+        switch SendReconciler.outcome(for: message, in: messages,
+                                      myUserId: TokenStore.shared.userId, bookClubId: book.clubId) {
+        case .ignoreWrongClub, .ignoreAlreadyApplied:
+            return
 
-        // Optimistic match by clientId — the server echoes back the clientId we sent for both
-        // text and media. Replace the optimistic bubble in place. Using the id (not the body)
-        // fixes identical consecutive text sends racing (#35).
-        if message.senderId == TokenStore.shared.userId,
-           let clientId = message.clientId,
-           let idx = messages.firstIndex(where: { $0.id == clientId }) {
-            let oldUrlString = messages[idx].mediaUrl
+        case let .replaceOptimistic(idx, clientId, oldUrlString):
             messages[idx] = message
             pendingTextIds.remove(clientId)
             echoTimeoutTasks[clientId]?.cancel()
@@ -1003,14 +1001,14 @@ final class BookViewModel: ObservableObject {
                 }
             }
             saveMessagesCache()
-            return
-        }
 
-        messages.insert(message, at: 0)
-        saveMessagesCache()
-        // The read receipt's response carries this book's fresh unread count — an arriving
-        // voice message raises it (unheard), non-voice nets to zero (read on arrival).
-        Task { await ReceiptQueue.shared.markRead(bookId: book.id, messageId: message.id) }
+        case .insert:
+            messages.insert(message, at: 0)
+            saveMessagesCache()
+            // The read receipt's response carries this book's fresh unread count — an arriving
+            // voice message raises it (unheard), non-voice nets to zero (read on arrival).
+            Task { await ReceiptQueue.shared.markRead(bookId: book.id, messageId: message.id) }
+        }
     }
 
     // Completion of the background-session send POST kicked from sendMediaItem (#131). This
