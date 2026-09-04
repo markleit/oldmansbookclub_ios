@@ -56,6 +56,22 @@ targets:
     dependencies:
       - package: SignalRClient
 
+  # Unit tests (#32/#126). Hermetic: no simulator UI, no network, no backend — they construct
+  # types directly and run in a couple of seconds, which is what lets them gate every PR.
+  OldMansBookClubTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: UnitTests
+    settings:
+      base:
+        DEVELOPMENT_TEAM: BCH6CDU76R
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: OldMansBookClub
+
   OldMansBookClubUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -75,10 +91,14 @@ schemes:
     build:
       targets:
         OldMansBookClub: all
+        OldMansBookClubTests: [test]
         OldMansBookClubUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
       targets:
+        # Unit tests first: they are the fast, hermetic ones, so a failure surfaces in seconds
+        # rather than after a simulator boot.
+        - OldMansBookClubTests
         - OldMansBookClubUITests
