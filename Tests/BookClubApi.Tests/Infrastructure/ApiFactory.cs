@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using BookClubApi.Data;
 using BookClubApi.Hubs;
 using BookClubApi.Services;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -10,6 +11,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 namespace BookClubApi.Tests.Infrastructure;
 
@@ -55,6 +59,10 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
         ["Demo:Passphrase"] = DemoPassphrase,
         ["Seeding:Key"] = SeedingKey,
         ["GitHub:Token"] = "test-github-token",
+        // Explicit rather than relying on the default: a developer's user-secrets sets this false
+        // (#120 — dev must never push real devices), and inheriting that would silently disable
+        // every push assertion in the suite while the tests still went green.
+        ["Apns:Enabled"] = "true",
     };
 
     /// A throwaway P-256 key so NotificationService can build a real APNs JWT. Generated per run
@@ -98,6 +106,26 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             // the send path enqueued, with no sleep-and-hope. PushDispatchTests puts it back for
             // the one case that needs the fan-out itself under test.
             services.RemoveAll<IHostedService>();
+
+            // The /auth/* endpoints are rate limited to 10 requests per minute — and the limiter
+            // is declared with NO partition key, so that is 10 per minute for the entire process,
+            // not per IP or per user. One shared test host therefore exhausts it after ten auth
+            // calls and every later test 429s, in whatever order they happen to run.
+            //
+            // Tests run with permissive limits instead. The limits themselves are asserted
+            // separately: HubRateLimiterTests covers the send limiter (the one with real
+            // per-user semantics), and the auth limiter is exercised end-to-end by the live lane.
+            //
+            // Worth noting the finding rather than burying it: a global partition means a single
+            // client retrying a failed sign-in can lock every other member out of signing in for
+            // up to a minute. That is a production behaviour question, not a test-suite one.
+            services.RemoveAll<IConfigureOptions<RateLimiterOptions>>();
+            services.AddRateLimiter(options =>
+            {
+                options.RejectionStatusCode = 429;
+                options.AddFixedWindowLimiter("auth", o => { o.Window = TimeSpan.FromMinutes(1); o.PermitLimit = int.MaxValue; o.QueueLimit = 0; });
+                options.AddFixedWindowLimiter("media", o => { o.Window = TimeSpan.FromMinutes(1); o.PermitLimit = int.MaxValue; o.QueueLimit = 0; });
+            });
 
             services.AddHttpClient("apns").ConfigurePrimaryHttpMessageHandler(() => Apns);
             services.AddHttpClient("apns-sandbox").ConfigurePrimaryHttpMessageHandler(() => Apns);

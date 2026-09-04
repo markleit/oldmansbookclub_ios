@@ -26,6 +26,9 @@
 
   <ItemGroup>
     <ProjectReference Include="../../API/BookClubApi.csproj" />
+    <!-- The test project is a plain library SDK, so the ASP.NET Core assemblies it needs to
+         reconfigure the host (rate limiter policies, hosted services) are not implicit. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
