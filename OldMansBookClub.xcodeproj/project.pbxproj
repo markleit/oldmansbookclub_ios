@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		04E1EC22851F141C270DEC32 /* EmojiKeyboardPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D1968B0F28A8ADA39CA144D /* EmojiKeyboardPicker.swift */; };
 		062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */; };
 		0D8D0C3A4DF44E2CAB5DEA9D /* PlaybackProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */; };
 		165DA6C7AC92E8540C5160D1 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D395542233ADC1273F05370D /* AppDelegate.swift */; };
@@ -91,6 +92,7 @@
 		36B897A6BA8DF56597F8CFEF /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		3797FC65323C0493452D32B2 /* CachedBookCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedBookCover.swift; sourceTree = "<group>"; };
 		3C4F3307C463A1A598529A2F /* BackgroundTaskBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundTaskBox.swift; sourceTree = "<group>"; };
+		3D1968B0F28A8ADA39CA144D /* EmojiKeyboardPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiKeyboardPicker.swift; sourceTree = "<group>"; };
 		3EE3B6ADD5FA0F9053DB462E /* AudioPlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerService.swift; sourceTree = "<group>"; };
 		40CB6C91B09B06C1D5531269 /* Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extensions.swift; sourceTree = "<group>"; };
 		40DBF0F42D59478B1E09CB57 /* AccountScope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountScope.swift; sourceTree = "<group>"; };
@@ -234,6 +236,7 @@
 				62112635C861D78687D704A9 /* BrowseClubsView.swift */,
 				3797FC65323C0493452D32B2 /* CachedBookCover.swift */,
 				F78B795F384775724D68C0D6 /* ClubSetupView.swift */,
+				3D1968B0F28A8ADA39CA144D /* EmojiKeyboardPicker.swift */,
 				7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */,
 				A518484880F73D42F012B0EA /* FeedbackView.swift */,
 				88754FFD53578C83DEC2294D /* LibraryView.swift */,
@@ -406,6 +409,7 @@
 				CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */,
 				F9AE685BB9F682A14AACA8CF /* DiagnosticsReporter.swift in Sources */,
 				19F9AC5F4450E8F2560F0036 /* EULAView.swift in Sources */,
+				04E1EC22851F141C270DEC32 /* EmojiKeyboardPicker.swift in Sources */,
 				D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */,
 				42ED3A20DC2D4D6373C895A2 /* FeedbackView.swift in Sources */,
 				16A27074D46A1A1F4135B7E1 /* HeardStore.swift in Sources */,

@@ -93,6 +93,50 @@ final class OldMansBookClubUITests: XCTestCase {
         XCTAssertFalse(failed.waitForExistence(timeout: 3), "Voice message failed to send")
     }
 
+    // MARK: - #145 emoji reaction picker
+
+    // Covers the wiring up to the system Emoji keyboard, not typing through the keyboard itself
+    // (a separate, Apple-owned process XCUITest can reach but which is brittle to script
+    // reliably) — long-press opens the bar, the fixed 6-emoji quick row is still there, and "+"
+    // opens the full picker sheet. toggleReaction itself (used by both the quick row and the
+    // picker) already has coverage via the existing quick-row reactions, unchanged by #145.
+    func testEmojiReactionBar_plusButtonOpensFullPicker() {
+        // Sends its own message to long-press rather than anchoring to a seeded one — a fixed
+        // seed message eventually scrolls out of the loaded page as the dev DB accumulates
+        // messages, which is exactly how this test first broke.
+        let text = uniqueMessage("react")
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText(text)
+        app.buttons["sendButton"].tap()
+
+        let bubble = app.staticTexts[text]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "Sent message never appeared in chat")
+        bubble.press(forDuration: 0.6)
+
+        let plusButton = app.buttons["addEmojiReactionButton"]
+        XCTAssertTrue(plusButton.waitForExistence(timeout: 5), "Reaction bar's + button never appeared")
+        XCTAssertTrue(app.buttons["👍"].exists, "Existing fixed reaction row should still be present")
+        plusButton.tap()
+
+        // Asserts the grid itself rendered, not merely that a sheet appeared — the emoji below
+        // are chosen to be unambiguous: 🥰 is in the default (smileys) grid but is neither a
+        // category tab icon nor one of the six quick-tap reactions, and 🍕 exists only in the
+        // food grid. A sheet-exists-only check would have passed against the old, broken
+        // forced-keyboard picker too, which is exactly what this replaces.
+        XCTAssertTrue(app.buttons["🥰"].waitForExistence(timeout: 10), "Emoji grid never rendered")
+
+        app.buttons["🍔"].firstMatch.tap()   // food category tab
+        XCTAssertTrue(app.buttons["🍕"].waitForExistence(timeout: 5), "Switching category didn't change the grid")
+
+        // firstMatch: the chat's own input area also carries a Cancel while the reply/compose
+        // affordances are up, so the bare query is ambiguous here.
+        let cancelButton = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancelButton.exists, "Emoji picker sheet has no Cancel button")
+        cancelButton.tap()
+        XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "Emoji picker sheet never dismissed")
+    }
+
     private func isTapToTalk() -> Bool {
         // A press-and-hold mic never enters the `.selected`/toggled state XCUITest can see from
         // a single tap; the two modes are visually and behaviorally distinct enough in practice

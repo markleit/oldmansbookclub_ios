@@ -523,6 +523,7 @@ struct MessageRow: View {
     @State private var editText = ""
     @State private var showReactionsPopup = false   // #47 — tap a pill to see who reacted
     @State private var showReactMenu = false        // #47 — long-press reaction + action menu
+    @State private var showEmojiPicker = false      // #145 — "+" on the reaction bar, any emoji
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
     // #47 — the fixed reaction set.
@@ -597,6 +598,11 @@ struct MessageRow: View {
                 }
         )
         .popover(isPresented: $showReactMenu) { reactionActionMenu }
+        .sheet(isPresented: $showEmojiPicker) {
+            EmojiPickerSheet { emoji in
+                viewModel.toggleReaction(String(emoji), on: message)
+            }
+        }
     }
 
     // MARK: - #47 long-press reaction + action menu
@@ -621,6 +627,17 @@ struct MessageRow: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    // #145 — any other emoji, via the system Emoji keyboard.
+                    Button {
+                        showReactMenu = false
+                        showEmojiPicker = true
+                    } label: {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 22))
+                            .frame(width: 42, height: 42)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("addEmojiReactionButton")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
