@@ -12,6 +12,9 @@ final class OldMansBookClubUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
+        // A clean install shows the notification-permission alert over the login screen; without
+        // this, every tap below lands on the alert's shield. See SystemAlerts.
+        SystemAlerts.dismissAny()
         loginIfNeeded()
         openFirstBookDiscussion()
     }

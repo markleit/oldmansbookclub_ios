@@ -65,6 +65,18 @@ Needs `OMBC_SEED_KEY` to match the API's `Seeding:Key`:
 cd API && dotnet user-secrets list | grep Seeding
 ```
 
+Each iOS lane also **uninstalls the app and resets the simulator keychain** first. That is not
+tidiness: the hermetic lane signs in against its stub server, and the token it stores is not valid
+on the real API — without the reset, every request in the live lane 401s and the failures look
+like app bugs. (Same class as the stale-Keychain state that once made a whole live run look
+broken.)
+
+A consequence worth knowing: a clean install shows the iOS notification-permission alert *over the
+login screen*, and it swallows every tap behind it. `UITests/SystemAlerts.swift` dismisses it in
+each `setUp`. The existing UI tests never needed this because they only ever ran on a simulator
+where permission had been granted by hand at some point — which is exactly the kind of hidden
+state a regression suite is supposed to remove.
+
 ### Lane C — device
 
 Everything in lane B, retargeted at `OMBC_DEVICE_UDID` (`xcrun devicectl list devices`), plus the

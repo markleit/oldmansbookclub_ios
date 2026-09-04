@@ -79,6 +79,7 @@
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
 		DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3797FC65323C0493452D32B2 /* CachedBookCover.swift */; };
 		DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */; };
+		E3F9E0CBFCD9C80E457B34FC /* SystemAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E333A0951B83E16DBA7C9948 /* SystemAlerts.swift */; };
 		EB458273C856BF515652D230 /* HermeticUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CA8BF844CD7700A1676779 /* HermeticUITests.swift */; };
 		F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78B795F384775724D68C0D6 /* ClubSetupView.swift */; };
 		F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */; };
@@ -178,6 +179,7 @@
 		DEE74273F3039AFB33F97C01 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		E03A3E7B2C78427DBBADED06 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
 		E2ABB613BFB149719A00A493 /* AudioCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCache.swift; sourceTree = "<group>"; };
+		E333A0951B83E16DBA7C9948 /* SystemAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAlerts.swift; sourceTree = "<group>"; };
 		E6D56FA74C00E534B957B96F /* DeviceOnlyUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceOnlyUITests.swift; sourceTree = "<group>"; };
 		E8466AF0D43C0E71A76D1DD2 /* message_voice_signalr.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = message_voice_signalr.json; sourceTree = "<group>"; };
 		EF8FBEB2C7086C94FA433207 /* ChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatService.swift; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 				1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */,
 				F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */,
 				088DBB6A4AB97330BD65F473 /* StubAPIServer.swift */,
+				E333A0951B83E16DBA7C9948 /* SystemAlerts.swift */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -593,6 +596,7 @@
 				F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */,
 				669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */,
 				2965B3ABFA847F8EB6874FDB /* StubAPIServer.swift in Sources */,
+				E3F9E0CBFCD9C80E457B34FC /* SystemAlerts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

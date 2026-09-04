@@ -40,6 +40,7 @@ final class HermeticUITests: XCTestCase {
             "-hasAcceptedEULA", "YES",
         ]
         app.launch()
+        SystemAlerts.dismissAny()
 
         let devLogin = app.buttons["Dev Login (Debug)"]
         if devLogin.waitForExistence(timeout: 5) { devLogin.tap() }

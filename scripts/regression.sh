@@ -146,6 +146,24 @@ resolve_simulator() {
     SIMULATOR="$fallback"
 }
 
+# The simulator's persisted state is shared across lanes, and a session left by one lane poisons
+# the next: the hermetic lane signs in against its stub server, and the token it stores is not
+# valid on the real API — every later request 401s and the failures look like app bugs. (This is
+# the same class as the stale-Keychain failure that once made a whole live run look broken.)
+#
+# So each iOS lane starts from a clean app: uninstall, and reset the simulator keychain, which an
+# uninstall alone does not clear.
+reset_simulator_state() {
+    local udid
+    udid=$(xcrun simctl list devices available \
+        | sed -n "s/^ *$SIMULATOR (\([0-9A-F-]*\)).*/\1/p" | head -1)
+    [[ -z "$udid" ]] && return 0
+
+    xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+    xcrun simctl uninstall "$udid" com.markleit.oldmansbookclub.dev >/dev/null 2>&1 || true
+    xcrun simctl keychain "$udid" reset >/dev/null 2>&1 || true
+}
+
 if [[ $LANE_IOS_UNIT -eq 1 || $LANE_LIVE -eq 1 ]]; then
     resolve_simulator
 
@@ -157,6 +175,7 @@ fi
 
 if [[ $LANE_IOS_UNIT -eq 1 ]]; then
     step "iOS unit tests (no network, no backend)"
+    reset_simulator_state
     run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" OldMansBookClubTests
 
     step "Hermetic UI tests (stub server, still no backend)"
@@ -223,6 +242,9 @@ fi
 
 if [[ $LANE_LIVE -eq 1 ]]; then
     step "XCUITests against the live API (simulator)"
+    # Clean app + keychain: the hermetic lane just signed in against its stub, and that token is
+    # not valid here.
+    reset_simulator_state
     # HermeticUITests is excluded here: it brings its own stub server, so running it again against
     # the live API would prove nothing new and cost another minute.
     run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,name=$SIMULATOR" \

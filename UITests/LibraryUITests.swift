@@ -10,6 +10,8 @@ final class LibraryUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
+        // See SystemAlerts: on a clean install the notification prompt covers the login screen.
+        SystemAlerts.dismissAny()
         loginIfNeeded()
     }
 

@@ -38,6 +38,7 @@ final class DeviceOnlyUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
+        SystemAlerts.dismissAny()
         loginIfNeeded()
         #endif
     }
