@@ -146,7 +146,7 @@ actor ChatService {
             .build()
         connection = conn
 
-        await conn.on("NewMessage") { [weak self] (dto: MessageDto) async in
+        await conn.on("NewMessage") { [weak self] (dto: ChatMessageDto) async in
             let message = Message(
                 id: dto.id,
                 clubId: dto.clubId,
@@ -287,7 +287,14 @@ actor ChatService {
     }
 }
 
-private struct MessageDto: Decodable {
+// Internal rather than private so the JSON contract tests can decode a server-generated fixture
+// through it (#126). This is the SECOND Swift mirror of the server's MessageDto — the REST one is
+// `Message` in Models.swift — and the two differ in ways that matter: this one has no
+// senderAvatarUrl and no reactions, its isDeleted/isForwarded are non-optional, its dates are
+// strings parsed by a formatter that only accepts fractional seconds, and it arrives camelCase
+// (SignalR) rather than snake_case (REST). Two mirrors of one record with different tolerance is
+// the most likely place in the app for silent drift, which is exactly why it is now under test.
+struct ChatMessageDto: Decodable {
     let id: UUID
     let clubId: UUID
     let senderId: UUID
