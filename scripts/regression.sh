@@ -232,6 +232,7 @@ if [[ $LANE_DEVICE -eq 1 ]]; then
         # A device build needs real signing, so CODE_SIGNING_ALLOWED=NO is not passed here — and
         # the device has to be pointed at this Mac, since localhost on a phone is the phone.
         note "the device must be pointed at this Mac in Settings → Server (Debug) → Dev Machine"
+        note "DeviceOnlyUITests skips itself on a simulator rather than passing vacuously"
         set +e
         set -o pipefail
         xcodebuild test \
