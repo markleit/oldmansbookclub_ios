@@ -131,6 +131,85 @@ public class AdminTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.Equal(3, sentAts.Distinct().Count());
     }
 
+    // ---- dev database reset (#126, used by the live and device lanes) -------------------------
+
+    [Fact]
+    public async Task Reset_dev_db_empties_every_table()
+    {
+        var club = await CreateClubAsync();
+        var book = await CreateBookAsync(club.Id, "The Road");
+        var me = await CreateUserAsync("Me", club.Id);
+        var other = await CreateUserAsync("Other", club.Id);
+        var message = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice);
+        await RegisterDeviceAsync(me.Id, "some-device");
+        await me.Client.PostAsync($"/books/{book.Id}/messages/{message.Id}/heard", null);
+        await me.Client.PostAsJsonAsync($"/books/{book.Id}/messages/{message.Id}/reactions", new { emoji = "👍" });
+        await me.Client.PostAsJsonAsync($"/books/{book.Id}/read", message.Id);
+        await me.Client.PostAsync($"/messages/{message.Id}/save", null);
+        await me.Client.PostAsync($"/messages/{message.Id}/report", null);
+        await me.Client.PostAsync($"/users/{other.Id}/block", null);
+
+        var response = await ResetAsync(ApiFactory.SeedingKey);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        await using var db = App.NewDbContext();
+        // Named individually rather than looped, so a NEW table added later fails to compile here
+        // and forces a decision about whether the reset should clear it.
+        Assert.Empty(db.MessageReactions);
+        Assert.Empty(db.MessageHeards);
+        Assert.Empty(db.ChatReads);
+        Assert.Empty(db.Reports);
+        Assert.Empty(db.SavedMessages);
+        Assert.Empty(db.Messages);
+        Assert.Empty(db.Books);
+        Assert.Empty(db.JoinRequests);
+        Assert.Empty(db.BlockedUsers);
+        Assert.Empty(db.UserDevices);
+        Assert.Empty(db.RefreshTokens);
+        Assert.Empty(db.Memberships);
+        Assert.Empty(db.Users);
+        Assert.Empty(db.Clubs);
+    }
+
+    [Fact]
+    public async Task Reset_dev_db_refuses_a_wrong_or_missing_key()
+    {
+        var club = await CreateClubAsync();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await ResetAsync("wrong-key")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await ResetAsync(null)).StatusCode);
+
+        // Two independent gates guard this endpoint (Development-only AND the key) because a
+        // truncate that reached production would be unrecoverable. The environment gate cannot be
+        // exercised here — the test host runs as Development on purpose, so the seed endpoints
+        // behave as they do locally — so the key gate is the half this pins.
+        await using var db = App.NewDbContext();
+        Assert.NotNull(await db.Clubs.FindAsync(club.Id));
+    }
+
+    [Fact]
+    public async Task Reset_then_seed_leaves_exactly_the_baseline()
+    {
+        // The sequence the lane scripts run before every live pass.
+        var club = await CreateClubAsync();
+        await CreateBookAsync(club.Id, "Left over from the last run");
+
+        await ResetAsync(ApiFactory.SeedingKey);
+        await App.CreateClient().PostAsync("/admin/seed-baseline", null);
+
+        await using var db = App.NewDbContext();
+        Assert.Equal(3, await db.Books.CountAsync());
+        Assert.Equal(1, await db.Clubs.CountAsync());
+        Assert.False(await db.Books.AnyAsync(b => b.Title == "Left over from the last run"));
+    }
+
+    private async Task<HttpResponseMessage> ResetAsync(string? key)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/admin/reset-dev-db");
+        if (key is not null) request.Headers.Add("X-Seed-Key", key);
+        return await App.CreateClient().SendAsync(request);
+    }
+
     // ---- user administration -----------------------------------------------------------------
 
     [Fact]

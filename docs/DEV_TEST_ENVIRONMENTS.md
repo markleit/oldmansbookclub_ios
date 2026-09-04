@@ -299,63 +299,41 @@ end-to-end needs either a second real club member to send from, or #25
 landing with per-device (not per-account) fan-out exclusion — see the
 2026-08-27 comment on #25 for the design discussion (not yet settled).
 
-## Looking ahead: a CI regression / build-acceptance suite
+## CI regression / build-acceptance suite (DONE — #126)
 
-Half A's isolated stack is what makes an automated regression pass possible
-without every CI run touching production. This is future work, not yet
-scoped in detail, but worth stating the constraints now:
+Half A's isolated stack is what made this possible. It is built; the canonical
+reference is **[docs/TESTING.md](TESTING.md)** — three lanes behind one
+command, `./scripts/regression.sh`.
 
-**A GitHub Actions runner is not this dev machine.** `ci.yml` currently only
-builds (`xcodebuild ... clean build`, simulator only, no test target — this is
-also #32, "No test target"); it doesn't touch the API or a database at all.
+The three questions this section used to leave open were all answered the same
+way: **by not reaching Azure at all** for the hermetic lane.
 
-**#32 partially done (2026-09-01):** a `OldMansBookClubUITests` XCUITest
-target now exists (`UITests/`), driving the app through its accessibility
-hierarchy (element identifiers, not screen coordinates — coordinate-based
-simulator automation proved unreliable for anything beyond a single
-confirmed tap). Covers text send, text send with immediate backgrounding,
-and voice send, run locally against `bookclubdb-dev`. **Not wired into
-`ci.yml`** — that still only builds — because the questions below are
-unresolved, and running it locally already answers "does the send path
-actually work," which was the immediate need.
+- **Reachability** — solved by running a throwaway SQL Server in a container
+  inside the CI job. A GitHub runner's egress IP is irrelevant when the
+  database is on loopback, so no Actions-specific firewall rule was needed.
+  (SQLite and the in-memory provider were ruled out, not for convenience but
+  for correctness: the `(SenderId, ClientId)` filtered unique index is what
+  makes clientId dedup work, and neither provider enforces it — the dedup
+  tests would have passed while proving nothing.)
+- **Reset between runs** — the container starts empty every run, and Respawn
+  clears it between tests, so no test can pass on another's leftovers. For the
+  *live* lane, which does use `bookclubdb-dev`, a new
+  `POST /admin/reset-dev-db` (Development-only **and** `Seeding:Key`-guarded)
+  wipes and reseeds before each pass. That fixed a real flake: the UI tests ran
+  against a database that only grew, until a seeded message scrolled out of the
+  first loaded page.
+- **Isolation between concurrent runs** — two PRs each get their own container.
+  No serialization needed, so no concurrency group beyond cancel-in-progress.
 
-For an automated suite to exercise real client-server behaviour in CI, the
-runner needs to reach an isolated backend the same way this Mac does today,
-which raises questions worth deciding before building the suite, without
-blocking anything already done above:
+**Scope, as built:** ~110 API integration tests (the send path including the
+concurrent clientId insert race, unread/heard/read, library ordering and
+reorder conflicts, admin, auth, and the push fan-out asserted up to the APNs
+socket), 52 iOS unit tests, and the existing XCUITests wired into the live and
+device lanes.
 
-- **Reachability** — a GitHub-hosted runner's egress IP isn't static, so the
-  firewall-upsert approach that works for one dev machine doesn't generalize
-  to CI. Likely answer is `AllowAzureServices` doesn't help (GitHub runners
-  aren't Azure), so either a narrower Actions-specific firewall rule, or
-  running the API itself *inside* the CI job (a service container / `dotnet
-  run` in the workflow) against `bookclubdb-dev` over the same connection
-  string used locally.
-- **Reset between runs** — CI needs deterministic starting state, which is
-  exactly what the Half A seeder is for; it should be designed to be safely
-  re-runnable (truncate-and-reseed, not just insert) from the start rather
-  than retrofitted later.
-- **Isolation between concurrent runs** — if two PRs run CI at once against
-  the same `bookclubdb-dev`, they'd collide. Worth deciding later whether
-  that's solved with per-run schema/database isolation or just accepting
-  serialized CI (matches the existing `deploy-api.yml` concurrency group,
-  which already serializes for a related reason).
-- **What "regression suite" covers** — likely a mix of API integration tests
-  (hitting real endpoints against `bookclubdb-dev`) and iOS UI/unit tests
-  (`#32`), not yet designed.
-- **Must be runnable manually, not CI-only.** A developer needs to run the
-  exact same pass locally against `bookclubdb-dev` before pushing — not a
-  separate, weaker check that only exists inside a GitHub Actions job. This
-  means the suite should be built as a standalone, plain script/command
-  (e.g. a shell script or `dotnet test` / `xcodebuild test` invocation with no
-  GitHub-specific assumptions baked in) that `ci.yml` calls, rather than logic
-  written directly into the workflow YAML. CI becomes just "run the same thing
-  automatically," not a second implementation.
-
-`/admin/seed-baseline` was already built idempotent (matches on `(ClubId,
-Title)` rather than inserting blindly) and the dev connection details already
-live in one place (`dotnet user-secrets`) — both ahead of this suite actually
-being scoped, so neither should need rework when it is.
+**Still manual, deliberately:** CarPlay, and the four device-only behaviours
+listed in docs/TESTING.md. Those are stated at the end of every run rather than
+left implied.
 
 ## Azure region move: Norway East → West US 3 (DONE)
 
