@@ -559,7 +559,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.3;
+				MARKETING_VERSION = 1.9.4;
 				OMBC_BUNDLE_SUFFIX = "";
 				OMBC_DISPLAY_SUFFIX = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)";
@@ -604,7 +604,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.9.3;
+				MARKETING_VERSION = 1.9.4;
 				OMBC_BUNDLE_SUFFIX = .dev;
 				OMBC_DISPLAY_SUFFIX = "(DEV)";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)";
