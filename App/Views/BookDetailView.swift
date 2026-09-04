@@ -1189,6 +1189,10 @@ struct VoiceMessageBubble: View {
                     .clipShape(Circle())
                     .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
                 }
+                // Gives the voice-send UITest something positive to assert on. It previously
+                // could only check for the absence of a failure badge, which is what let a
+                // completely broken dev voice send stay green.
+                .accessibilityIdentifier("voicePlayButton")
             }
 
             VStack(alignment: .leading, spacing: 6) {

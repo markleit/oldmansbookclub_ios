@@ -127,6 +127,11 @@ final class OldMansBookClubUITests: XCTestCase {
         let mic = app.buttons["micButton"]
         XCTAssertTrue(mic.waitForExistence(timeout: 5), "Mic button not found")
 
+        // Counted before recording starts — the optimistic bubble appears as soon as the send
+        // begins, so sampling after would already include it.
+        let playButtons = app.buttons.matching(identifier: "voicePlayButton")
+        let countBefore = playButtons.count
+
         if isTapToTalk() {
             mic.tap()
             Thread.sleep(forTimeInterval: 2)
@@ -135,11 +140,18 @@ final class OldMansBookClubUITests: XCTestCase {
             mic.press(forDuration: 2.0)
         }
 
-        // A confirmed voice bubble reconciles from .sending to a playable bubble; absence of
-        // the failed indicator after a generous window is the pass condition (no stable text
-        // label to match on for a voice bubble).
-        let failed = app.otherElements["failedSendIndicator"]
-        XCTAssertFalse(failed.waitForExistence(timeout: 3), "Voice message failed to send")
+        // Asserts a playable bubble actually arrived, rather than just the absence of a failure
+        // badge. The old version checked `app.otherElements["failedSendIndicator"]` — but that
+        // badge is a Menu's label, so it's exposed as a *button* and that query could never
+        // match, meaning the assertion passed unconditionally. It stayed green through a period
+        // when voice sending was completely broken against the dev backend (the server's
+        // media-URL allow-list was pinned to production's storage account, so every voice, photo
+        // and video send was rejected with "Invalid media URL."). Counted because earlier voice
+        // messages are already on screen.
+        let deadline = Date().addingTimeInterval(20)
+        while playButtons.count <= countBefore && Date() < deadline { usleep(200_000) }
+        XCTAssertGreaterThan(playButtons.count, countBefore, "Voice message never landed as a playable bubble")
+        XCTAssertFalse(app.buttons.matching(identifier: "failedSendIndicator").count > 0, "Voice message showed as failed")
     }
 
     private func isTapToTalk() -> Bool {

@@ -29,6 +29,12 @@ public class BlobService
         _client = new BlobServiceClient(new Uri(accountUri), new DefaultAzureCredential());
     }
 
+    /// The storage host this deployment actually writes to. Anything validating that a
+    /// client-supplied media URL is one of ours has to compare against this rather than a
+    /// hardcoded literal — dev and prod are different accounts (see the constructor), so a
+    /// literal is necessarily wrong in one of them.
+    public string AccountHost => _client.Uri.Host;
+
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { "m4a", "jpg", "jpeg", "mp4" };
 
     public async Task<(string UploadUrl, string MediaUrl)> GenerateUploadUrlAsync(Guid clubId, string? extension = null)
