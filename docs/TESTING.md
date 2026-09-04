@@ -18,7 +18,7 @@ that drift.
 
 | Lane | Command | Where | Time | What it proves |
 |---|---|---|---|---|
-| **A — hermetic** | `regression.sh` | CI on every PR, and locally | ~1 min | API integration against a real SQL Server, plus iOS unit tests |
+| **A — hermetic** | `regression.sh` | CI on every PR, and locally | ~2 min | API integration against a real SQL Server, iOS unit tests, and UI tests against a stub server |
 | **B — live** | `regression.sh --live` | Locally, on demand | ~15 min | Lane A + the real app driven against a real API: blob uploads, SignalR, the full send path |
 | **C — device** | `regression.sh --device` | Locally, iPhone attached | ~20 min | Lane B + push delivery, background behaviour, real audio |
 
@@ -37,6 +37,17 @@ would pass while enforcing nothing — green, and testing the opposite of what t
 
 **iOS unit** (`UnitTests/`) constructs types directly: no simulator UI, no network, no backend.
 The whole target runs in well under a second, which is what makes it viable as a merge gate.
+
+**Hermetic UI** (`UITests/HermeticUITests.swift`) drives the real app against a stub HTTP server
+run by the test process itself. It needs no production code: `ServerEnvironment` already resolves
+its host from the `debugServerBaseURL` default (#120), and a launch argument populates it — so
+nothing stub-shaped ships in the app binary and there is no injection seam to maintain.
+
+These cover what the app *draws* once the data exists, which is the part that needs no server:
+the library's status groups, the chat rendering what was returned, a sent message reconciling to
+exactly one bubble (breaking `SendReconciler` fails this immediately — it is #35 in CI), and the
+emoji picker's grid. Anything depending on real server behaviour — blob uploads, SignalR
+delivery, unread arithmetic — stays in lane B or the API suite.
 
 ### Lane B — live
 
@@ -135,6 +146,7 @@ Worked examples, all verified while writing this suite:
 | Drop the voice clause from `UnreadCalculator` | `A_voice_message_stays_unread_after_the_read_marker_passes_it` |
 | Make `UnreadStore` always write the badge | `testThePushPathUpdatesTheCountWithoutTouchingTheBadge` |
 | Add a camelCase policy to the server's `JsonStringEnumConverter` | the contract fixtures (three of them) |
+| Make `SendReconciler` always `.insert` | `testASentMessageAppearsOnceNotTwice` (the bubble renders twice) |
 
 **Where a test belongs.** Prefer the fastest lane that can actually prove the thing. Server logic
 is an API integration test; client logic is a unit test; a flow that needs the real app on screen

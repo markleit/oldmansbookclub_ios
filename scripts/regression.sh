@@ -158,6 +158,13 @@ fi
 if [[ $LANE_IOS_UNIT -eq 1 ]]; then
     step "iOS unit tests (no network, no backend)"
     run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" OldMansBookClubTests
+
+    step "Hermetic UI tests (stub server, still no backend)"
+    # The app is pointed at a stub HTTP server run by the test process itself, using the
+    # debugServerBaseURL override that already exists for #120 — so these are as deterministic as
+    # the unit tests, just slower because a simulator has to boot and draw.
+    run_xcodebuild_tests "hermetic UI" "platform=iOS Simulator,name=$SIMULATOR" \
+        OldMansBookClubUITests/HermeticUITests
 fi
 
 # ---- lane B: live UI -------------------------------------------------------------------------
@@ -216,8 +223,10 @@ fi
 
 if [[ $LANE_LIVE -eq 1 ]]; then
     step "XCUITests against the live API (simulator)"
+    # HermeticUITests is excluded here: it brings its own stub server, so running it again against
+    # the live API would prove nothing new and cost another minute.
     run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,name=$SIMULATOR" \
-        OldMansBookClubUITests
+        OldMansBookClubUITests/OldMansBookClubUITests OldMansBookClubUITests/LibraryUITests
 fi
 
 # ---- lane C: device --------------------------------------------------------------------------
