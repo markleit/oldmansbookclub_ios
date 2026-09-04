@@ -314,6 +314,15 @@ final class BookViewModel: ObservableObject {
 
         guard !isOffline else { return }
 
+        // #146 — drain queued sends on any successful load, mirroring how #119's receipt outbox
+        // drains. Previously the only trigger was didBecomeActive, which never fires if the app
+        // stays foregrounded — so toggling airplane mode back off from Control Center restored
+        // connectivity but left queued messages sitting there until something else woke the app
+        // (reported from device testing: "manual retry sends it, but it won't go on its own").
+        // The network monitor's offline→online transition calls load(), so hanging it here
+        // covers that, plus foreground and pull-to-refresh, in one place.
+        Task { await flushPendingText() }
+
         // Newest SERVER-known message: an optimistic send still in flight has an id the server
         // has never seen, and the read marker must point at a real message (#119).
         let latestId = messages.first(where: { $0.sendState == nil })?.id
