@@ -68,6 +68,21 @@ final class APIClient {
         return URLSession(configuration: config)
     }()
 
+    // #146 — text sends fail fast instead of waiting out a dead network. The shared `session`
+    // sets waitsForConnectivity on device, which parks a request for up to
+    // timeoutIntervalForResource (~30s) rather than erroring — so a send in airplane mode sat
+    // there for half a minute before the bubble could go .failed. That trade made sense when a
+    // failed text send was lost for good; now TextSendQueue persists it and retries on
+    // foreground/reconnect, so failing immediately is strictly better: the user gets the ⚠️ and
+    // a Retry straight away, and the outbox still delivers it once there's a network.
+    private let sendSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 15
+        config.timeoutIntervalForResource = 15
+        config.waitsForConnectivity = false
+        return URLSession(configuration: config)
+    }()
+
     private let uploadSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
@@ -432,7 +447,7 @@ final class APIClient {
         if let token = TokenStore.shared.token {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await sendSession.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 401 {
             if !retried {

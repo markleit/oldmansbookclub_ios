@@ -249,7 +249,19 @@ final class BookViewModel: ObservableObject {
         // instantly instead of waiting on the fetch below.
         let cached = ChatCache.load(bookId: book.id)
         let hasCachedState = !cached.isEmpty
-        if hasCachedState { messages = cached }
+        if hasCachedState {
+            messages = cached
+            // #146 — the cache deliberately excludes un-confirmed sends, so seeding from it
+            // blanks any pending bubble. Restore immediately rather than waiting for the fetch
+            // below to resolve: on a dead network that fetch can park for its full resource
+            // timeout, and until #146 those seconds were a window where a failed send simply
+            // wasn't on screen (reported from device testing as "the message disappeared, then
+            // came back when airplane mode was toggled off" — it was queued and safe the whole
+            // time, just invisible). Also covers the early-return paths below, which skip the
+            // restore calls entirely.
+            restorePendingMediaBubbles()
+            restorePendingTextBubbles()
+        }
         isOffline = false
         isLoadingMessages = !hasCachedState
         reachedBeginning = false

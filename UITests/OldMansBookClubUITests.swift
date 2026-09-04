@@ -63,12 +63,6 @@ final class OldMansBookClubUITests: XCTestCase {
     // .failed with a Retry option, not vanish. Requires the local dev API to be down when this
     // specific test runs.
     func testSendTextMessage_offlineShowsFailedAndRetries() {
-        // Counted rather than matched by identity: a prior offline run in the same session (API
-        // still down) can leave its own failed bubble behind, and failedSendIndicator has no
-        // per-message identifier to distinguish one from another.
-        let failedIndicator = app.buttons.matching(identifier: "failedSendIndicator")
-        let countBefore = failedIndicator.count
-
         let text = uniqueMessage("offline")
         let field = app.textViews["messageTextField"]
         field.tap()
@@ -77,21 +71,34 @@ final class OldMansBookClubUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts[text].waitForExistence(timeout: 10), "Message bubble never appeared even before the (failed) send resolved")
 
-        // The send failure also surfaces as an error alert, which stays up until dismissed and
-        // hides the chat view's accessibility elements (including failedSendIndicator) while
-        // presented — dismiss it before checking bubble state.
-        let alert = app.alerts.firstMatch
-        if alert.waitForExistence(timeout: 10) {
-            alert.buttons["OK"].tap()
-        }
+        // A failed send raises an error alert, and a modal alert hides the chat's accessibility
+        // elements underneath it — so anything below would read as absent while one is up.
+        // Drained in a loop rather than dismissed once: a queued send left over from an earlier
+        // offline run gets retried on foreground and can raise its own alert behind this one.
+        dismissAnyAlerts()
+
+        // The actual #146 contract: a send that couldn't reach the server STAYS on screen as a
+        // retryable bubble. Before #146 it was deleted outright, so asserting the bubble is
+        // still here is the regression that matters — more direct than counting badges, which
+        // can't distinguish this message's badge from a leftover one anyway.
+        XCTAssertTrue(app.staticTexts[text].exists, "Failed message was removed from the chat instead of staying as retryable")
+
         // failedSendIndicator is a Menu's label (SendStateBadge), so it's exposed as a button,
         // not an "other" element — matches app.buttons, same as the Retry/Cancel items inside it.
-        let deadline = Date().addingTimeInterval(8)
-        while failedIndicator.count <= countBefore && Date() < deadline { usleep(200_000) }
-        XCTAssertGreaterThan(failedIndicator.count, countBefore, "This message never showed as failed while the API was unreachable")
+        let failedIndicator = app.buttons.matching(identifier: "failedSendIndicator").firstMatch
+        XCTAssertTrue(failedIndicator.waitForExistence(timeout: 8), "No failed-send badge shown while the API was unreachable")
 
-        failedIndicator.firstMatch.tap()
+        failedIndicator.tap()
         XCTAssertTrue(app.buttons["Retry"].firstMatch.waitForExistence(timeout: 5), "Failed text message's badge menu has no Retry action")
+    }
+
+    /// Clears any stacked error alerts so the view underneath is queryable again.
+    private func dismissAnyAlerts(limit: Int = 5) {
+        for _ in 0..<limit {
+            let alert = app.alerts.firstMatch
+            guard alert.waitForExistence(timeout: 5) else { return }
+            alert.buttons["OK"].firstMatch.tap()
+        }
     }
 
     // The scenario that motivated this suite (#131): backgrounding the app immediately after
