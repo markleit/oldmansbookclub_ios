@@ -191,3 +191,9 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+// Exposed so the integration test suite (Tests/BookClubApi.Tests) can boot this exact startup
+// path through WebApplicationFactory<Program>. Top-level statements compile to an INTERNAL
+// Program class, which the test assembly cannot name; declaring it partial and public here is
+// the documented way to make it referenceable. It adds no behaviour.
+public partial class Program { }

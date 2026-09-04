@@ -29,6 +29,8 @@ fastlane/screenshots
 # .NET / API
 API/bin/
 API/obj/
+Tests/**/bin/
+Tests/**/obj/
 API/publish/
 API/publish.zip
 API/deploy.zip

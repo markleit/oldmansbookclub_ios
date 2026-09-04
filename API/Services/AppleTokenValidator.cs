@@ -7,6 +7,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace BookClubApi.Services;
 
+// `virtual` for the same reason as BlobService — the integration suite fakes Apple's token
+// endpoint rather than reaching appleid.apple.com. See BlobService for the full note.
 public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<AppleTokenValidator> logger)
 {
     private const string AppleKeysUrl = "https://appleid.apple.com/auth/keys";
@@ -23,7 +25,7 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
     // Returns the Apple subject and which of validAudiences the token was actually issued to —
     // callers need the matched bundle id, not just any of the candidates, for the client_id used
     // in subsequent Apple token-exchange/revoke calls.
-    public async Task<(string Subject, string MatchedBundleId)?> ValidateAsync(string identityToken, IReadOnlyList<string> validAudiences)
+    public virtual async Task<(string Subject, string MatchedBundleId)?> ValidateAsync(string identityToken, IReadOnlyList<string> validAudiences)
     {
         var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
 
@@ -99,7 +101,7 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
         }
     }
 
-    public async Task<string?> ExchangeCodeForRefreshTokenAsync(string authorizationCode, string bundleId)
+    public virtual async Task<string?> ExchangeCodeForRefreshTokenAsync(string authorizationCode, string bundleId)
     {
         try
         {
@@ -123,7 +125,7 @@ public class AppleTokenValidator(IHttpClientFactory httpClientFactory, IConfigur
         }
     }
 
-    public async Task RevokeRefreshTokenAsync(string refreshToken, string bundleId)
+    public virtual async Task RevokeRefreshTokenAsync(string refreshToken, string bundleId)
     {
         try
         {

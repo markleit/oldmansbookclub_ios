@@ -5,6 +5,11 @@ using Azure.Storage.Sas;
 
 namespace BookClubApi.Services;
 
+// Public members are `virtual` purely so the integration test suite can substitute a fake that
+// returns deterministic URLs on a fake AccountHost — every real call here goes to Azure Storage
+// over the network and needs an identity with the delegation roles, neither of which a CI runner
+// has. Nothing in the app overrides these; if you add a public member, make it virtual too, or
+// the fake will silently fall through to the real Azure client mid-test.
 public class BlobService
 {
     private readonly BlobServiceClient _client;
@@ -33,11 +38,11 @@ public class BlobService
     /// client-supplied media URL is one of ours has to compare against this rather than a
     /// hardcoded literal — dev and prod are different accounts (see the constructor), so a
     /// literal is necessarily wrong in one of them.
-    public string AccountHost => _client.Uri.Host;
+    public virtual string AccountHost => _client.Uri.Host;
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { "m4a", "jpg", "jpeg", "mp4" };
 
-    public async Task<(string UploadUrl, string MediaUrl)> GenerateUploadUrlAsync(Guid clubId, string? extension = null)
+    public virtual async Task<(string UploadUrl, string MediaUrl)> GenerateUploadUrlAsync(Guid clubId, string? extension = null)
     {
         var ext = (extension ?? "m4a").TrimStart('.');
         if (!AllowedExtensions.Contains(ext)) ext = "m4a";  // safe default, container doesn't care
@@ -52,7 +57,7 @@ public class BlobService
         return (uploadUrl, plainUrl);
     }
 
-    public async Task<(string UploadUrl, string AvatarUrl)> GenerateAvatarUploadUrlAsync(Guid userId)
+    public virtual async Task<(string UploadUrl, string AvatarUrl)> GenerateAvatarUploadUrlAsync(Guid userId)
     {
         var containerClient = _client.GetBlobContainerClient(AvatarContainer);
         await containerClient.CreateIfNotExistsAsync(PublicAccessType.None);
@@ -66,7 +71,7 @@ public class BlobService
         return (uploadUrl, blobClient.Uri.ToString());
     }
 
-    public async Task<string> GenerateAvatarReadUrlAsync(Guid userId, DateTime? avatarUpdatedAt = null)
+    public virtual async Task<string> GenerateAvatarReadUrlAsync(Guid userId, DateTime? avatarUpdatedAt = null)
     {
         var blobName = $"{userId}/avatar.jpg";
         var url = await GenerateUserDelegationSasAsync(AvatarContainer, blobName,
@@ -85,7 +90,7 @@ public class BlobService
 
     // Returns a cached delegation key valid for 7 days. Refreshes only when within 1 hour of expiry.
     // Thread-safe via SemaphoreSlim — safe because BlobService is registered as Singleton.
-    public async Task<(UserDelegationKey Key, DateTimeOffset ExpiresOn)> GetReadDelegationKeyAsync()
+    public virtual async Task<(UserDelegationKey Key, DateTimeOffset ExpiresOn)> GetReadDelegationKeyAsync()
     {
         if (_cachedKey != null && _cachedKeyExpiry > DateTimeOffset.UtcNow.AddHours(1))
             return (_cachedKey, _cachedKeyExpiry);
@@ -118,7 +123,7 @@ public class BlobService
     // Actual stored size of an uploaded blob, in bytes — used to enforce per-type size
     // limits server-side (a client can't bypass the limit by uploading a larger file).
     // Returns null if the blob can't be found / read.
-    public async Task<long?> GetBlobSizeAsync(string storedUrl)
+    public virtual async Task<long?> GetBlobSizeAsync(string storedUrl)
     {
         var plainUrl = storedUrl.Split('?')[0];
         if (!Uri.TryCreate(plainUrl, UriKind.Absolute, out var uri)) return null;
@@ -136,7 +141,7 @@ public class BlobService
         }
     }
 
-    public string? GenerateFreshReadUrl(string? storedUrl, UserDelegationKey key, DateTimeOffset keyExpiresOn)
+    public virtual string? GenerateFreshReadUrl(string? storedUrl, UserDelegationKey key, DateTimeOffset keyExpiresOn)
     {
         if (storedUrl is null) return null;
 
