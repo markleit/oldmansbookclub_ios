@@ -214,7 +214,25 @@ if [[ $LANE_LIVE -eq 1 ]]; then
         done
         if ! curl -fsS --max-time 2 http://localhost:5235/health/ready >/dev/null 2>&1; then
             fail "the API never became ready — see .regression-api.log"
-            fail "a readiness failure is usually the Azure SQL firewall: your egress IP changed."
+
+            # By far the most common cause, and the error carries everything needed to fix it.
+            # SQL error 40615 names the IP the server ACTUALLY saw, which is the one that matters:
+            # it can differ from what an ipify-style lookup reports (different egress path), and it
+            # changes whenever the machine moves network. Reading it out of a stack trace by hand
+            # is how you end up allow-listing an address that was already stale.
+            if grep -q "Error Number:40615" "$REPO_ROOT/.regression-api.log" 2>/dev/null; then
+                blocked=$(grep -oE "Client with IP address '[0-9.]+'" "$REPO_ROOT/.regression-api.log" \
+                    | grep -oE '[0-9.]+' | tail -1)
+                fail "Azure SQL rejected this machine's IP ($blocked). Run:"
+                note ""
+                note "  az sql server firewall-rule update --server oldmansbookclub-db \\"
+                note "    -g \$(az resource list --name oldmansbookclub-db --query '[0].resourceGroup' -o tsv) \\"
+                note "    -n dev-machine-current --start-ip-address $blocked --end-ip-address $blocked"
+                note ""
+                note "then re-run. Use THIS address, not whatever an external IP lookup reports —"
+                note "the database connection can take a different egress path."
+            fi
+
             record "live UI" 1
             LANE_LIVE=0
         fi

@@ -59,6 +59,12 @@ suite's own comments record a seeded message scrolling out of the first loaded p
 turning a real assertion into a flake. Pass `--no-reset` to keep your dev data at the cost of that
 determinism.
 
+If the API fails to start, it is almost always the Azure SQL firewall — your egress IP changes
+whenever the machine moves network. The script reads the address **the database server actually
+saw** out of the error (SQL 40615) and prints the exact `az` command to fix it. Use that address
+rather than an external IP lookup: the database connection can take a different egress path, and
+the two do not always agree.
+
 Needs `OMBC_SEED_KEY` to match the API's `Seeding:Key`:
 
 ```bash
