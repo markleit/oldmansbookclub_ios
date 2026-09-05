@@ -90,6 +90,49 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: OldMansBookClub
+    # #126 — starts the hermetic UI tests' fake backend as a genuine macOS process, BEFORE this
+    # target builds. A scheme-level pre-action was tried first and rejected: it runs with a
+    # stripped environment (confirmed directly — no $SRCROOT, no $PROJECT_DIR, not even $PWD
+    # pointed at the repo), apparently because XcodeGen does not wire an EnvironmentBuildable
+    # reference into scheme pre/post actions the way it does for a target's own build phases. A
+    # target build-phase script, by contrast, reliably gets full build settings, which is all this
+    # actually needs.
+    #
+    # Why the stub has to be a real process at all, rather than code inside the test class: it was
+    # a Swift NWListener created directly inside HermeticUITests — itself part of the
+    # Simulator-hosted `-Runner.app`, a SEPARATE process from the app under test. Diagnosed
+    # directly: that listener was reachable instantly from its OWN process (proven with a raw
+    # URLSession call from inside the runner) but never reachable from the app being tested, ever,
+    # for the full test duration — on a completely fresh device and in CI alike. iOS Simulator does
+    # not reliably bridge loopback connections BETWEEN two Simulator-hosted apps, only from a
+    # Simulator app to a genuine macOS host process — which is exactly why the live lane, talking
+    # to a real `dotnet run` process, never had this problem.
+    preBuildScripts:
+      - name: "Start hermetic stub"
+        script: |
+          #!/bin/bash
+          set -e
+          cd "$SRCROOT"
+          # Idempotent: a stub left over from an interrupted previous run (a crash, Xcode's Stop
+          # button) must not be mistaken for a healthy one — always replace it.
+          if [ -f /tmp/ombc-hermetic-stub.pid ]; then
+            kill "$(cat /tmp/ombc-hermetic-stub.pid)" 2>/dev/null || true
+            rm -f /tmp/ombc-hermetic-stub.pid
+          fi
+          nohup python3 scripts/hermetic_stub.py > /tmp/ombc-hermetic-stub.log 2>&1 &
+          echo $! > /tmp/ombc-hermetic-stub.pid
+          # Real readiness, not a fixed sleep — the script prints one line once its socket is
+          # bound and accepting connections.
+          for i in $(seq 1 50); do
+            grep -q "listening on" /tmp/ombc-hermetic-stub.log 2>/dev/null && exit 0
+            sleep 0.1
+          done
+          echo "hermetic stub did not start in time" >&2
+          cat /tmp/ombc-hermetic-stub.log >&2
+          exit 1
+        # No output declared, so Xcode reruns this on every build rather than caching it —
+        # correct here, since "is the stub already running" isn't expressible as a file timestamp.
+        basedOnDependencyAnalysis: false
 
 schemes:
   OldMansBookClub:

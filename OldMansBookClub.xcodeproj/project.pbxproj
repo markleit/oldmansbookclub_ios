@@ -21,7 +21,6 @@
 		205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */; };
 		238255509291CD03907584E8 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */; };
 		26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */; };
-		2965B3ABFA847F8EB6874FDB /* StubAPIServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 088DBB6A4AB97330BD65F473 /* StubAPIServer.swift */; };
 		2C2EF1F408CB370E728F6C62 /* BrowseClubsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62112635C861D78687D704A9 /* BrowseClubsView.swift */; };
 		2EB2C8E1B83505E217F038C1 /* message_voice_rest.json in Resources */ = {isa = PBXBuildFile; fileRef = CD4B920BCB61FDA330CA06A0 /* message_voice_rest.json */; };
 		301FDC8DB4FAEF0CD239106B /* CacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8994D3123C1F58B7C697E408 /* CacheService.swift */; };
@@ -110,7 +109,6 @@
 		024037128BCBBAFA0312E443 /* BookViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookViewModel.swift; sourceTree = "<group>"; };
 		02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		06500729FE6E02A980E8F502 /* ServerEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEnvironmentTests.swift; sourceTree = "<group>"; };
-		088DBB6A4AB97330BD65F473 /* StubAPIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubAPIServer.swift; sourceTree = "<group>"; };
 		089E39F989B969C4B4DBB798 /* message_minimal_rest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = message_minimal_rest.json; sourceTree = "<group>"; };
 		0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OldMansBookClubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0FD1A38295A510B628498DAA /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
@@ -296,7 +294,6 @@
 				37CA8BF844CD7700A1676779 /* HermeticUITests.swift */,
 				1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */,
 				F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */,
-				088DBB6A4AB97330BD65F473 /* StubAPIServer.swift */,
 				E333A0951B83E16DBA7C9948 /* SystemAlerts.swift */,
 			);
 			path = UITests;
@@ -382,6 +379,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9E12B420DA453C2AECEF7162 /* Build configuration list for PBXNativeTarget "OldMansBookClubUITests" */;
 			buildPhases = (
+				FFED02E5FBE8A014D4F946CE /* Start hermetic stub */,
 				D87F2707C98416CDF2A9A289 /* Sources */,
 			);
 			buildRules = (
@@ -509,6 +507,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		FFED02E5FBE8A014D4F946CE /* Start hermetic stub */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Start hermetic stub";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/bin/bash\nset -e\ncd \"$SRCROOT\"\n# Idempotent: a stub left over from an interrupted previous run (a crash, Xcode's Stop\n# button) must not be mistaken for a healthy one — always replace it.\nif [ -f /tmp/ombc-hermetic-stub.pid ]; then\n  kill \"$(cat /tmp/ombc-hermetic-stub.pid)\" 2>/dev/null || true\n  rm -f /tmp/ombc-hermetic-stub.pid\nfi\nnohup python3 scripts/hermetic_stub.py > /tmp/ombc-hermetic-stub.log 2>&1 &\necho $! > /tmp/ombc-hermetic-stub.pid\n# Real readiness, not a fixed sleep — the script prints one line once its socket is\n# bound and accepting connections.\nfor i in $(seq 1 50); do\n  grep -q \"listening on\" /tmp/ombc-hermetic-stub.log 2>/dev/null && exit 0\n  sleep 0.1\ndone\necho \"hermetic stub did not start in time\" >&2\ncat /tmp/ombc-hermetic-stub.log >&2\nexit 1\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		92836FDF4F97F747297E3CCF /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -595,7 +615,6 @@
 				EB458273C856BF515652D230 /* HermeticUITests.swift in Sources */,
 				F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */,
 				669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */,
-				2965B3ABFA847F8EB6874FDB /* StubAPIServer.swift in Sources */,
 				E3F9E0CBFCD9C80E457B34FC /* SystemAlerts.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

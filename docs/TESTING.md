@@ -38,13 +38,42 @@ would pass while enforcing nothing — green, and testing the opposite of what t
 **iOS unit** (`UnitTests/`) constructs types directly: no simulator UI, no network, no backend.
 The whole target runs in well under a second, which is what makes it viable as a merge gate.
 
-**Hermetic UI** (`UITests/HermeticUITests.swift`) drives the real app against a stub HTTP server
-run by the test process itself. **Local only for now** — these pass here but fail on a GitHub
-runner, where the app makes no request to the stub at all, so it is an environment difference
-rather than an app failure. CI gates on `--only ios-unit` until that is understood; muting a red
-job would have been the dishonest fix. It needs no production code: `ServerEnvironment` already resolves
-its host from the `debugServerBaseURL` default (#120), and a launch argument populates it — so
-nothing stub-shaped ships in the app binary and there is no injection seam to maintain.
+**Hermetic UI** (`UITests/HermeticUITests.swift`) drives the real app against a stub HTTP server —
+`scripts/hermetic_stub.py`, a genuine macOS process started by a build-phase script on the
+`OldMansBookClubUITests` target (`project.yml`) before it builds. It needs no production code:
+`ServerEnvironment` already resolves its host from the `debugServerBaseURL` default (#120), and a
+launch argument populates it.
+
+**Status: diagnosed, partially fixed, not currently reliable.** This lane has a real history worth
+knowing before touching it again:
+
+1. It originally ran the stub as a Swift `NWListener` created directly inside the test class. That
+   was reachable instantly from its own process (proven with a raw `URLSession` call from inside
+   the runner) but was **never** reachable from the app under test — a separate Simulator-hosted
+   process — for the full duration of any test, deterministically, on a completely fresh device
+   and in CI alike. iOS Simulator does not reliably bridge loopback connections *between two*
+   Simulator-hosted apps, only from a Simulator app to a genuine macOS host process.
+2. Moving the stub to a real host process (this file) fixed that class of failure — proven with
+   5+ consecutive clean passes of `testTheLibraryRendersBothStatusGroups`, which had never once
+   succeeded against any earlier version of the stub.
+3. It then, with **no code change at all**, went back to failing 3/3 times with the exact original
+   symptom ("the app made NO request to the stub"). Ruled out while chasing this: colima running
+   in the background, the stub's HTTP/1.0-vs-1.1 keep-alive setting, stale simulator state (fresh
+   restart made no difference), and a stale app install (fresh reinstall made no difference). The
+   stub process itself was confirmed healthy throughout via direct `curl` from the Mac.
+
+Net effect: the architecture is *correct* — a host-level process is demonstrably reachable under
+some conditions where the old in-process one never was — but is not currently *dependable*. Treat
+a red `hermetic UI` run as inconclusive, not as evidence of an app regression, until this is
+understood further. **A second, separate, still-unresolved issue**: even on a run where the stub
+*is* reached, tapping a book row to enter its chat does not navigate — the nav bar never leaves
+the library. Eight distinct causes were ruled out one at a time (see the doc comment on
+`HermeticUITests.openCurrentBook()` for the full list) with the identical symptom persisting
+through every one; root cause not found. All three tests that depend on that navigation are
+marked `XCTSkip` with the full explanation, rather than left red or silently deleted.
+
+CI still gates on `--only ios-unit` only, unaffected by any of this — muting a red job would have
+been the dishonest fix, and this lane was never part of the CI gate to begin with.
 
 These cover what the app *draws* once the data exists, which is the part that needs no server:
 the library's status groups, the chat rendering what was returned, a sent message reconciling to
