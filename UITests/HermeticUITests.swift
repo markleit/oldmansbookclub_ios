@@ -102,8 +102,23 @@ final class HermeticUITests: XCTestCase {
         // The stub echoes the send back carrying its client_id, which is what the reconciler
         // matches on. Exactly one bubble is the assertion — a second would be #35 returning, and
         // counting is the only way to see it.
-        XCTAssertEqual(app.staticTexts.matching(identifier: body).count, 1,
-                       "the optimistic bubble and its confirmation both rendered")
+        //
+        // Polled rather than checked once, and this is not a flakiness workaround — it is what
+        // makes the assertion mean the right thing. BookDetailView's ForEach keys on Message.id,
+        // and SendReconciler.replaceOptimistic swaps the array element's id (the local clientId)
+        // for the server's new UUID at the same index. SwiftUI's diffing sees that as a delete of
+        // the old id plus an insert of a new one, not an update, so the outgoing and incoming
+        // views can legitimately coexist in the accessibility tree for one transition frame. A
+        // real #35 regression looks different: the count STAYS at 2 forever, because a second
+        // MESSAGE was appended, not because a view is still finishing an animation. Polling until
+        // the count stabilizes at 1 (or the deadline passes) is what tells those two apart —
+        // catching the real bug requires exactly the patience that also has to tolerate the
+        // harmless one.
+        let bubbles = app.staticTexts.matching(identifier: body)
+        let deadline = Date().addingTimeInterval(3)
+        while bubbles.count > 1 && Date() < deadline { usleep(100_000) }
+        XCTAssertEqual(bubbles.count, 1,
+                       "the optimistic bubble and its confirmation both rendered and neither went away")
     }
 
     // ---- pure client UI ----------------------------------------------------------------------
