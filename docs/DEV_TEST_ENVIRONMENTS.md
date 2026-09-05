@@ -299,11 +299,15 @@ end-to-end needs either a second real club member to send from, or #25
 landing with per-device (not per-account) fan-out exclusion — see the
 2026-08-27 comment on #25 for the design discussion (not yet settled).
 
-## CI regression / build-acceptance suite (DONE — #126)
+## CI regression / build-acceptance suite (IN PROGRESS — #126)
 
-Half A's isolated stack is what made this possible. It is built; the canonical
-reference is **[docs/TESTING.md](TESTING.md)** — three lanes behind one
-command, `./scripts/regression.sh`.
+Half A's isolated stack is what made this possible. Most of it is built; the
+canonical reference is **[docs/TESTING.md](TESTING.md)** — three lanes behind
+one command, `./scripts/regression.sh`. Not "DONE": the hermetic UI lane
+(stub-backed XCUITests) is built but not reliable, and is not part of the CI
+gate as a result — see docs/TESTING.md's hermetic UI section for the full
+history before touching it. #126 stays open until that lane is either fixed
+or its scope is deliberately narrowed.
 
 The three questions this section used to leave open were all answered the same
 way: **by not reaching Azure at all** for the hermetic lane.
@@ -328,8 +332,9 @@ way: **by not reaching Azure at all** for the hermetic lane.
 **Scope, as built:** ~110 API integration tests (the send path including the
 concurrent clientId insert race, unread/heard/read, library ordering and
 reorder conflicts, admin, auth, and the push fan-out asserted up to the APNs
-socket), 52 iOS unit tests, and the existing XCUITests wired into the live and
-device lanes.
+socket), 63 iOS unit tests, and the existing XCUITests wired into the live and
+device lanes. CI (`test.yml`) currently blocks merges on the API and iOS UNIT
+jobs only — the hermetic UI job is deliberately not in that gate yet.
 
 **Still manual, deliberately:** CarPlay, and the four device-only behaviours
 listed in docs/TESTING.md. Those are stated at the end of every run rather than
