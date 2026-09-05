@@ -354,11 +354,16 @@ if [[ $LANE_DEVICE -eq 1 ]]; then
         note "DeviceOnlyUITests skips itself on a simulator rather than passing vacuously"
         set +e
         set -o pipefail
+        # HermeticUITests explicitly excluded: it points the app at 127.0.0.1, which on a
+        # physical device is the phone itself, not this Mac — it cannot ever pass here, for a
+        # reason unrelated to whether the device lane itself is healthy.
         xcodebuild test \
             -project OldMansBookClub.xcodeproj \
             -scheme OldMansBookClub \
             -destination "platform=iOS,id=$OMBC_DEVICE_UDID" \
-            -only-testing:OldMansBookClubUITests \
+            -only-testing:OldMansBookClubUITests/OldMansBookClubUITests \
+            -only-testing:OldMansBookClubUITests/LibraryUITests \
+            -only-testing:OldMansBookClubUITests/DeviceOnlyUITests \
             | tail -40
         status=$?
         set +o pipefail

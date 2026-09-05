@@ -21,10 +21,19 @@ import XCTest
 final class DeviceOnlyUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    /// The API as the DEVICE can reach it. Matches ServerEnvironment.devMachineURLString, and is
-    /// overridable for a machine whose Wi-Fi filters mDNS (type `ipconfig getifaddr en0`'s answer).
+    /// The API as the DEVICE can reach it. `Marks-MacBook.local` (mDNS) does not resolve from
+    /// the phone on this network — confirmed directly: `_NSURLErrorNWResolutionReportKey` shows
+    /// "Resolved 0 endpoints" in single-digit milliseconds, with the network path itself
+    /// `satisfied`, so this is a genuine Bonjour/mDNS gap on this Wi-Fi, not a permissions or
+    /// reachability problem (a raw LAN IP connects fine). The obvious fix — override via
+    /// `OMBC_API_URL` at invocation time — does NOT reach this process: neither a plain shell env
+    /// var (`OMBC_API_URL=... xcodebuild test ...`) nor the documented device mechanism
+    /// (`TEST_RUNNER_OMBC_API_URL=... xcodebuild test ...`) changes what
+    /// `ProcessInfo.processInfo.environment` sees here, confirmed twice independently. So the
+    /// literal below IS the effective config for a device run — update it directly
+    /// (`ipconfig getifaddr en0` on the Mac) if this network's IP changes.
     private var apiBaseURL: URL {
-        let raw = ProcessInfo.processInfo.environment["OMBC_API_URL"] ?? "http://Marks-MacBook.local:5235"
+        let raw = ProcessInfo.processInfo.environment["OMBC_API_URL"] ?? "http://192.168.122.203:5235"
         return URL(string: raw)!
     }
 
@@ -59,7 +68,17 @@ final class DeviceOnlyUITests: XCTestCase {
     /// *cause* a push, and a second UI-driven client would add a boot, a login and a send — three
     /// more things that can fail for reasons unrelated to whether the notification arrives.
     private func signInSecondMember() throws -> String {
-        let response = try post("/auth/dev-login", body: ["displayName": "Push Sender"], token: nil)
+        // First local-network connection made by THIS app (the runner, not OldMansBookClub
+        // itself) — a fresh install triggers a Local Network Privacy prompt here, which blocks
+        // the request in flight rather than delaying it. Retry once after allowing it, the same
+        // pattern as SystemAlerts.performRetryingPermissionPrompt for the microphone.
+        let response: [String: Any]
+        do {
+            response = try post("/auth/dev-login", body: ["displayName": "Push Sender"], token: nil)
+        } catch {
+            guard SystemAlerts.dismissAny(timeout: 3) else { throw error }
+            response = try post("/auth/dev-login", body: ["displayName": "Push Sender"], token: nil)
+        }
         return try XCTUnwrap(response["access_token"] as? String,
                              "dev-login did not return a token — is the API running in Development?")
     }

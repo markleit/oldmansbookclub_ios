@@ -88,6 +88,14 @@ targets:
         DEVELOPMENT_TEAM: BCH6CDU76R
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+        # The device lane's DeviceOnlyUITests signs in a second member with a raw URLSession call
+        # made directly from THIS app (OldMansBookClubUITests-Runner.app) — a separate bundle from
+        # OldMansBookClub, with its own Local Network Privacy permission. Without this key, iOS
+        # hard-blocks any local-network connection with no prompt at all (confirmed directly: a
+        # hardcoded LAN IP still failed with NWPath "Local network prohibited", not a permission
+        # dialog) — indistinguishable on the surface from an mDNS/DNS failure, which is what the
+        # original ".local" hostname symptom actually was.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Used by UI tests to reach the local API server."
     dependencies:
       - target: OldMansBookClub
     # #126 — starts the hermetic UI tests' fake backend as a genuine macOS process, BEFORE this
