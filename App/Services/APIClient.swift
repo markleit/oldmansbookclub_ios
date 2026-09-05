@@ -24,7 +24,10 @@ final class APIClient {
     // In RELEASE this inlines to the production literal.
     private var baseURL: URL { ServerEnvironment.baseURL }
 
-    private let decoder: JSONDecoder = {
+    // `static` and internal rather than a private instance property so the JSON contract tests
+    // decode server-generated fixtures through THIS decoder rather than a copy of it (#126). A
+    // copy would happily pass while the real one rejected the same bytes.
+    static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         let iso = ISO8601DateFormatter()
@@ -155,7 +158,7 @@ final class APIClient {
         if http.statusCode == 401 || http.statusCode == 403 { throw RefreshError.rejected }
         guard (200..<300).contains(http.statusCode) else { throw RefreshError.transient }
         do {
-            return try decoder.decode(AuthResponse.self, from: data)
+            return try Self.decoder.decode(AuthResponse.self, from: data)
         } catch {
             throw RefreshError.transient
         }
@@ -194,7 +197,7 @@ final class APIClient {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 202 {
-            let setup = try? decoder.decode(SetupRequiredResponse.self, from: data)
+            let setup = try? Self.decoder.decode(SetupRequiredResponse.self, from: data)
             switch setup?.status {
             case "pending_approval":
                 throw APIError.pendingApproval(clubName: setup?.clubName ?? "the club")
@@ -206,7 +209,7 @@ final class APIClient {
         }
         if http.statusCode == 401 { throw URLError(.userAuthenticationRequired) }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try decoder.decode(AuthResponse.self, from: data)
+        return try Self.decoder.decode(AuthResponse.self, from: data)
     }
 
     func getPublicClubs() async throws -> [PublicClub] {
@@ -216,7 +219,7 @@ final class APIClient {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)
         }
-        return try decoder.decode([PublicClub].self, from: data)
+        return try Self.decoder.decode([PublicClub].self, from: data)
     }
 
     func getJoinRequests() async throws -> [JoinRequest] {
@@ -284,8 +287,8 @@ final class APIClient {
 
     func getMyBooks() async throws -> BooksResponse {
         let data = try await getData(path: "/books")
-        let books = try decoder.decode([Book].self, from: data)
-        let counts = (try? decoder.decode([BookUnread].self, from: data)) ?? []
+        let books = try Self.decoder.decode([Book].self, from: data)
+        let counts = (try? Self.decoder.decode([BookUnread].self, from: data)) ?? []
         return BooksResponse(books: books,
                              unread: Dictionary(counts.map { ($0.id, $0.unreadCount ?? 0) },
                                                 uniquingKeysWith: { first, _ in first }))
@@ -435,7 +438,7 @@ final class APIClient {
             clientId: clientId, parentMessageId: parentMessageId, deviceId: TokenStore.shared.registeredDeviceToken)
         request.httpBody = try encoder.encode(payload)
         let data = try await sendMessageAuthorized(request)
-        return try decoder.decode(Message.self, from: data)
+        return try Self.decoder.decode(Message.self, from: data)
     }
 
     // Same 401-refresh-retry contract as sendAuthorized, but surfaces the server's {error} body
@@ -460,7 +463,7 @@ final class APIClient {
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else {
-            if let body = try? decoder.decode(SendMessageErrorBody.self, from: data) {
+            if let body = try? Self.decoder.decode(SendMessageErrorBody.self, from: data) {
                 throw ChatError.serverError(body.error)
             }
             throw APIError.serverError(http.statusCode)
@@ -549,7 +552,7 @@ final class APIClient {
     private struct UnreadCountResponse: Decodable { let unreadCount: Int }
 
     private func unreadCount(from data: Data) -> Int? {
-        (try? decoder.decode(UnreadCountResponse.self, from: data))?.unreadCount
+        (try? Self.decoder.decode(UnreadCountResponse.self, from: data))?.unreadCount
     }
 
     // The heard batch also reports which of the requested ids it will ever accept, so the client
@@ -583,7 +586,7 @@ final class APIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try encoder.encode(messageIds)
-        return try decoder.decode(HeardBatchResult.self, from: try await sendAuthorized(request))
+        return try Self.decoder.decode(HeardBatchResult.self, from: try await sendAuthorized(request))
     }
 
     // #47 — set/switch the caller's reaction on a message.
@@ -935,7 +938,7 @@ final class APIClient {
     }
 
     private func get<Response: Decodable>(path: String, retried: Bool = false) async throws -> Response {
-        try decoder.decode(Response.self, from: try await getData(path: path, retried: retried))
+        try Self.decoder.decode(Response.self, from: try await getData(path: path, retried: retried))
     }
 
     // The raw-body GET, so a caller that needs to read one payload two ways (books + their
@@ -989,7 +992,7 @@ final class APIClient {
             throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try decoder.decode(Response.self, from: data)
+        return try Self.decoder.decode(Response.self, from: data)
     }
 
     private func postEmpty(path: String, retried: Bool = false) async throws {
@@ -1038,6 +1041,6 @@ final class APIClient {
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
-        return try decoder.decode(Response.self, from: data)
+        return try Self.decoder.decode(Response.self, from: data)
     }
 }

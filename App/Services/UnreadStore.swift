@@ -14,8 +14,26 @@ import UserNotifications
 final class UnreadStore: ObservableObject {
     static let shared = UnreadStore()
 
-    private init() {
-        if let raw = UserDefaults.standard.dictionary(forKey: countsKey) as? [String: Int] {
+    // All three are injected for testability only (#126). `shared` passes nothing and behaves
+    // exactly as before: UserDefaults.standard, the Keychain-backed identity, and the real app
+    // icon. A test supplies a scratch defaults, a fixed id, and a closure that records what the
+    // badge WOULD have been set to — which is the only way to assert the `writesBadge: false`
+    // push path, since "did not touch the icon" is otherwise invisible.
+    private let defaults: UserDefaults
+    private let currentUserId: () -> String?
+    private let writeBadge: (Int) -> Void
+
+    init(
+        defaults: UserDefaults = .standard,
+        currentUserId: @escaping () -> String? = { TokenStore.shared.userId?.uuidString },
+        writeBadge: @escaping (Int) -> Void = { value in
+            Task { try? await UNUserNotificationCenter.current().setBadgeCount(value) }
+        }
+    ) {
+        self.defaults = defaults
+        self.currentUserId = currentUserId
+        self.writeBadge = writeBadge
+        if let raw = defaults.dictionary(forKey: countsKey) as? [String: Int] {
             counts = Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in
                 UUID(uuidString: k).map { ($0, v) }
             })
@@ -31,8 +49,8 @@ final class UnreadStore: ObservableObject {
     }
 
     private func persist() {
-        UserDefaults.standard.set(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.uuidString, $0.value) }),
-                                  forKey: countsKey)
+        defaults.set(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.uuidString, $0.value) }),
+                     forKey: countsKey)
     }
 
     // Persisted (#119): this is the ONLY client-side copy of the count, so if it lived purely in
@@ -67,10 +85,10 @@ final class UnreadStore: ObservableObject {
     // Counts (and the icon they drive) belong to the signed-in account — on a change, drop them
     // and clear the icon rather than showing one person's unread to the next. See AccountScope.
     private func dropIfNotMine() {
-        guard AccountScope.ownerChanged("unreadStore") else { return }
+        guard AccountScope.ownerChanged("unreadStore", defaults: defaults, currentUserId: currentUserId()) else { return }
         counts = [:]
         hasSeeded = false
-        Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
+        writeBadge(0)
     }
 
     // Refresh from a books fetch. Books absent from it are dropped (e.g. removed from the club)
@@ -115,7 +133,6 @@ final class UnreadStore: ObservableObject {
     // this sums is always server numbers — seeded per book, or returned by a consuming call.
     private func syncBadge() {
         guard hasSeeded else { return }
-        let value = total
-        Task { try? await UNUserNotificationCenter.current().setBadgeCount(value) }
+        writeBadge(total)
     }
 }

@@ -12,7 +12,13 @@ final class OldMansBookClubUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launch()
+        // A clean install shows the notification-permission alert over the login screen; without
+        // this, every tap below lands on the alert's shield. See SystemAlerts.
+        SystemAlerts.dismissAny()
         loginIfNeeded()
+        // Again after login: push registration triggers the notification prompt, so on a clean
+        // install it arrives here rather than on the launch screen. See SystemAlerts.
+        SystemAlerts.dismissAny()
         openFirstBookDiscussion()
     }
 
@@ -132,18 +138,37 @@ final class OldMansBookClubUITests: XCTestCase {
 
     // MARK: - Voice send
 
-    // Handles both mic interaction modes (UserPreferences.TapToTalk) since either could be
-    // active on the account running this suite.
+    // Handles both mic interaction modes (UserPreferences.TapToTalk), determined at RUNTIME
+    // from the element's actual type rather than assumed. MessageInputView.micButton renders the
+    // same identifier as a real SwiftUI `Button` in tap-to-talk mode, or as a plain `Image`
+    // wearing a long-press gesture otherwise — so `app.buttons["micButton"]` only ever matches
+    // the tap-to-talk half and silently finds nothing for the other. That went unnoticed for a
+    // long time because the suite's dev account happened to have TapToTalk toggled on by hand at
+    // some point; the moment #126 gave this suite a genuinely fresh account (server default
+    // TapToTalk=false), the query came up empty and the whole test failed at "Mic button not
+    // found." Querying by identifier ACROSS element types, then branching on the type actually
+    // found, is what makes this correct for either preference rather than correct for whichever
+    // one someone last left the account in.
     func testSendVoiceMessage() {
-        let mic = app.buttons["micButton"]
+        let mic = app.descendants(matching: .any).matching(identifier: "micButton").firstMatch
         XCTAssertTrue(mic.waitForExistence(timeout: 5), "Mic button not found")
 
-        if isTapToTalk() {
-            mic.tap()
-            Thread.sleep(forTimeInterval: 2)
-            mic.tap()
-        } else {
-            mic.press(forDuration: 2.0)
+        // Recording is this account's very FIRST microphone use, so iOS's mic (and, once
+        // transcription kicks in, speech-recognition) permission prompt is requested lazily,
+        // right here — not at a predictable point setUp already handles. It can appear mid-gesture
+        // and eat the whole interaction silently (see SystemAlerts.performRetryingPermissionPrompt),
+        // which without this wrapper looked exactly like the mic simply not working.
+        SystemAlerts.performRetryingPermissionPrompt {
+            if mic.elementType == .button {
+                // Tap-to-talk: a real Button, toggled by two discrete taps.
+                mic.tap()
+                Thread.sleep(forTimeInterval: 2)
+                mic.tap()
+            } else {
+                // Press-and-hold: not a Button, so a bare `.tap()` here would register as a
+                // momentary press rather than starting a recording.
+                mic.press(forDuration: 2.0)
+            }
         }
 
         // Asserts the message reached the *confirmed* send state, not merely that no failure
@@ -216,12 +241,4 @@ final class OldMansBookClubUITests: XCTestCase {
         XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "Emoji picker sheet never dismissed")
     }
 
-    private func isTapToTalk() -> Bool {
-        // A press-and-hold mic never enters the `.selected`/toggled state XCUITest can see from
-        // a single tap; the two modes are visually and behaviorally distinct enough in practice
-        // that attempting one and checking for a stuck `isRecording` state is unreliable to
-        // probe generically. Simpler and accurate for this suite's fixed seed account (Mark,
-        // TapToTalk=true): assume tap-to-talk. Update if the seed account's preference changes.
-        true
-    }
 }

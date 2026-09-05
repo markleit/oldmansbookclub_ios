@@ -29,6 +29,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DC503E811907C4C740D4F5C5"
+               BuildableName = "OldMansBookClubTests.xctest"
+               BlueprintName = "OldMansBookClubTests"
+               ReferencedContainer = "container:OldMansBookClub.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "0AB8D60332D85354B0E2584A"
                BuildableName = "OldMansBookClubUITests.xctest"
                BlueprintName = "OldMansBookClubUITests"
@@ -53,6 +67,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DC503E811907C4C740D4F5C5"
+               BuildableName = "OldMansBookClubTests.xctest"
+               BlueprintName = "OldMansBookClubTests"
+               ReferencedContainer = "container:OldMansBookClub.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
          <TestableReference
             skipped = "NO"
             parallelizable = "NO">

@@ -21,13 +21,22 @@ final class HeardStore: ObservableObject {
     private let confirmedKey = "heardConfirmed"
     private let pendingKey = "heardPending"
 
+    // Injected purely for testability (#126). `shared` passes nothing, so production behaviour is
+    // byte-for-byte what it was: UserDefaults.standard and the Keychain-backed account identity.
+    // A test passes a scratch UserDefaults(suiteName:) and a fixed id, and gets a store with no
+    // Keychain access and no shared global state between cases.
+    private let defaults: UserDefaults
+    private let currentUserId: () -> String?
+
     // Cache of server truth.
     @Published private(set) var confirmed: Set<UUID>
     // messageId -> bookId, so a flush knows where to send each mark.
     @Published private(set) var pending: [UUID: UUID]
 
-    private init() {
-        let d = UserDefaults.standard
+    init(defaults: UserDefaults = .standard, currentUserId: @escaping () -> String? = { TokenStore.shared.userId?.uuidString }) {
+        self.defaults = defaults
+        self.currentUserId = currentUserId
+        let d = defaults
         confirmed = (d.array(forKey: confirmedKey) as? [String]).map { Set($0.compactMap(UUID.init)) } ?? []
         if let raw = d.dictionary(forKey: pendingKey) as? [String: String] {
             pending = Dictionary(uniqueKeysWithValues: raw.compactMap { k, v in
@@ -48,7 +57,7 @@ final class HeardStore: ObservableObject {
 
     // Drop everything if the signed-in account changed — this state is one account's.
     private func dropIfNotMine() {
-        guard AccountScope.ownerChanged("heardStore") else { return }
+        guard AccountScope.ownerChanged("heardStore", defaults: defaults, currentUserId: currentUserId()) else { return }
         confirmed = []
         pending = [:]
         persist()
@@ -125,7 +134,7 @@ final class HeardStore: ObservableObject {
     }
 
     private func persist() {
-        let d = UserDefaults.standard
+        let d = defaults
         d.set(confirmed.map(\.uuidString), forKey: confirmedKey)
         d.set(Dictionary(uniqueKeysWithValues: pending.map { ($0.key.uuidString, $0.value.uuidString) }),
               forKey: pendingKey)

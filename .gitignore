@@ -29,6 +29,8 @@ fastlane/screenshots
 # .NET / API
 API/bin/
 API/obj/
+Tests/**/bin/
+Tests/**/obj/
 API/publish/
 API/publish.zip
 API/deploy.zip
@@ -38,3 +40,7 @@ API/appsettings.Development.json
 
 # Xcode archive exports
 OldMansBookClub */
+
+# Local-only helper written by scripts/regression.sh setup (contains the dev seed key)
+.regression-env
+.regression-api.log

@@ -73,6 +73,47 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
     // club as club admin, so duplicating that here would just be two places to keep in sync.
     // Idempotent — matches existing rows by title/status instead of inserting blindly, so it's
     // safe to call repeatedly (e.g. from a future CI seed step) without piling up duplicates.
+    // #126 — wipe the dev database and reseed it, so a regression run starts from a known state.
+    //
+    // Development-only AND key-guarded: two independent gates, because a truncate endpoint that
+    // reached production would be catastrophic and "the environment variable was wrong" is a
+    // thing that happens. It is [AllowAnonymous] for the same reason seed-baseline is — the lane
+    // scripts call it from bash before any account exists to authenticate as.
+    //
+    // Why this exists at all: the UI lanes previously ran against a database that only ever grew,
+    // and the suite's own comments record a seeded message scrolling out of the first page as it
+    // did, turning a real assertion into a flake. Deterministic state is cheaper than chasing that.
+    [AllowAnonymous]
+    [HttpPost("reset-dev-db")]
+    public async Task<IActionResult> ResetDevDatabase()
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var seedKey = config["Seeding:Key"];
+        if (string.IsNullOrEmpty(seedKey) || Request.Headers["X-Seed-Key"].FirstOrDefault() != seedKey)
+            return Unauthorized();
+
+        // Ordered by dependency: children before parents. ExecuteDelete issues one DELETE per
+        // table rather than loading entities, so this stays fast as the dev database grows.
+        await db.MessageReactions.ExecuteDeleteAsync();
+        await db.MessageHeards.ExecuteDeleteAsync();
+        await db.ChatReads.ExecuteDeleteAsync();
+        await db.Reports.ExecuteDeleteAsync();
+        await db.SavedMessages.ExecuteDeleteAsync();
+        await db.Messages.ExecuteDeleteAsync();
+        await db.Books.ExecuteDeleteAsync();
+        await db.JoinRequests.ExecuteDeleteAsync();
+        await db.BlockedUsers.ExecuteDeleteAsync();
+        await db.UserDevices.ExecuteDeleteAsync();
+        await db.RefreshTokens.ExecuteDeleteAsync();
+        await db.Memberships.ExecuteDeleteAsync();
+        await db.Users.ExecuteDeleteAsync();
+        await db.Clubs.ExecuteDeleteAsync();
+
+        return Ok(new { status = "reset" });
+    }
+
     [AllowAnonymous]
     [HttpPost("seed-baseline")]
     public async Task<IActionResult> SeedBaseline()
