@@ -206,6 +206,22 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return Ok(new { created = messages.Count, book = book.Title, sender = sender.DisplayName });
     }
 
+    // One-off admin fixups for a book's cover art (e.g. a custom image that isn't in
+    // Google Books) — normal add/edit flows only ever set CoverBlobUrl from Google Books.
+    [HttpPost("set-book-cover")]
+    public async Task<IActionResult> SetBookCover([FromBody] SetBookCoverRequest req)
+    {
+        if (!await IsAdminAsync()) return Forbid();
+
+        var book = await db.Books.FirstOrDefaultAsync(b =>
+            EF.Functions.Like(b.Title, $"%{req.BookTitle}%"));
+        if (book is null) return NotFound(new { error = $"No book matching '{req.BookTitle}' found." });
+
+        book.CoverBlobUrl = req.CoverUrl;
+        await db.SaveChangesAsync();
+        return Ok(new { book = book.Title, book.CoverBlobUrl });
+    }
+
     [HttpGet("pending-users")]
     public async Task<ActionResult<List<PendingUserDto>>> GetPendingUsers()
     {
