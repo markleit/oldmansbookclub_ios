@@ -38,3 +38,6 @@ API/appsettings.Development.json
 
 # Xcode archive exports
 OldMansBookClub */
+
+# Local-only prod credentials pasted in for one-off maintenance scripts — never committed
+API/appsettings.Production.Local.json
