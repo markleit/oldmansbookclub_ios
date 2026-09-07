@@ -235,6 +235,9 @@ final class AudioPlayerService: ObservableObject {
     }
 
     private func play(message: Message, bookId: UUID? = nil, fromStart: Bool = false) {
+        // Finalize-and-send any in-progress recording before claiming AVAudioSession for
+        // playback — the two silently fight over the shared session otherwise (#160).
+        AudioRecorder.forceStopForPlayback?()
         saveCurrentPosition(completed: false)   // remember where the outgoing message was
         playingRecordedDuration = Double(message.durationSeconds ?? 0)
         guard let urlStr = message.mediaUrl, let url = URL(string: urlStr) else {

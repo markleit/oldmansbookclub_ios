@@ -785,6 +785,9 @@ final class BookViewModel: ObservableObject {
             try audioRecorder.start(atTime: recordAt)
             recordingStartTime = Date()
             startRecordingTypingPings()   // broadcast "is recording audio…"
+            // Let playback call sites finalize-and-send this take instead of fighting the
+            // recorder for AVAudioSession (#160).
+            AudioRecorder.forceStopForPlayback = { [weak self] in self?.finalizeRecording() }
         } catch {
             isRecording = false
             errorMessage = "Could not start recording."
@@ -792,24 +795,37 @@ final class BookViewModel: ObservableObject {
     }
 
     func stopRecording() async {
-        guard isRecording else { return }
+        _ = finalizeRecording()
+    }
+
+    // Body of stopRecording(), extracted so AudioRecorder.forceStopForPlayback can call it
+    // synchronously (playback call sites need the recorder already torn down before they touch
+    // AVAudioSession themselves — see #160). The network send is not part of that hand-off, so
+    // it runs in its own Task rather than making this function async.
+    @discardableResult
+    private func finalizeRecording() -> Bool {
+        guard isRecording else { return false }
         isRecording = false
         stopRecordingTypingPings()
         let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartTime = nil
+        AudioRecorder.forceStopForPlayback = nil
         let recording = audioRecorder.stop()
         // "Mic closed" chirp — capture has ended, so it won't be in the recording.
         // Plays on close regardless of whether the take is kept or discarded.
         AudioCue.shared.playRecordStop()
-        guard let (tempUrl, duration) = recording else { return }
-        guard elapsed >= 0.5 else { return }
+        guard let (tempUrl, duration) = recording else { return false }
+        guard elapsed >= 0.5 else { return false }
         guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: tempUrl, extension: "m4a"),
-              let userId = TokenStore.shared.userId else { return }
+              let userId = TokenStore.shared.userId else { return false }
 
-        await enqueueAndSendMedia(
-            kind: .voice, contentType: "audio/mp4", durationSeconds: duration,
-            persistentUrl: persistentUrl, userId: userId
-        )
+        Task {
+            await enqueueAndSendMedia(
+                kind: .voice, contentType: "audio/mp4", durationSeconds: duration,
+                persistentUrl: persistentUrl, userId: userId
+            )
+        }
+        return true
     }
 
     /// Drop an in-progress take when recording is interrupted by backgrounding or a
@@ -822,6 +838,7 @@ final class BookViewModel: ObservableObject {
         isRecording = false               // didSet re-enables the idle timer
         stopRecordingTypingPings()
         recordingStartTime = nil
+        AudioRecorder.forceStopForPlayback = nil
         audioRecorder.discard()
     }
 

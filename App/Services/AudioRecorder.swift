@@ -4,6 +4,12 @@ final class AudioRecorder {
     private var recorder: AVAudioRecorder?
     private var startTime: Date?
 
+    // Set by BookViewModel while a recording is in progress. Playback call sites invoke this
+    // before touching AVAudioSession so an active recording is finalized-and-sent first, rather
+    // than silently losing its mic input to a same-process category change (no interruption
+    // notification fires for that, so nothing else would catch it).
+    static var forceStopForPlayback: (@MainActor () -> Void)?
+
     var isRecording: Bool { recorder?.isRecording ?? false }
 
     // `startAt`, when provided, is an audio-device-clock time (AVAudioPlayer.deviceCurrentTime
