@@ -1577,6 +1577,9 @@ struct FullScreenVideoView: View {
             }
         }
         .onAppear {
+            // Finalize-and-send any in-progress recording before claiming AVAudioSession for
+            // playback — the two silently fight over the shared session otherwise (#160).
+            AudioRecorder.forceStopForPlayback?()
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
             try? AVAudioSession.sharedInstance().setActive(true)
             let p = AVPlayer(url: url)
