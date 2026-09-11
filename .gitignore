@@ -44,3 +44,6 @@ OldMansBookClub */
 # Local-only helper written by scripts/regression.sh setup (contains the dev seed key)
 .regression-env
 .regression-api.log
+
+# Local-only prod credentials pasted in for one-off maintenance scripts — never committed
+API/appsettings.Production.Local.json
