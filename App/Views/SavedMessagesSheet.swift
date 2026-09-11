@@ -165,6 +165,9 @@ private struct SavedVoicePreview: View {
         if isPlaying {
             player?.pause()
         } else {
+            // Finalize-and-send any in-progress recording before claiming AVAudioSession for
+            // playback — the two silently fight over the shared session otherwise (#160).
+            AudioRecorder.forceStopForPlayback?()
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try? AVAudioSession.sharedInstance().setActive(true)
             player?.play()

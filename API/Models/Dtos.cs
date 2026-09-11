@@ -90,6 +90,7 @@ public record UploadUrlResponse(string UploadUrl, string MediaUrl);
 public record RegisterDeviceRequest(string DeviceToken);
 public record SetRoleRequest(bool IsAdmin);
 public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, string? SenderName = null);
+public record SetBookCoverRequest(string BookTitle, string CoverUrl);
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status, string? Description, int? PublishedYear, int? PageCount, int UnreadCount = 0, string? SeriesName = null, int? SeriesOrder = null);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl, string? SeriesName = null);
 public record UpdateBookRequest(string Title, string Author, string? SeriesName = null);
