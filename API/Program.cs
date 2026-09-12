@@ -5,6 +5,7 @@ using BookClubApi.Data;
 using BookClubApi.Hubs;
 using BookClubApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -137,13 +138,18 @@ builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
-    // Auth endpoints: 10 attempts per minute per IP
-    options.AddFixedWindowLimiter("auth", o =>
-    {
-        o.Window = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 10;
-        o.QueueLimit = 0;
-    });
+    // Auth endpoints: 10 attempts per minute per IP. Partitioned (#154) — AddFixedWindowLimiter
+    // with no partition key gives every caller ONE SHARED bucket for the whole process, so what
+    // looked like "10 per minute per IP" was actually 10 per minute, full stop: one client
+    // retrying a failed sign-in could 429 every other member's login for up to a minute.
+    options.AddPolicy("auth", httpContext => RateLimitPartition.GetFixedWindowLimiter(
+        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            Window = TimeSpan.FromMinutes(1),
+            PermitLimit = 10,
+            QueueLimit = 0,
+        }));
     // Media upload-url endpoints: 30 per minute per user
     options.AddFixedWindowLimiter("media", o =>
     {
@@ -160,6 +166,21 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+// Must run before UseRateLimiter: the auth partition key below reads Connection.RemoteIpAddress,
+// which behind Azure App Service's front-end proxy is otherwise the proxy's own address, not the
+// caller's — every request would land back in one shared partition, changing nothing (#154).
+// KnownNetworks/KnownProxies default to loopback-only, which would silently ignore the header
+// here (App Service's front end isn't loopback) — cleared deliberately: its address isn't fixed
+// or enumerable, and — unlike a self-hosted reverse proxy — it's the only thing that can reach
+// this process at all, so trusting its X-Forwarded-For is the documented approach for this host.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+};
+forwardedHeadersOptions.KnownIPNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
 
 app.UseRateLimiter();
 app.UseAuthentication();

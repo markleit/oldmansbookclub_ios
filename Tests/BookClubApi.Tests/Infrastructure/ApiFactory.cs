@@ -107,18 +107,17 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             // the one case that needs the fan-out itself under test.
             services.RemoveAll<IHostedService>();
 
-            // The /auth/* endpoints are rate limited to 10 requests per minute — and the limiter
-            // is declared with NO partition key, so that is 10 per minute for the entire process,
-            // not per IP or per user. One shared test host therefore exhausts it after ten auth
-            // calls and every later test 429s, in whatever order they happen to run.
+            // The /auth/* endpoints are rate limited to 10 requests per minute, partitioned by
+            // caller IP (#154 — it used to have NO partition key at all, so it was 10 per minute
+            // for the entire process, not per caller; one client retrying a failed sign-in could
+            // 429 every other member's login for up to a minute). That partitioning doesn't help
+            // a shared test host, though: every call through WebApplicationFactory's in-memory
+            // TestServer looks like the same caller, so it would still exhaust the budget after
+            // ten auth calls and 429 everything after, in whatever order tests happen to run.
             //
             // Tests run with permissive limits instead. The limits themselves are asserted
             // separately: HubRateLimiterTests covers the send limiter (the one with real
             // per-user semantics), and the auth limiter is exercised end-to-end by the live lane.
-            //
-            // Worth noting the finding rather than burying it: a global partition means a single
-            // client retrying a failed sign-in can lock every other member out of signing in for
-            // up to a minute. That is a production behaviour question, not a test-suite one.
             services.RemoveAll<IConfigureOptions<RateLimiterOptions>>();
             services.AddRateLimiter(options =>
             {
