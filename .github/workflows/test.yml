@@ -29,7 +29,7 @@ jobs:
         run: ./scripts/regression.sh --only api
 
   ios:
-    name: iOS unit
+    name: iOS unit + hermetic UI
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -37,11 +37,12 @@ jobs:
         run: brew install xcodegen
       # The script resolves an installed simulator itself, so this does not pin a device name
       # that a future Xcode image will drop.
-      # Unit tests only for now. The hermetic UI tests pass locally but fail on a GitHub runner —
-      # the app makes no request to the stub server the test process hosts, so it is a
-      # networking/environment difference, not an app failure. Keeping them out of the gate is
-      # honest; muting a red job with continue-on-error would not be. They still run locally via
-      # ./scripts/regression.sh, and the next diagnostic run will say whether the stub was reached
-      # at all. Re-add --with-ui here once that is understood.
+      # Hermetic UI re-added 2026-09-12: the "app makes no request to the stub" failure (both the
+      # long-standing local flake AND this job's own prior CI failure) was HermeticUITests.launch()
+      # passing the wrong EULA-skip launch-argument key (`hasAcceptedEULA` instead of the app's
+      # real `hasAcceptedEULA_v2`). A GitHub runner is always a fresh VM, so it hit this
+      # deterministically every time; locally it only showed up once an earlier test run's
+      # persisted UserDefaults (a real write, unlike the broken launch-arg override) stopped
+      # masking it. Fixed in HermeticUITests.swift — see its `launch()` doc comment.
       - name: Run the iOS lane
-        run: ./scripts/regression.sh --only ios-unit
+        run: ./scripts/regression.sh --only ios

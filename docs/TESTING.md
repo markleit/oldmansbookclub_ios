@@ -44,8 +44,7 @@ The whole target runs in well under a second, which is what makes it viable as a
 `ServerEnvironment` already resolves its host from the `debugServerBaseURL` default (#120), and a
 launch argument populates it.
 
-**Status: diagnosed, partially fixed, not currently reliable.** This lane has a real history worth
-knowing before touching it again:
+**Status: fixed and CI-gated (2026-09-12).** This lane had a real, confusing history worth knowing:
 
 1. It originally ran the stub as a Swift `NWListener` created directly inside the test class. That
    was reachable instantly from its own process (proven with a raw `URLSession` call from inside
@@ -53,33 +52,45 @@ knowing before touching it again:
    process — for the full duration of any test, deterministically, on a completely fresh device
    and in CI alike. iOS Simulator does not reliably bridge loopback connections *between two*
    Simulator-hosted apps, only from a Simulator app to a genuine macOS host process.
-2. Moving the stub to a real host process (this file) fixed that class of failure — proven with
-   5+ consecutive clean passes of `testTheLibraryRendersBothStatusGroups`, which had never once
-   succeeded against any earlier version of the stub.
-3. It then, with **no code change at all**, went back to failing 3/3 times with the exact original
-   symptom ("the app made NO request to the stub"). Ruled out while chasing this: colima running
-   in the background, the stub's HTTP/1.0-vs-1.1 keep-alive setting, stale simulator state (fresh
-   restart made no difference), and a stale app install (fresh reinstall made no difference). The
-   stub process itself was confirmed healthy throughout via direct `curl` from the Mac.
+2. Moving the stub to a real host process (this file) fixed that class of failure.
+3. It then, apparently at random and with no code change, alternated between long clean streaks
+   and failing runs with the exact same symptom ("the app made NO request to the stub"). The
+   actual cause: `HermeticUITests.launch()` passed `-hasAcceptedEULA YES` as a launch argument to
+   skip the EULA screen, but the app's real `@AppStorage` key is `hasAcceptedEULA_v2`
+   (`OldMansBookClubApp.swift`). The override never matched anything the app read — silently,
+   with no error — so the app fell back to whatever `hasAcceptedEULA_v2` actually held in
+   UserDefaults. On an already-installed app from an earlier test run, that value was still `true`
+   (a real persisted write, unlike the broken launch-arg override) and Dev Login showed
+   immediately — a clean pass. On a freshly (re)installed app, it reverted to `false`, the EULA
+   screen showed instead of Dev Login, the button never appeared within its 5s wait, the tap was
+   silently skipped, and the app never made its first network call at all — indistinguishable, on
+   screen, from "the stub is unreachable." Confirmed directly via the app's own console log
+   (`xcrun simctl spawn <udid> log stream --predicate 'process == "OldMansBookClub"'`): zero
+   URLSession tasks were created on a failing run. Fixed by correcting the key.
 
-Net effect: the architecture is *correct* — a host-level process is demonstrably reachable under
-some conditions where the old in-process one never was — but is not currently *dependable*. Treat
-a red `hermetic UI` run as inconclusive, not as evidence of an app regression, until this is
-understood further. **A second, separate, still-unresolved issue**: even on a run where the stub
-*is* reached, tapping a book row to enter its chat does not navigate — the nav bar never leaves
-the library. Eight distinct causes were ruled out one at a time (see the doc comment on
-`HermeticUITests.openCurrentBook()` for the full list) with the identical symptom persisting
-through every one; root cause not found. All three tests that depend on that navigation are
-marked `XCTSkip` with the full explanation, rather than left red or silently deleted.
+This same bug was also the (until now unidentified) cause of a second, separately-tracked mystery:
+even when the stub *was* reached, tapping a book row to enter its chat never navigated. Eight
+distinct causes had been ruled out one at a time with the symptom surviving every one — the actual
+cause was the same broken EULA key, manifesting identically. All four tests that were `XCTSkip`'d
+pending this are re-enabled; three now pass reliably (confirmed across multiple fresh-install
+runs, and 4 consecutive clean `regression.sh --only ios` runs end to end).
 
-CI still gates on `--only ios-unit` only, unaffected by any of this — muting a red job would have
-been the dishonest fix, and this lane was never part of the CI gate to begin with.
+**One test still skipped, for a genuinely new and separate reason**:
+`testASentMessageAppearsOnceNotTwice` was never exercised before (permanently blocked by the
+navigation bug since inception), and now that it runs, the send button appears and is tapped
+successfully but no send request is ever made afterward — confirmed via the same console-log
+technique. Root cause not yet found; see the test's own doc comment.
+
+CI now gates on `--only ios` (unit + hermetic UI both) — the CI-specific failure this lane
+previously showed ("the app makes no request to the stub... a networking/environment difference")
+was very likely this exact bug: a GitHub Actions runner is always a fresh VM, so it would hit the
+broken-key path deterministically on every run, while locally it only surfaced once an earlier
+test's persisted UserDefaults stopped masking it.
 
 These cover what the app *draws* once the data exists, which is the part that needs no server:
-the library's status groups, the chat rendering what was returned, a sent message reconciling to
-exactly one bubble (breaking `SendReconciler` fails this immediately — it is #35 in CI), and the
-emoji picker's grid. Anything depending on real server behaviour — blob uploads, SignalR
-delivery, unread arithmetic — stays in lane B or the API suite.
+the library's status groups, the chat rendering what was returned, and the emoji picker's grid.
+Anything depending on real server behaviour — blob uploads, SignalR delivery, unread arithmetic —
+stays in lane B or the API suite.
 
 ### Lane B — live
 

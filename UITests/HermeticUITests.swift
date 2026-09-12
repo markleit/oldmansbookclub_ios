@@ -39,11 +39,17 @@ final class HermeticUITests: XCTestCase {
 
     /// Launches pointed at the stub. `-debugServerBaseURL` lands in UserDefaults, which is exactly
     /// where ServerEnvironment already looks (#120) — so this needs no production code at all.
+    ///
+    /// The EULA-skip key MUST match `OldMansBookClubApp.swift`'s actual `@AppStorage` key exactly
+    /// (`hasAcceptedEULA_v2`, not `hasAcceptedEULA`) — this was wrong for a long time and was the
+    /// real cause of #126's "stub sometimes unreachable" flake (see `openCurrentBook()`'s doc
+    /// comment). A launch-argument override that never matches anything the app reads is silently
+    /// a no-op, not an error, which is exactly what made it invisible for so long.
     private func launch() {
         app = XCUIApplication()
         app.launchArguments += [
             "-debugServerBaseURL", stubBaseURL,
-            "-hasAcceptedEULA", "YES",
+            "-hasAcceptedEULA_v2", "YES",
         ]
         app.launch()
         SystemAlerts.dismissAny()
@@ -65,10 +71,21 @@ final class HermeticUITests: XCTestCase {
             """)
     }
 
-    /// KNOWN, UNRESOLVED (#126): tapping a book row to enter its chat does not navigate at all
-    /// against the host-level stub — the nav bar stays on the library, every time, deterministically.
-    /// Every test that calls this is skipped until it is understood; see the skip messages below
-    /// for the full list of what has already been ruled out, so nobody re-derives it from scratch.
+    /// Taps into the current book's chat. Was "known unresolved" (#126) for a long time — eight
+    /// causes ruled out one at a time (occlusion, tap mechanism, Book decoding, deep-link
+    /// interference, navigation gating, an app crash, a nested gesture, HTTP/1.0 reuse) with the
+    /// identical symptom surviving every one of them. The actual cause (found 2026-09-12): this
+    /// class's own `launch()` passed the wrong launch-argument key for skipping the EULA screen
+    /// (`hasAcceptedEULA` instead of the app's real `hasAcceptedEULA_v2`), so on a freshly
+    /// reinstalled app the EULA screen showed instead of the login screen, "Dev Login (Debug)"
+    /// never appeared within its 5s wait, the tap was silently skipped, and the app never made
+    /// its first request — which looked identical to "reached the library, then can't navigate"
+    /// whenever an EARLIER test in the same run had already persisted EULA acceptance in
+    /// UserDefaults (a real write that survives relaunches, unlike the broken launch-arg
+    /// override), and looked identical to "no request reaches the stub" on a genuinely fresh
+    /// install. Confirmed via the app's own console log
+    /// (`log stream --predicate 'process == "OldMansBookClub"'`): zero URLSession tasks were ever
+    /// created on a failing run. See `launch()`'s fixed launch argument.
     private func openCurrentBook() {
         let discussionText = app.staticTexts["Discussion"].firstMatch
         XCTAssertTrue(discussionText.waitForExistence(timeout: 15), "Library never rendered from the stub")
@@ -78,23 +95,6 @@ final class HermeticUITests: XCTestCase {
         row.tap()
         XCTAssertTrue(app.textViews["messageTextField"].waitForExistence(timeout: 10), "Chat never loaded")
     }
-
-    /// Shared skip reason for every test below that needs to get past `openCurrentBook()`.
-    /// Ruled out directly, one at a time, all with the identical symptom persisting: element
-    /// occlusion (a coordinate tap bypassing XCUITest's own hittable gate still doesn't navigate),
-    /// tap mechanism (`.tap()`, coordinate tap, `.doubleTap()` — no difference), `Book`
-    /// decoding/hashing (both books render every field correctly), deep-link interference
-    /// (`navigateToPendingBook()` is never even called — instrumented directly), conditional
-    /// navigation gating (the view code is a plain `NavigationLink(value:)`, nothing wraps it), an
-    /// app crash (checked the system console log — one PID throughout, zero fatal errors), a
-    /// nested gesture stealing the tap (`CurrentBookCard`/`CachedBookCover` contain no
-    /// buttons or gestures), and an HTTP/1.0 connection-reuse hang in the stub (set
-    /// `protocol_version = "HTTP/1.1"` in hermetic_stub.py — no change). The live lane's identical
-    /// interaction, against the real API, has never once failed this way — so it is specific to
-    /// something about this stub, not to XCUITest, the Simulator, or the app in general.
-    private static let navigationSkipReason = """
-        #126: entering a book's chat does not navigate against the host-level hermetic stub —         the nav bar never leaves the library, deterministically, on every attempt. Eight distinct         causes ruled out by direct testing (see openCurrentBook's doc comment); root cause not yet         found. The identical interaction is covered by the live lane         (OldMansBookClubUITests/LibraryUITests), which passes reliably, so this is a LANE gap, not         a coverage gap — but it does mean HermeticUITests currently proves only that the library         screen renders from the stub, not anything past it.
-        """
 
     // ---- the library renders from the server's data ------------------------------------------
 
@@ -111,58 +111,48 @@ final class HermeticUITests: XCTestCase {
     }
 
     func testTheChatRendersTheMessagesTheServerReturned() throws {
-        throw XCTSkip(Self.navigationSkipReason)
-        // Re-enable once openCurrentBook() navigates again:
-        //   launch()
-        //   openCurrentBook()
-        //   XCTAssertTrue(app.staticTexts["First seeded message"].waitForExistence(timeout: 10))
-        //   XCTAssertTrue(app.staticTexts["Second seeded message"].exists)
+        launch()
+        openCurrentBook()
+        XCTAssertTrue(app.staticTexts["First seeded message"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Second seeded message"].exists)
     }
 
     // ---- send, with the echo reconciled ------------------------------------------------------
 
     func testASentMessageAppearsOnceNotTwice() throws {
-        throw XCTSkip(Self.navigationSkipReason)
-        // Re-enable once openCurrentBook() navigates again. Kept for reference — the polling
-        // logic below (not a single synchronous count) is a real, separate fix in its own right:
-        // BookDetailView's ForEach keys on Message.id, and SendReconciler.replaceOptimistic swaps
-        // the array element's id (the local clientId) for the server's new UUID at the same
-        // index, so SwiftUI's diffing can legitimately show both views for one transition frame.
-        // A real #35 regression looks different: the count STAYS at 2 because a second MESSAGE
-        // was appended, not because a view is still finishing an animation.
-        //
-        //   launch()
-        //   openCurrentBook()
-        //   let body = "hermetic send \(Int(Date().timeIntervalSince1970))"
-        //   let field = app.textViews["messageTextField"]
-        //   field.tap()
-        //   field.typeText(body)
-        //   app.buttons["sendButton"].tap()
-        //   XCTAssertTrue(app.staticTexts[body].waitForExistence(timeout: 10), "the sent message never appeared")
-        //   let bubbles = app.staticTexts.matching(identifier: body)
-        //   let deadline = Date().addingTimeInterval(3)
-        //   while bubbles.count > 1 && Date() < deadline { usleep(100_000) }
-        //   XCTAssertEqual(bubbles.count, 1, "the optimistic bubble and its confirmation both rendered and neither went away")
+        // NEW, SEPARATE issue from #126's navigation bug (fixed — see openCurrentBook, which this
+        // test now reaches reliably). `sendButton` appears and is tapped successfully (confirmed:
+        // waitForExistence succeeds), but no send request is ever made — confirmed directly via
+        // the app's own console log (`log stream --predicate 'process == "OldMansBookClub"'`)
+        // showing no POST to /books/{id}/messages after the tap, on two separate attempts. Never
+        // previously exercised: this test was unconditionally skipped for #126's navigation bug
+        // since inception, so this has no known-good baseline to compare against. Needs its own
+        // investigation — start with whether GrowingTextEditor's UITextViewDelegate actually
+        // updates the SwiftUI `text` binding that onSend() reads, since XCUITest's typeText()
+        // goes through the real keyboard/responder chain the same as interactive typing would.
+        throw XCTSkip("""
+            The send button appears and is tapped, but no send request is ever made afterward \
+            (confirmed via console log) — a genuinely new, separate issue from the navigation bug \
+            this test used to be blocked on. Root cause not yet found; see the doc comment above.
+            """)
     }
 
     // ---- pure client UI ----------------------------------------------------------------------
 
     func testTheEmojiPickerRendersItsGridAndSwitchesCategory() throws {
-        throw XCTSkip(Self.navigationSkipReason)
-        // Re-enable once openCurrentBook() navigates again:
-        //   launch()
-        //   openCurrentBook()
-        //   let message = app.staticTexts["First seeded message"]
-        //   XCTAssertTrue(message.waitForExistence(timeout: 10))
-        //   message.press(forDuration: 0.6)
-        //   let plus = app.buttons["addEmojiReactionButton"]
-        //   XCTAssertTrue(plus.waitForExistence(timeout: 5), "Reaction bar's + button never appeared")
-        //   plus.tap()
-        //   XCTAssertTrue(app.buttons["🥰"].waitForExistence(timeout: 10), "Emoji grid never rendered")
-        //   app.buttons["🍔"].firstMatch.tap()
-        //   XCTAssertTrue(app.buttons["🍕"].waitForExistence(timeout: 5), "switching category did not change the grid")
-        //   app.buttons["Cancel"].firstMatch.tap()
-        //   XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "the picker never dismissed")
+        launch()
+        openCurrentBook()
+        let message = app.staticTexts["First seeded message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        message.press(forDuration: 0.6)
+        let plus = app.buttons["addEmojiReactionButton"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 5), "Reaction bar's + button never appeared")
+        plus.tap()
+        XCTAssertTrue(app.buttons["🥰"].waitForExistence(timeout: 10), "Emoji grid never rendered")
+        app.buttons["🍔"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["🍕"].waitForExistence(timeout: 5), "switching category did not change the grid")
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "the picker never dismissed")
     }
 
     // ---- control API (talks to the host-level stub, not an in-process object) ----------------
