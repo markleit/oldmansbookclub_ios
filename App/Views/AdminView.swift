@@ -136,12 +136,14 @@ struct AdminView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
+                            .accessibilityIdentifier("approveJoinRequestButton")
                             Button("Decline") {
                                 Task { await declineRequest(request.id) }
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .tint(.red)
+                            .accessibilityIdentifier("declineJoinRequestButton")
                         }
                     }
                     .padding(.vertical, 4)
@@ -194,6 +196,7 @@ struct AdminView: View {
                                             Label("Kick", systemImage: "person.badge.minus")
                                         }
                                         .tint(.orange)
+                                        .accessibilityIdentifier("kickMemberButton")
                                     }
                                     if isGlobalAdmin {
                                         if let clubId = selectedClubId {
@@ -206,6 +209,7 @@ struct AdminView: View {
                                                 )
                                             }
                                             .tint(member.isClubAdmin ? .indigo : .teal)
+                                            .accessibilityIdentifier("toggleClubAdminButton")
                                         }
                                         Button {
                                             Task { await setRole(member.id, isAdmin: !member.isAdmin) }
@@ -216,11 +220,13 @@ struct AdminView: View {
                                             )
                                         }
                                         .tint(member.isAdmin ? .indigo : .blue)
+                                        .accessibilityIdentifier("toggleAdminButton")
                                         Button(role: .destructive) {
                                             Task { await deleteUser(member.id) }
                                         } label: {
                                             Label("Delete", systemImage: "trash")
                                         }
+                                        .accessibilityIdentifier("deleteMemberButton")
                                     }
                                 }
                             }

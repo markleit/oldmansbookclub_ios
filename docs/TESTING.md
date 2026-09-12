@@ -115,11 +115,25 @@ each `setUp`. The existing UI tests never needed this because they only ever ran
 where permission had been granted by hand at some point — which is exactly the kind of hidden
 state a regression suite is supposed to remove.
 
-**Known unvalidated (2026-09-04):** on this machine the live XCUITests currently fail at the first
-authenticated request — the library shows *"Unable to load. Check your connection."* while `curl`
-against the same API from the Mac succeeds. **Unmodified `main` fails identically**, so it is not a
-regression from the suite; it looks environmental (it began after a network change) and is not yet
-root-caused. Lanes A and the reset/seed path are verified; the XCUITests themselves are not.
+**Coverage (2026-09-11):** `LibraryUITests` and `OldMansBookClubUITests` cover the library and
+chat flows; `AdminUITests` and `ProfileUITests` cover the Admin tab's key actions (approve/decline
+a join request, promote/demote a member's admin badge, kick a member) and Profile's edit-and-save
++ sign-out. `AdminUITests.testDeletingAMemberRemovesThemFromTheList` is `XCTSkip`'d against #153
+(`DeleteUser` 500s for every caller — an execution-strategy/transaction conflict, not specific to
+this test) — unskip it once that's fixed. Deliberately not covered: Profile's Delete Account,
+which needs a disposable second account and has no login seam for one today (see
+`ProfileUITests`'s header comment); Admin's Reports tab and club-delete, which need their own seed
+data and are lower-value than the actions above. Both files seed their own throwaway join-request
+users via the anonymous `/admin/seed-join-request` endpoint rather than relying on shared fixture
+state, so they're safe to run in any order.
+
+Both new files occasionally hit the same class of Simulator/XCTest flake already documented
+below for the hermetic lane and in `run_xcodebuild_tests()`'s SpringBoard-crash retry — a test
+that passes reliably alone or on a clean simulator can flake when stacked back-to-back with
+several others on a loaded machine. Confirmed directly for each flake seen while writing these:
+the underlying app behaviour is correct (verified via direct `curl` against the same endpoint),
+and a clean rerun passes. Treat an isolated red run here as inconclusive, not as a regression,
+until it reproduces on a fresh simulator with nothing else competing for CPU.
 
 ### Lane C — device
 
