@@ -265,7 +265,7 @@ public class AdminTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.Equal(HttpStatusCode.BadRequest, demoteSelf.StatusCode);
     }
 
-    [Fact(Skip = "Blocked: DELETE /admin/users/{id} throws for every user — see the note below.")]
+    [Fact]
     public async Task Deleting_a_user_removes_everything_that_references_them()
     {
         var club = await CreateClubAsync();
@@ -296,20 +296,12 @@ public class AdminTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.NotNull(await db.Messages.FindAsync(bystanderMessage.Id));
     }
 
-    // Both delete-user tests are skipped, for two SEPARATE bugs found while writing them:
-    //
-    // 1. Unconditional: DeleteUser calls db.Database.BeginTransactionAsync(), but the DbContext is
-    //    registered with EnableRetryOnFailure (Program.cs). EF rejects that pairing at runtime —
-    //    "The configured execution strategy 'SqlServerRetryingExecutionStrategy' does not support
-    //    user-initiated transactions" — so the endpoint 500s for EVERY user, not just the case in
-    //    #133. Fix is to wrap the work in db.Database.CreateExecutionStrategy().ExecuteAsync(...).
-    //
-    // 2. #133 on top of that: the deletion order never clears MessageHeards or MessageReactions,
-    //    which are DeleteBehavior.NoAction, so even once (1) is fixed a user who has played a
-    //    voice message or tapped a reaction still trips a foreign-key violation.
-    //
-    // Unskip the first test when (1) is fixed and the second when (2) is.
-    [Fact(Skip = "Reproduces open bug #133, and is also blocked by the execution-strategy bug above.")]
+    // #153 (unconditional 500 for every user, via the EnableRetryOnFailure/transaction mismatch)
+    // is fixed. This second test still reproduces the narrower #133: the deletion order never
+    // clears MessageHeards or MessageReactions, which are DeleteBehavior.NoAction, so a user who
+    // has played a voice message or tapped a reaction still trips a foreign-key violation.
+    // Unskip when #133 is fixed.
+    [Fact(Skip = "Reproduces open bug #133.")]
     public async Task Deleting_a_user_who_has_heard_or_reacted_to_a_message_succeeds()
     {
         // #133: the deletion order in AdminController.DeleteUser never clears MessageHeards or
