@@ -17,6 +17,19 @@ import XCTest
 /// app DRAWS, not what the server computes. Anything depending on real server behaviour — blob
 /// uploads, SignalR delivery, unread arithmetic — belongs in lane B or the API integration suite,
 /// and is NOT here.
+///
+/// If iterating on this file with `xcodebuild test` directly instead of through
+/// `scripts/regression.sh`, uninstall the app AND reset the Keychain before every run —
+/// `xcrun simctl uninstall <udid> com.markleit.oldmansbookclub.dev && xcrun simctl keychain
+/// <udid> reset` (regression.sh's own `reset_simulator_state()` already does both). Keychain
+/// survives a plain uninstall, and the stub's dev-login always returns the exact same fixed
+/// tokens ("stub-access-token"/"stub-refresh-token") — so a stale Keychain entry from an earlier
+/// run looks perpetually valid, `AuthViewModel.init()` sets `isAuthenticated = true` before Dev
+/// Login is ever tapped, and `TokenStore.shared.userId` (UserDefaults-only, wiped by a plain
+/// uninstall) stays nil for the rest of the session. Confirmed directly this way once: every
+/// screen that doesn't read `userId` rendered fine regardless, while `sendMessage()`'s
+/// `guard let userId = TokenStore.shared.userId` failed with "Session error" — nothing wrong with
+/// the app, purely a gap in ad hoc local iteration.
 final class HermeticUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -120,21 +133,26 @@ final class HermeticUITests: XCTestCase {
     // ---- send, with the echo reconciled ------------------------------------------------------
 
     func testASentMessageAppearsOnceNotTwice() throws {
-        // NEW, SEPARATE issue from #126's navigation bug (fixed — see openCurrentBook, which this
-        // test now reaches reliably). `sendButton` appears and is tapped successfully (confirmed:
-        // waitForExistence succeeds), but no send request is ever made — confirmed directly via
-        // the app's own console log (`log stream --predicate 'process == "OldMansBookClub"'`)
-        // showing no POST to /books/{id}/messages after the tap, on two separate attempts. Never
-        // previously exercised: this test was unconditionally skipped for #126's navigation bug
-        // since inception, so this has no known-good baseline to compare against. Needs its own
-        // investigation — start with whether GrowingTextEditor's UITextViewDelegate actually
-        // updates the SwiftUI `text` binding that onSend() reads, since XCUITest's typeText()
-        // goes through the real keyboard/responder chain the same as interactive typing would.
-        throw XCTSkip("""
-            The send button appears and is tapped, but no send request is ever made afterward \
-            (confirmed via console log) — a genuinely new, separate issue from the navigation bug \
-            this test used to be blocked on. Root cause not yet found; see the doc comment above.
-            """)
+        launch()
+        openCurrentBook()
+        let body = "hermetic send \(Int(Date().timeIntervalSince1970))"
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText(body)
+        let sendButton = app.buttons["sendButton"]
+        XCTAssertTrue(sendButton.waitForExistence(timeout: 5), "sendButton never appeared after typing")
+        sendButton.tap()
+        XCTAssertTrue(app.staticTexts[body].waitForExistence(timeout: 10), "the sent message never appeared")
+        // Polling, not a single synchronous count — BookDetailView's ForEach keys on Message.id,
+        // and SendReconciler.replaceOptimistic swaps the array element's id (the local clientId)
+        // for the server's new UUID at the same index, so SwiftUI's diffing can legitimately show
+        // both views for one transition frame. A real #35 regression looks different: the count
+        // STAYS at 2 because a second MESSAGE was appended, not because a view is still finishing
+        // an animation.
+        let bubbles = app.staticTexts.matching(identifier: body)
+        let deadline = Date().addingTimeInterval(3)
+        while bubbles.count > 1 && Date() < deadline { usleep(100_000) }
+        XCTAssertEqual(bubbles.count, 1, "the optimistic bubble and its confirmation both rendered and neither went away")
     }
 
     // ---- pure client UI ----------------------------------------------------------------------

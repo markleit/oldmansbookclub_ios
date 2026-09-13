@@ -72,14 +72,19 @@ This same bug was also the (until now unidentified) cause of a second, separatel
 even when the stub *was* reached, tapping a book row to enter its chat never navigated. Eight
 distinct causes had been ruled out one at a time with the symptom surviving every one — the actual
 cause was the same broken EULA key, manifesting identically. All four tests that were `XCTSkip`'d
-pending this are re-enabled; three now pass reliably (confirmed across multiple fresh-install
-runs, and 4 consecutive clean `regression.sh --only ios` runs end to end).
+pending this are re-enabled and pass reliably (confirmed across multiple fresh-install runs, and
+consecutive clean `regression.sh --only ios` runs end to end).
 
-**One test still skipped, for a genuinely new and separate reason**:
-`testASentMessageAppearsOnceNotTwice` was never exercised before (permanently blocked by the
-navigation bug since inception), and now that it runs, the send button appears and is tapped
-successfully but no send request is ever made afterward — confirmed via the same console-log
-technique. Root cause not yet found; see the test's own doc comment.
+The fourth test (`testASentMessageAppearsOnceNotTwice`) briefly looked like it had a second,
+separate bug — the send button appeared and was tapped, but nothing happened. It didn't: the
+actual cause was ad hoc local iteration running `xcodebuild test` directly without also resetting
+the simulator's Keychain (`regression.sh`'s own `reset_simulator_state()` always does both
+`simctl uninstall` and `simctl keychain reset` — a bare uninstall alone isn't enough). Keychain
+survives a plain uninstall, and the stub's dev-login always returns the exact same fixed tokens,
+so a stale Keychain entry from an earlier ad hoc run looked perpetually valid and let the app skip
+Dev Login entirely on a "fresh" install — leaving `TokenStore.shared.userId` (UserDefaults-only,
+genuinely wiped by uninstall) nil for the rest of the session. `sendMessage()`'s userId guard
+caught it correctly the whole time; see `HermeticUITests`'s class-level doc comment.
 
 CI now gates on `--only ios` (unit + hermetic UI both) — the CI-specific failure this lane
 previously showed ("the app makes no request to the stub... a networking/environment difference")
