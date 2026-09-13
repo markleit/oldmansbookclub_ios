@@ -1327,6 +1327,16 @@ final class BookViewModel: ObservableObject {
         appBackgroundObserver = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
+            // finalizeRecording() (via stopRecording()) does synchronous AVAudioSession
+            // teardown, which can briefly block on route renegotiation (Bluetooth/CarPlay) —
+            // exactly the kind of work that has to declare itself to iOS during backgrounding,
+            // or risk a "failed to terminate" watchdog kill. beginBackgroundTask grants a real
+            // grace period for it instead of racing the implicit one.
+            var bgTask = UIBackgroundTaskIdentifier.invalid
+            bgTask = UIApplication.shared.beginBackgroundTask(withName: "finalize-recording-on-background") {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
             Task { @MainActor in
                 self?.cancelEchoTimeouts()
                 // #146 — was discardRecording() (#75): iOS suspends capture seconds from now,
@@ -1336,6 +1346,10 @@ final class BookViewModel: ObservableObject {
                 // 0.5s of audio, so an accidental instant background doesn't send a near-empty
                 // clip.
                 await self?.stopRecording()
+                if bgTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(bgTask)
+                    bgTask = .invalid
+                }
             }
         }
         // Recording interrupted by a phone call / Siri / alarm. Only `.began` matters — once

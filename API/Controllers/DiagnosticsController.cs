@@ -56,7 +56,12 @@ public class DiagnosticsController(GitHubService github) : ControllerBase
             + $"- **First seen:** {when}\n"
             + $"- **App:** v{req.AppVersion ?? "?"} (build {req.Build ?? "?"})\n"
             + $"- **OS / device:** {req.OsVersion ?? "?"} · {req.DeviceModel ?? "?"}\n"
-            + $"- **Signature:** `{sig}`\n\n"
+            + $"- **Signature:** `{sig}`\n"
+            // The call stack tree is huge and serializes before terminationReason/exceptionType/
+            // signal in MetricKit's own JSON, so those fields land past MaxPayloadChars and get
+            // silently cut off. Surface the summary (computed from those same fields on-device)
+            // here, ahead of the truncated dump, so it's never lost.
+            + $"- **Summary:** {summary}\n\n"
             + (payload.Length == 0
                 ? ""
                 : $"<details><summary>MetricKit payload</summary>\n\n```json\n{payload}\n```\n\n</details>\n")
