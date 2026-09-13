@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **iOS deployment target:** iOS 16.0+
 - **Bundle ID:** `com.markleit.oldmansbookclub`
-- **API:** Deployed to Azure App Service (Norway East, VS subscription)
+- **API:** Deployed to Azure App Service (West US 3, VS subscription)
 - **API base URL:** configured in `APIClient.swift` (production) and `appsettings.Development.json` (local)
 
 ## Build

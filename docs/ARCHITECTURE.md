@@ -47,30 +47,37 @@ RootView (auth gate)
 
 ### URL routing
 
-- **Simulator (Debug):** `http://localhost:5235`
-- **Device / TestFlight / App Store:** `https://oldmansbookclub-api.azurewebsites.net`
-
-Controlled via `#if targetEnvironment(simulator)` in `APIClient.swift`.
+`App/Services/ServerEnvironment.swift` resolves the API host. In RELEASE it compiles to the
+production literal (`https://oldmansbookclub-api.azurewebsites.net`) with no lookup or storage
+read. In DEBUG it's a runtime value read from `UserDefaults` (editable from Settings → "Server
+(Debug)"), defaulting to `localhost:5235` on the simulator and production on a device — so a
+device build can be pointed at a laptop or a staging slot without a rebuild. Both `APIClient` and
+`ChatService` go through this same resolution; see [`docs/TESTING.md`](TESTING.md) for the full
+preset list and the `.dev`-app isolation this enables.
 
 ---
 
 ## API
 
 **Framework:** ASP.NET Core 10  
-**Runtime:** Linux container on Azure App Service (Norway East)  
+**Runtime:** Linux container on Azure App Service (West US 3)  
 **Database ORM:** EF Core with SQL Server — migrations run automatically on startup (5 s delay)
 
 ### Controllers
 
 | Controller | Route | Purpose |
 |------------|-------|---------|
-| `AuthController` | `/auth` | Sign in with Apple, demo/dev login, account deletion |
+| `AuthController` | `/auth` | Sign in with Apple, demo/dev login, token refresh, account deletion |
+| `UsersController` | `/users` | Own profile, blocking |
 | `ClubsController` | `/clubs` | Club CRUD, public listing, membership |
-| `BooksController` | `/books` | Book CRUD per club |
-| `ChatHub` | SignalR | Real-time messaging |
+| `BooksController` | `/books` | Book CRUD per club, reorder, unread counts |
+| `MessagesController` | `/messages`, `/books/{id}/messages` | Send/list/save/report messages, transcripts |
+| `ChatHub` | SignalR (`/hubs/chat`) | Real-time messaging |
 | `MediaController` | `/media` | SAS URL generation for blob uploads |
 | `NotificationsController` | `/notifications` | APNs device token registration |
-| `AdminController` | `/admin` | Join requests, member management, reports |
+| `AdminController` | `/admin` | Join requests, member management, reports, user deletion |
+| `FeedbackController` | `/feedback` | In-app feedback → GitHub issues (admin-only) |
+| `DiagnosticsController` | `/diagnostics` | MetricKit crash/hang reports → deduped GitHub issues (#100) |
 
 ### Services
 
@@ -78,7 +85,12 @@ Controlled via `#if targetEnvironment(simulator)` in `APIClient.swift`.
 |---------|---------|
 | `AppleTokenValidator` | Validates Sign in with Apple identity tokens; exchanges authorization code for refresh token; revokes token on account deletion |
 | `BlobService` | Generates upload/read SAS URLs for Azure Blob Storage |
+| `MessageSendService` | Validation, persistence, and broadcast for a sent message — shared by `ChatHub` and `MessagesController` |
+| `UnreadCalculator` | Unread-count formula (voice tracked independently of the read marker until heard); shared by the books list and push badge counts |
+| `HubRateLimiter` | Per-user, in-memory, fixed-window rate limit on SignalR hub sends |
 | `NotificationService` | Sends APNs push notifications (join requests, approvals, new messages) |
+| `NotificationDispatch` | Hands new-message push fan-out off to a background worker so a sender's hub call returns immediately |
+| `GitHubService` | Thin wrapper over the GitHub Issues REST API — backs Feedback and Diagnostics reporting |
 
 ### JSON convention
 
@@ -101,12 +113,22 @@ iOS                          API                        Apple
  │                            │◄─ refresh token ──────────│
  │                            │  (stored on User record)  │
  │                            │                           │
- │◄─ JWT (365-day) ───────────│                           │
+ │◄─ JWT (1 hr) + refresh ────│                           │
+ │   token (90-day)           │                           │
  │                            │                           │
  │  (all subsequent requests use Bearer JWT)              │
 ```
 
 On account deletion, the stored refresh token is revoked via `https://appleid.apple.com/auth/revoke` so the app no longer appears under the user's Apple ID settings.
+
+The API JWT is short-lived (1 hour); the opaque refresh token (`/auth/refresh`) is what's actually
+long-lived (90 days, sliding — refreshing extends it). Refresh tokens are **not** rotated on use:
+the same token stays valid indefinitely as long as it's used within its window. This is
+deliberate — rotating (revoke-and-reissue on every refresh) means a refresh whose response never
+reaches the client (e.g. a background/push-woken refresh iOS suspends mid-flight) leaves the
+server having revoked a token the client still holds, forcing a sign-out on the next attempt. Only
+the token's hash (SHA-256) is persisted, so a DB compromise doesn't expose live sessions. Trade-off:
+no reuse-detection for a stolen refresh token — accepted for this app's threat model.
 
 ### User states
 
@@ -128,7 +150,10 @@ New user → needs_club_setup
 
 ## Real-time Chat
 
-Chat messages are sent and received via Azure SignalR Service (Managed Identity connection).
+In production, chat messages are sent and received via Azure SignalR Service (Managed Identity
+connection). In local Development, `ChatHub` runs in-process (`AddSignalR()` with no Azure
+backplane) — see [`docs/TESTING.md`](TESTING.md) for what that does and doesn't change about test
+coverage.
 
 ```
 iOS sender                API (ChatHub)              iOS receivers
@@ -199,6 +224,7 @@ Read access for `club-media` uses time-limited user delegation SAS URLs (10 min 
 
 | Workflow | Trigger | Action |
 |----------|---------|--------|
+| `test.yml` | Push to `main` / PR — **blocking** | API integration tests (real SQL Server via Testcontainers) + iOS unit tests + hermetic UI tests. See [`docs/TESTING.md`](TESTING.md) for what each lane covers |
 | `deploy-api.yml` | Push to `main` with changes in `API/**` | Dotnet publish → zip → Azure Web App deploy (~2 min) |
 | `ci.yml` | Push to `main` / PR | XcodeGen → build for iOS simulator |
 | `backup.yml` | Daily 3 AM UTC | Export Azure SQL to BACPAC in blob storage (30-day retention) |
@@ -207,24 +233,8 @@ Read access for `club-media` uses time-limited user delegation SAS URLs (10 min 
 
 ## Local Development
 
-### API
-```bash
-cd API
-dotnet run
-# Requires API/appsettings.Development.json (not in repo) with:
-# - ConnectionStrings:DefaultConnection
-# - Azure:SignalRConnectionString
-# - Jwt:Secret / Issuer / Audience
-# - Apns:KeyId / TeamId / PrivateKey
-# - Apple:BundleId
-```
-
-### iOS
-```bash
-brew install xcodegen
-xcodegen generate
-open OldMansBookClub.xcodeproj
-# Build to simulator → tap "Dev Login (Simulator)"
-```
+Build steps live in [`CLAUDE.md`](../CLAUDE.md#build); the isolated dev backend
+(`bookclubdb-dev`), the `.dev` device app, the scenario matrix, and the automated test lanes are
+covered in full in [`docs/TESTING.md`](TESTING.md) — this doc doesn't duplicate either.
 
 > **Note:** After every `xcodegen generate`, re-select the signing team in Xcode → target → Signing & Capabilities.
