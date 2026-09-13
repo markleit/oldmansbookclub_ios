@@ -47,6 +47,8 @@ public class ClubsController(AppDbContext db, BlobService blob) : ControllerBase
             .AnyAsync(m => m.UserId == UserId && m.ClubId == clubId);
         if (!isMember) return Forbid();
 
+        limit = Math.Clamp(limit, 1, 200);
+
         var query = db.Messages
             .Where(m => m.ClubId == clubId && m.DeletedAt == null);
 
@@ -54,7 +56,7 @@ public class ClubsController(AppDbContext db, BlobService blob) : ControllerBase
             query = query.Where(m => m.SentAt < before.Value);
 
         var messages = await query
-            .OrderByDescending(m => m.SentAt)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
             .Take(limit)
             .Select(m => new MessageDto(
                 m.Id, m.ClubId,

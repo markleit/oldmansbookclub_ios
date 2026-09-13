@@ -490,13 +490,15 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         if (access is null) return NotFound();
         if (!access.IsMember) return Forbid();
 
+        limit = Math.Clamp(limit, 1, 200);
+
         var query = db.Messages.Where(m => m.BookId == bookId);
 
         if (before.HasValue)
             query = query.Where(m => m.SentAt < before.Value);
 
         var messages = await query
-            .OrderByDescending(m => m.SentAt)
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
             .Take(limit)
             .Select(m => new MessageDto(
                 m.Id, m.ClubId,
