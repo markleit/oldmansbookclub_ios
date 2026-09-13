@@ -57,8 +57,8 @@ while [[ $# -gt 0 ]]; do
             case "$2" in
                 api) LANE_API=1 ;;
                 ios) LANE_IOS_UNIT=1 ;;
-                # Unit tests without the hermetic UI tests — what CI gates on today, while the
-                # stub-server lane is unexplained on a GitHub runner.
+                # Unit tests without the hermetic UI tests — a faster subset for quick local
+                # iteration. CI itself gates on the full `--only ios` (both).
                 ios-unit) LANE_IOS_UNIT=1; SKIP_HERMETIC_UI=1 ;;
                 ui)  LANE_LIVE=1 ;;
                 *)   echo "--only takes api, ios or ui" >&2; exit 2 ;;
