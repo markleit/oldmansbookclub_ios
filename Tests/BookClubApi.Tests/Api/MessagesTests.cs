@@ -99,13 +99,15 @@ public class MessagesTests(TestAppFixture fixture) : IntegrationTestBase(fixture
         var a = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "a", sentAt: tiedAt);
         var b = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "b", sentAt: tiedAt);
         var c = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "c", sentAt: tiedAt);
-        var expectedOrder = new[] { a.Id, b.Id, c.Id }.OrderByDescending(id => id);
 
         var firstCall = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages"));
         var secondCall = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages"));
 
-        Assert.Equal(expectedOrder, firstCall.Select(m => m.Id));
-        Assert.Equal(expectedOrder, secondCall.Select(m => m.Id));
+        // Which order wins is arbitrary (SQL Server's uniqueidentifier sort order doesn't match
+        // .NET's Guid.CompareTo, so don't predict it) — what matters is that all three tied rows
+        // come back, and in the SAME order every time, not a fresh shuffle per request.
+        Assert.Equal(new HashSet<Guid> { a.Id, b.Id, c.Id }, firstCall.Select(m => m.Id).ToHashSet());
+        Assert.Equal(firstCall.Select(m => m.Id), secondCall.Select(m => m.Id));
     }
 
     [Fact]
