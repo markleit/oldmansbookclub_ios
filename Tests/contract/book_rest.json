@@ -1,0 +1,16 @@
+{
+  "id": "66666666-6666-6666-6666-666666666666",
+  "club_id": "22222222-2222-2222-2222-222222222222",
+  "title": "The Road",
+  "author": "Cormac McCarthy",
+  "cover_blob_url": "https://storage.example/covers/road.jpg",
+  "added_at": "2026-09-04T15:30:45.123Z",
+  "finished_at": null,
+  "status": "current",
+  "description": "A father and his son walk alone.",
+  "published_year": 2006,
+  "page_count": 287,
+  "unread_count": 3,
+  "series_name": "Border Trilogy",
+  "series_order": 2
+}

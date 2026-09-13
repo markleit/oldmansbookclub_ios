@@ -32,11 +32,13 @@ struct ProfileView: View {
                 Section("Name") {
                     TextField("Your name", text: $viewModel.displayName)
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("profileDisplayNameField")
                 }
 
                 Section {
                     TextField("Nickname (optional)", text: $viewModel.nickname)
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("profileNicknameField")
                 } header: {
                     Text("Nickname")
                 } footer: {
@@ -54,6 +56,7 @@ struct ProfileView: View {
                         }
                     }
                     .disabled(viewModel.isSaving)
+                    .accessibilityIdentifier("saveProfileButton")
                 }
 
                 Section {
@@ -68,6 +71,7 @@ struct ProfileView: View {
                     } label: {
                         Text("Sign Out").frame(maxWidth: .infinity)
                     }
+                    .accessibilityIdentifier("signOutButton")
                 }
 
                 Section {

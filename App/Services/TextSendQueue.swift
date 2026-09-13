@@ -34,7 +34,11 @@ final class TextSendQueue {
 
     private let key = "pendingTextSends"
 
-    private init() {
+    // Injected for testability only (#126) — `shared` uses UserDefaults.standard as before.
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         load()
     }
 
@@ -62,14 +66,14 @@ final class TextSendQueue {
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: key),
+        guard let data = defaults.data(forKey: key),
               let decoded = try? JSONDecoder().decode([PendingSend].self, from: data) else { return }
         items = decoded
     }
 
     private func save() {
         if let data = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(data, forKey: key)
+            defaults.set(data, forKey: key)
         }
     }
 }

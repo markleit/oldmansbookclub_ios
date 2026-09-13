@@ -48,7 +48,7 @@ for specifics — only the non-obvious bits are worth recording here:
 - `App/Services/ChatService.swift` — SignalR client, an actor
 - `App/Services/TokenStore.swift` — JWT persistence in the Keychain
 - `API/Migrations/` — migrations run automatically on API startup. Local dev points at
-  `bookclubdb-dev`, an isolated database (#120, done) — see `docs/DEV_TEST_ENVIRONMENTS.md`
+  `bookclubdb-dev`, an isolated database — see `docs/TESTING.md`
 
 ## Auth
 
@@ -58,15 +58,14 @@ Sign in with Apple → Apple identity token sent to `/auth/apple` → API valida
 
 The API uses `JsonNamingPolicy.SnakeCaseLower` — all JSON keys are snake_case in both directions. The iOS `APIClient` encodes with `.convertToSnakeCase` and decodes with `.convertFromSnakeCase` to match.
 
-## Dev & test environments
+## Dev & test environments, and how testing works
 
-**See `docs/DEV_TEST_ENVIRONMENTS.md` — the canonical reference** for how the
-API host is configured (runtime in DEBUG, hardcoded in RELEASE), how the
-`.dev` device app is isolated from the App Store app, the isolated dev
-backend (`bookclubdb-dev`, in-process SignalR, dev storage, no-op APNs — #120,
-done), the simulator/device scenario matrix, and the completed Azure region
-move. Don't duplicate that content here or in memory — update the doc and
-link to it.
+**See `docs/TESTING.md` — the canonical reference** for how the API host is configured (runtime
+in DEBUG, hardcoded in RELEASE), how the `.dev` device app is isolated from the App Store app, the
+isolated dev backend (`bookclubdb-dev`, in-process SignalR, dev storage, no-op APNs), the
+simulator/device scenario matrix, the three automated test lanes and what each proves, and
+troubleshooting a red test run. Don't duplicate that content here or in memory — update the doc
+and link to it.
 
 Quick start: `cd API && dotnet run`, build+run in the simulator, tap "Dev
 Login (Debug)" on the login screen. Azure SQL firewall must allow your dev
@@ -112,7 +111,7 @@ The dev backlog now lives in **GitHub Issues** (`markleit/oldmansbookclub_ios`) 
 - #33 — `BookViewModel` ~8 responsibilities; split large views
 - #34 — `APIClient`: unify 20+ ad-hoc `URLRequest` builders
 - #36 — Schema niceties (`Membership` natural PK deferred from 1.9.0)
-- #120 — No test environment: local dev ran against the prod DB — CLOSED 2026-08-22 (isolated `bookclubdb-dev` + storage, in-process SignalR, no-op APNs, idempotent seeder; see `docs/DEV_TEST_ENVIRONMENTS.md`)
+- #120 — No test environment: local dev ran against the prod DB — CLOSED 2026-08-22 (isolated `bookclubdb-dev` + storage, in-process SignalR, no-op APNs, idempotent seeder; see `docs/TESTING.md`)
 - #123 — Microsoft.OpenApi advisory + transitive deps unwatched — DONE 2026-08-21 (advisory cleared, lock file added, Dependabot alerts/security updates enabled, NuGet audit now fails the build)
 
 ### Security backlog (kept private — NOT filed as public GitHub issues)

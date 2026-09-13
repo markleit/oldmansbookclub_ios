@@ -1,0 +1,11 @@
+{
+  "id": "77777777-7777-7777-7777-777777777777",
+  "display_name": "Mark",
+  "nickname": "Marky",
+  "avatar_url": "https://storage.example/avatars/mark.jpg",
+  "is_admin": true,
+  "is_club_admin": false,
+  "preferences": {
+    "tap_to_talk": true
+  }
+}

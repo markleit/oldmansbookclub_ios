@@ -16,10 +16,16 @@ enum AccountScope {
     // True when the signed-in account differs from the one this store last saw — i.e. whatever
     // it is holding belongs to someone else and must be dropped. Re-stamps as a side effect,
     // so the answer is true exactly once per change.
-    static func ownerChanged(_ key: String) -> Bool {
-        let defaults = UserDefaults.standard
+    // `defaults` and `currentUserId` are injectable ONLY so this can be unit-tested: the real
+    // identity comes from the Keychain via TokenStore, which a test process has no business
+    // touching. Every production call site uses the defaults and behaves exactly as before.
+    static func ownerChanged(
+        _ key: String,
+        defaults: UserDefaults = .standard,
+        currentUserId: String? = TokenStore.shared.userId?.uuidString
+    ) -> Bool {
         let stampKey = prefix + key
-        let current = TokenStore.shared.userId?.uuidString
+        let current = currentUserId
         let stamped = defaults.string(forKey: stampKey)
         guard stamped != current else { return false }
         defaults.set(current, forKey: stampKey)
