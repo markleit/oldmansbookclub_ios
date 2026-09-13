@@ -72,6 +72,43 @@ public class MessagesTests(TestAppFixture fixture) : IntegrationTestBase(fixture
     }
 
     [Fact]
+    public async Task An_out_of_range_limit_is_clamped_instead_of_honored()
+    {
+        var (club, book, me, other) = await ArrangeAsync();
+        var start = DateTime.UtcNow.AddMinutes(-10);
+        for (var i = 0; i < 5; i++)
+            await InsertMessageAsync(book.Id, club.Id, other.Id, body: $"msg {i}", sentAt: start.AddMinutes(i));
+
+        // #156: an unclamped limit lets a client (or a bug) ask the server to return everything.
+        var hugeLimit = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages?limit=1000000"));
+        var zeroLimit = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages?limit=0"));
+
+        Assert.Equal(5, hugeLimit.Count);
+        Assert.Single(zeroLimit);
+    }
+
+    [Fact]
+    public async Task Messages_with_the_same_SentAt_return_in_a_stable_deterministic_order()
+    {
+        var (club, book, me, other) = await ArrangeAsync();
+        // #156: same-millisecond SentAt is plausible for rapid sends or seeded messages. Without a
+        // secondary sort key, the database's order for tied rows is unspecified and can vary
+        // between two identical requests, which reads to a client as messages reordering or a
+        // duplicate appearing. Id is arbitrary but stable, so pinning to it fixes that.
+        var tiedAt = DateTime.UtcNow.AddMinutes(-10);
+        var a = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "a", sentAt: tiedAt);
+        var b = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "b", sentAt: tiedAt);
+        var c = await InsertMessageAsync(book.Id, club.Id, other.Id, body: "c", sentAt: tiedAt);
+        var expectedOrder = new[] { a.Id, b.Id, c.Id }.OrderByDescending(id => id);
+
+        var firstCall = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages"));
+        var secondCall = await ReadAsync<List<MessageDto>>(await me.Client.GetAsync($"/books/{book.Id}/messages"));
+
+        Assert.Equal(expectedOrder, firstCall.Select(m => m.Id));
+        Assert.Equal(expectedOrder, secondCall.Select(m => m.Id));
+    }
+
+    [Fact]
     public async Task A_deleted_message_comes_back_as_a_tombstone_with_its_content_stripped()
     {
         var (club, book, me, other) = await ArrangeAsync();
