@@ -32,19 +32,13 @@ struct AdminView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if showAdminTabs {
-                    Picker("", selection: $selectedTab) {
-                        Text("Members").tag(0)
-                        Text("Requests").tag(1)
-                        if isGlobalAdmin {
-                            Text("Reports").tag(2)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding()
-                }
-
+            // Watchdog crashes #175–#177 were UIKit layout loops (safe-area insets ↔ large-title
+            // navigation bar ↔ scroll view) while the app was backgrounding. This screen was the
+            // odd one out: a large title over a VStack whose List sat BELOW a segmented Picker
+            // (and, on Members, a club Picker + Divider), so the bar couldn't treat the list as
+            // its scroll view. Now the segmented control lives in the bar, the title is inline,
+            // and each list is the direct content under the bar — the standard arrangement.
+            Group {
                 if showAdminTabs && selectedTab == 1 {
                     requestsView
                 } else if !showAdminTabs || selectedTab == 0 {
@@ -54,6 +48,10 @@ struct AdminView: View {
                 }
             }
             .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: selectedTab) { tab in
+                Breadcrumbs.record("admin \(["members", "requests", "reports"][min(max(tab, 0), 2)])")
+            }
             .alert("Error", isPresented: Binding(
                 get: { errorMessage != nil },
                 set: { if !$0 { errorMessage = nil } }
@@ -64,6 +62,17 @@ struct AdminView: View {
             }
             .toolbar {
                 if showAdminTabs {
+                    ToolbarItem(placement: .principal) {
+                        Picker("Section", selection: $selectedTab) {
+                            Text("Members").tag(0)
+                            Text("Requests").tag(1)
+                            if isGlobalAdmin {
+                                Text("Reports").tag(2)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button { showFeedback = true } label: {
                             Image(systemName: "exclamationmark.bubble")
@@ -155,87 +164,86 @@ struct AdminView: View {
     // MARK: - Members
 
     private var membersView: some View {
-        VStack(spacing: 0) {
+        List {
             if isGlobalAdmin || myClubs.count > 1 {
-                Picker("Club", selection: $selectedClubId) {
-                    if isGlobalAdmin {
-                        Text("All Clubs").tag(UUID?.none)
+                Section {
+                    Picker("Club", selection: $selectedClubId) {
+                        if isGlobalAdmin {
+                            Text("All Clubs").tag(UUID?.none)
+                        }
+                        ForEach(myClubs) { club in
+                            Text(club.name).tag(UUID?.some(club.id))
+                        }
                     }
-                    ForEach(myClubs) { club in
-                        Text(club.name).tag(UUID?.some(club.id))
+                    .pickerStyle(.menu)
+                    .onChange(of: selectedClubId) { _ in
+                        Task { await loadMembers() }
                     }
                 }
-                .pickerStyle(.menu)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .onChange(of: selectedClubId) { _ in
-                    Task { await loadMembers() }
-                }
-                Divider()
             }
-            Group {
+            Section {
                 if isLoading && members.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProgressView().frame(maxWidth: .infinity)
+                        .listRowSeparator(.hidden)
                 } else if members.isEmpty {
                     Text("No members yet.")
                         .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(maxWidth: .infinity)
+                        .listRowSeparator(.hidden)
                 } else {
-                    List {
-                        ForEach(members, id: \.id) { member in
-                            NavigationLink(destination: MemberProfileView(member: member)) {
-                                MemberRow(member: member)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                if member.id != myId {
-                                    if let clubId = selectedClubId,
-                                       isGlobalAdmin || isClubAdminOfSelected {
-                                        Button {
-                                            Task { await removeMember(member.id, from: clubId) }
-                                        } label: {
-                                            Label("Kick", systemImage: "person.badge.minus")
-                                        }
-                                        .tint(.orange)
-                                        .accessibilityIdentifier("kickMemberButton")
+                    ForEach(members, id: \.id) { member in
+                        NavigationLink(destination: MemberProfileView(member: member)) {
+                            MemberRow(member: member)
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if member.id != myId {
+                                if let clubId = selectedClubId,
+                                   isGlobalAdmin || isClubAdminOfSelected {
+                                    Button {
+                                        Task { await removeMember(member.id, from: clubId) }
+                                    } label: {
+                                        Label("Kick", systemImage: "person.badge.minus")
                                     }
-                                    if isGlobalAdmin {
-                                        if let clubId = selectedClubId {
-                                            Button {
-                                                Task { await setClubAdmin(member.id, clubId: clubId, isClubAdmin: !member.isClubAdmin) }
-                                            } label: {
-                                                Label(
-                                                    member.isClubAdmin ? "Revoke Club Admin" : "Make Club Admin",
-                                                    systemImage: member.isClubAdmin ? "person.fill.badge.minus" : "person.fill.badge.plus"
-                                                )
-                                            }
-                                            .tint(member.isClubAdmin ? .indigo : .teal)
-                                            .accessibilityIdentifier("toggleClubAdminButton")
-                                        }
+                                    .tint(.orange)
+                                    .accessibilityIdentifier("kickMemberButton")
+                                }
+                                if isGlobalAdmin {
+                                    if let clubId = selectedClubId {
                                         Button {
-                                            Task { await setRole(member.id, isAdmin: !member.isAdmin) }
+                                            Task { await setClubAdmin(member.id, clubId: clubId, isClubAdmin: !member.isClubAdmin) }
                                         } label: {
                                             Label(
-                                                member.isAdmin ? "Demote" : "Make Admin",
-                                                systemImage: member.isAdmin ? "key.slash" : "person.badge.key.fill"
+                                                member.isClubAdmin ? "Revoke Club Admin" : "Make Club Admin",
+                                                systemImage: member.isClubAdmin ? "person.fill.badge.minus" : "person.fill.badge.plus"
                                             )
                                         }
-                                        .tint(member.isAdmin ? .indigo : .blue)
-                                        .accessibilityIdentifier("toggleAdminButton")
-                                        Button(role: .destructive) {
-                                            Task { await deleteUser(member.id) }
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                        .accessibilityIdentifier("deleteMemberButton")
+                                        .tint(member.isClubAdmin ? .indigo : .teal)
+                                        .accessibilityIdentifier("toggleClubAdminButton")
                                     }
+                                    Button {
+                                        Task { await setRole(member.id, isAdmin: !member.isAdmin) }
+                                    } label: {
+                                        Label(
+                                            member.isAdmin ? "Demote" : "Make Admin",
+                                            systemImage: member.isAdmin ? "key.slash" : "person.badge.key.fill"
+                                        )
+                                    }
+                                    .tint(member.isAdmin ? .indigo : .blue)
+                                    .accessibilityIdentifier("toggleAdminButton")
+                                    Button(role: .destructive) {
+                                        Task { await deleteUser(member.id) }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    .accessibilityIdentifier("deleteMemberButton")
                                 }
                             }
                         }
                     }
-                    .listStyle(.plain)
                 }
             }
         }
+        .listStyle(.plain)
     }
 
     // MARK: - Reports

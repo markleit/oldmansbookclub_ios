@@ -22,6 +22,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Subscribe to MetricKit early so crash/hang diagnostics from the previous run are
         // delivered and auto-filed as GitHub issues (#100). Device-only; no-op in the simulator.
         DiagnosticsReporter.shared.start()
+        // Screen/lifecycle trail attached to the crashed process's next MetricKit report.
+        Breadcrumbs.start()
         // Recreate the background upload session so any task that finished while the app was
         // suspended/killed delivers its completion (marks the queue item uploaded).
         BackgroundUploadService.shared.activate()

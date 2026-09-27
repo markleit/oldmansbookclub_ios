@@ -39,9 +39,17 @@ final class DiagnosticsReporter: NSObject, MXMetricManagerSubscriber {
             build: md.applicationBuildVersion,
             osVersion: md.osVersion,
             deviceModel: md.deviceType,
-            payloadJson: String(data: diagnostic.jsonRepresentation(), encoding: .utf8)
+            payloadJson: String(data: diagnostic.jsonRepresentation(), encoding: .utf8),
+            breadcrumbs: Self.breadcrumbs(for: md)
         )
         Task { try? await APIClient.shared.reportDiagnostic(report) }
+    }
+
+    // The crashed process's screen/lifecycle trail. MetricKit delivers on a later launch, so this
+    // must look up the diagnostic's own process — MXMetaData.pid is iOS 17+; older OSes send none.
+    private static func breadcrumbs(for md: MXMetaData) -> String? {
+        guard #available(iOS 17.0, *) else { return nil }
+        return Breadcrumbs.trail(forPid: md.pid)
     }
 
     // Stable dedup key: hash the call-stack tree (identical across recurrences of the same

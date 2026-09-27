@@ -385,6 +385,7 @@ struct BookDetailView: View {
                     .animation(.spring(duration: 0.3), value: viewModel.messageSaved)
             }
         }
+        .onAppear { Breadcrumbs.record("chat open") }
         .task {
             await viewModel.load()
             // Report the voice message as heard (sticky, server-side) for receipts + unread.
@@ -416,6 +417,7 @@ struct BookDetailView: View {
             }
         }
         .onDisappear {
+            Breadcrumbs.record("chat close")
             viewModel.disconnect()
             // Stop voice playback when actually leaving the chat (this fires on a real
             // navigation pop, not when a bubble merely scrolls out of view).
