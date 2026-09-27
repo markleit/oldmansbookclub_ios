@@ -50,6 +50,7 @@
 		6FBE7C27F3BBA11CD89059BE /* BackgroundUploadService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 785A72030A13869F8B069614 /* BackgroundUploadService.swift */; };
 		70D52615CAAAE4BA188D0B65 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DEE74273F3039AFB33F97C01 /* Assets.xcassets */; };
 		734EBCEA156B12872561B9B8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */; };
+		73F7600E4458D3DB1A60896D /* EmojiSkinToneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FD3B5790CD36AB0A956D837 /* EmojiSkinToneTests.swift */; };
 		76074454E31FD4AECA61E60C /* NetworkReachability.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20856D8F1ADFB8460B25274 /* NetworkReachability.swift */; };
 		79B54E0E9BEC24C2F7B8B15F /* BookViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 024037128BCBBAFA0312E443 /* BookViewModel.swift */; };
 		816EE2512B88D333513E347B /* SignalRClient in Frameworks */ = {isa = PBXBuildFile; productRef = 7FD60A7A3BF0536227F4D99B /* SignalRClient */; };
@@ -114,6 +115,7 @@
 		089E39F989B969C4B4DBB798 /* message_minimal_rest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = message_minimal_rest.json; sourceTree = "<group>"; };
 		0CA871E3E432D536EB29941B /* OldMansBookClubUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OldMansBookClubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0FD1A38295A510B628498DAA /* Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixtures.swift; sourceTree = "<group>"; };
+		0FD3B5790CD36AB0A956D837 /* EmojiSkinToneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiSkinToneTests.swift; sourceTree = "<group>"; };
 		111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		17746CE2CCF0CBD0B153C5A2 /* OldMansBookClubApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OldMansBookClubApp.swift; sourceTree = "<group>"; };
 		17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendReconcilerTests.swift; sourceTree = "<group>"; };
@@ -347,6 +349,7 @@
 			children = (
 				D186DBB4D76511D3A99867D7 /* ChatCacheMergeTests.swift */,
 				C2CB308339BC0FE60AC349ED /* ContractTests.swift */,
+				0FD3B5790CD36AB0A956D837 /* EmojiSkinToneTests.swift */,
 				0FD1A38295A510B628498DAA /* Fixtures.swift */,
 				81AE905B2D02E166DF203676 /* HeardStoreTests.swift */,
 				17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */,
@@ -604,6 +607,7 @@
 			files = (
 				49946A8E4D5FCF499C005B18 /* ChatCacheMergeTests.swift in Sources */,
 				3375FF5B68ACC89158BCEB9C /* ContractTests.swift in Sources */,
+				73F7600E4458D3DB1A60896D /* EmojiSkinToneTests.swift in Sources */,
 				5226C060B27C3D605B12B74A /* Fixtures.swift in Sources */,
 				094930F4028DC4B717DAAF64 /* HeardStoreTests.swift in Sources */,
 				1DD038AAF9DE70CA1DBB6C96 /* SendReconcilerTests.swift in Sources */,
