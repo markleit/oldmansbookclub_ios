@@ -114,4 +114,4 @@ public record FeedbackDto(int Number, string Title, string State, string HtmlUrl
 public record DiagnosticReportRequest(
     string Kind, string Signature, string Summary,
     string? AppVersion = null, string? Build = null, string? OsVersion = null,
-    string? DeviceModel = null, string? PayloadJson = null);
+    string? DeviceModel = null, string? PayloadJson = null, string? Breadcrumbs = null);
