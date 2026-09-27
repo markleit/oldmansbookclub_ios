@@ -526,7 +526,7 @@ struct MessageRow: View {
     @State private var showEmojiPicker = false      // #145 — "+" on the reaction bar, any emoji
     private var isMe: Bool { message.senderId == TokenStore.shared.userId }
 
-    // #47 — the fixed reaction set.
+    // #47 — the fixed reaction set. 👍 shows in the tone last chosen for it in the picker (#173).
     static let reactionEmojis = ["👍", "❤️", "😂", "😮", "😢", "🎉"]
 
     var body: some View {
@@ -612,7 +612,8 @@ struct MessageRow: View {
         let menu = VStack(alignment: .leading, spacing: 0) {
             if !message.isDeleted && message.sendState == nil {
                 HStack(spacing: 6) {
-                    ForEach(MessageRow.reactionEmojis, id: \.self) { emoji in
+                    ForEach(MessageRow.reactionEmojis, id: \.self) { base in
+                        let emoji = EmojiSkinTone.remembered(for: base).apply(to: base)
                         Button {
                             showReactMenu = false
                             viewModel.toggleReaction(emoji, on: message)
@@ -626,8 +627,9 @@ struct MessageRow: View {
                                 )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("quickReaction.\(base)")
                     }
-                    // #145 — any other emoji, via the system Emoji keyboard.
+                    // #145 — any other emoji, via the in-app emoji grid.
                     Button {
                         showReactMenu = false
                         showEmojiPicker = true

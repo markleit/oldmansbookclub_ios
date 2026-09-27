@@ -173,6 +173,67 @@ final class HermeticUITests: XCTestCase {
         XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "the picker never dismissed")
     }
 
+    // #173 — iOS-keyboard model: a quick tap sends the emoji (the hold gesture must not eat taps);
+    // press-and-hold opens the six tone variants; the chosen tone is remembered for THAT emoji only
+    // and shows in the grid and on the quick reaction bar. Grid cells and quick-bar buttons are
+    // looked up by identifier because a sent reaction adds a same-emoji pill to the chat behind.
+    // Ends by restoring the default tone — the choice persists in UserDefaults across tests.
+    func testSkinTonesArePressAndHoldAndRememberedPerEmoji() throws {
+        launch()
+        openCurrentBook()
+        let message = app.staticTexts["First seeded message"]
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+
+        func openPeopleGrid() {
+            message.press(forDuration: 0.6)
+            let plus = app.buttons["addEmojiReactionButton"]
+            XCTAssertTrue(plus.waitForExistence(timeout: 5), "Reaction bar's + button never appeared")
+            plus.tap()
+            XCTAssertTrue(app.buttons["🥰"].waitForExistence(timeout: 10), "Emoji grid never rendered")
+            app.buttons["👋"].firstMatch.tap()   // People tab
+            XCTAssertTrue(app.buttons["emoji.👍"].waitForExistence(timeout: 5), "People grid never rendered")
+        }
+        let cancel = app.buttons["Cancel"].firstMatch
+
+        // A quick tap on a tone-able emoji still sends it and closes the picker.
+        openPeopleGrid()
+        app.buttons["emoji.👋"].tap()
+        XCTAssertFalse(cancel.waitForExistence(timeout: 3), "a quick tap on a tone-able emoji did not pick it")
+
+        // Hold → variants → pick dark.
+        openPeopleGrid()
+        XCTAssertEqual(app.buttons["emoji.👍"].label, "👍")
+        app.buttons["emoji.👍"].press(forDuration: 0.8)
+        let dark = app.buttons["skinTone.5"]
+        XCTAssertTrue(dark.waitForExistence(timeout: 5), "press-and-hold did not open the tone variants")
+        dark.tap()
+        XCTAssertFalse(cancel.waitForExistence(timeout: 3), "choosing a tone did not pick the emoji")
+
+        // Remembered for 👍 only: quick bar and grid show it; ✋ is untouched.
+        message.press(forDuration: 0.6)
+        let quickThumb = app.buttons["quickReaction.👍"]
+        XCTAssertTrue(quickThumb.waitForExistence(timeout: 5))
+        XCTAssertEqual(quickThumb.label, "👍🏿", "the quick bar's 👍 did not follow the tone chosen for it")
+        XCTAssertEqual(app.buttons["quickReaction.❤️"].label, "❤️")
+        app.buttons["addEmojiReactionButton"].tap()
+        XCTAssertTrue(app.buttons["🥰"].waitForExistence(timeout: 10))
+        app.buttons["👋"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["emoji.👍"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons["emoji.👍"].label, "👍🏿", "the grid did not show 👍 in its remembered tone")
+        XCTAssertEqual(app.buttons["emoji.✋"].label, "✋", "a tone chosen for 👍 leaked onto ✋")
+
+        // A hold on an emoji without tones does nothing special — no variants appear.
+        app.buttons["😀"].firstMatch.tap()   // Smileys tab
+        app.buttons["emoji.😂"].press(forDuration: 0.8)
+        XCTAssertFalse(app.buttons["skinTone.5"].waitForExistence(timeout: 2), "a non-tone emoji offered tones")
+
+        // Restore the default for 👍.
+        if cancel.exists { app.buttons["👋"].firstMatch.tap() } else { openPeopleGrid() }
+        app.buttons["emoji.👍"].press(forDuration: 0.8)
+        XCTAssertTrue(app.buttons["skinTone.0"].waitForExistence(timeout: 5))
+        app.buttons["skinTone.0"].tap()
+    }
+
     // ---- control API (talks to the host-level stub, not an in-process object) ----------------
 
     private func setMessages(_ messages: [String]) throws {
