@@ -6,6 +6,11 @@
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleName</key>
     <string>$(PRODUCT_NAME)</string>
+    <!-- #178 — shared with the Share extension; see Shared/SharedContainer.swift. -->
+    <key>OMBCAppGroup</key>
+    <string>group.com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)</string>
+    <key>OMBCKeychainGroup</key>
+    <string>$(AppIdentifierPrefix)com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX)</string>
     <key>CFBundleDisplayName</key>
     <string>OMBC $(OMBC_DISPLAY_SUFFIX)</string>
     <key>CFBundleExecutable</key>

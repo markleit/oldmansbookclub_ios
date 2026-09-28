@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- #178 — the app's App Group + the app's own keychain group (so the JWT the app wrote is
+     readable here without moving it). Keep in sync with App/OldMansBookClub*.entitlements. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.markleit.oldmansbookclub.dev</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.markleit.oldmansbookclub.dev</string>
+	</array>
+</dict>
+</plist>
