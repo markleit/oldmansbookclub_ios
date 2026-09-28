@@ -158,7 +158,12 @@ struct MessageInputView: View {
                     .accessibilityIdentifier("attachmentMenuButton")
 
                     // Growing text input
-                    GrowingTextEditor(text: $text, placeholder: "Message…")
+                    GrowingTextEditor(text: $text, placeholder: "Message…") { image in
+                        // #178 — screenshot → "Copy and Delete" → long-press → Paste lands here
+                        // as a pending photo, exactly as if it had been picked with +.
+                        pendingImage = image
+                        pendingVideo = nil
+                    }
 
                     // Walkie-talkie / send button
                     if isUploading {
@@ -316,11 +321,12 @@ struct MessageInputView: View {
 struct GrowingTextEditor: View {
     @Binding var text: String
     let placeholder: String
+    var onPasteImage: ((UIImage) -> Void)? = nil
     @State private var height: CGFloat = 36
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            GrowingTextView(text: $text, height: $height)
+            GrowingTextView(text: $text, height: $height, onPasteImage: onPasteImage)
                 .frame(height: min(height, GrowingTextView.maxHeight))
 
             if text.isEmpty {
@@ -342,9 +348,11 @@ struct GrowingTextView: UIViewRepresentable {
 
     @Binding var text: String
     @Binding var height: CGFloat
+    var onPasteImage: ((UIImage) -> Void)? = nil
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = ImagePastingTextView()
+        tv.onPasteImage = onPasteImage
         tv.font = UIFont.preferredFont(forTextStyle: .body)
         tv.textContainerInset = UIEdgeInsets(top: 8, left: 6, bottom: 8, right: 6)
         tv.textContainer.lineFragmentPadding = 0
@@ -357,6 +365,7 @@ struct GrowingTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
+        (tv as? ImagePastingTextView)?.onPasteImage = onPasteImage
         if tv.text != text { tv.text = text }
         recalcHeight(tv)
     }
@@ -382,6 +391,34 @@ struct GrowingTextView: UIViewRepresentable {
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
             parent.recalcHeight(tv)
+        }
+    }
+}
+
+// #178 — a plain UITextView only offers Paste for text. This one also offers it when the
+// clipboard holds just an image (e.g. a screenshot copied from the markup editor) and hands the
+// image off instead of inserting anything. Text still wins when both are present — copying
+// from a web page puts text AND an image on the clipboard, and the user meant the text.
+final class ImagePastingTextView: UITextView {
+    var onPasteImage: ((UIImage) -> Void)?
+
+    private var clipboardIsImageOnly: Bool {
+        let pb = UIPasteboard.general
+        return onPasteImage != nil && pb.hasImages && !pb.hasStrings && !pb.hasURLs
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), clipboardIsImageOnly { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        // hasImages doesn't trigger the paste-permission prompt; reading .image does, and only
+        // here, on an explicit Paste the user chose.
+        if clipboardIsImageOnly, let image = UIPasteboard.general.image {
+            onPasteImage?(image)
+        } else {
+            super.paste(sender)
         }
     }
 }

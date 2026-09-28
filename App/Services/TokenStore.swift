@@ -110,7 +110,11 @@ final class TokenStore {
     // message's push fan-out instead of every device the signed-in user owns.
     var registeredDeviceToken: String? {
         get { UserDefaults.standard.string(forKey: deviceTokenKey) }
-        set { UserDefaults.standard.set(newValue, forKey: deviceTokenKey) }
+        set {
+            UserDefaults.standard.set(newValue, forKey: deviceTokenKey)
+            // #178 — the Share extension sends it too, so its posts exclude only this device.
+            SharedContainer.defaults?.set(newValue, forKey: SharedContainer.Key.deviceToken)
+        }
     }
 
     var clubId: UUID? {

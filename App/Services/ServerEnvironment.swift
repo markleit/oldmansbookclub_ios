@@ -96,17 +96,27 @@ enum ServerEnvironment {
         guard let clean = sanitized(raw) else { return false }
         guard clean != baseURLString else { return true }
         UserDefaults.standard.set(clean, forKey: overrideKey)
+        publishToSharedContainer()
         return true
     }
 
     static func resetToDefault() {
         UserDefaults.standard.removeObject(forKey: overrideKey)
+        publishToSharedContainer()
+    }
+
+    /// The Share extension (#178) can't read this app's UserDefaults, so hand it the resolved
+    /// host through the App Group — otherwise a .dev app pointed at a Dev Machine would have its
+    /// extension silently post to production with a dev-minted token.
+    static func publishToSharedContainer() {
+        SharedContainer.defaults?.set(baseURLString, forKey: SharedContainer.Key.debugServerBaseURL)
     }
 
     #else
 
     static var baseURLString: String { productionURLString }
     static var baseURL: URL { URL(string: productionURLString)! }
+    static func publishToSharedContainer() {}
 
     #endif
 }

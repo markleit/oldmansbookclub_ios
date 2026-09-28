@@ -31,6 +31,8 @@ iPhone (SwiftUI)
 | API client | `App/Services/APIClient.swift` | Singleton HTTP client, snake_case ↔ camelCase |
 | Chat | `App/Services/ChatService.swift` | SignalR real-time connection |
 | Auth state | `App/Services/TokenStore.swift` | JWT in Keychain; display name/role in UserDefaults |
+| Share extension | `ShareExtension/` (target `OldMansBookClubShare`) | "Share to OMBC" from any app's share sheet — photos (up to 10), one link, or text → a chosen book chat (#178). Own small REST client (`ShareAPI.swift`); no video yet |
+| Shared with the extension | `Shared/` | Compiled into both targets. `SharedContainer` (App Group `group.com.markleit.oldmansbookclub[.dev]` for the DEBUG host + APNs token; the JWT is read in place via the app's own keychain group), `SharePlan` (pure send-order / chat-grouping logic, unit-tested) |
 
 ### Navigation structure
 

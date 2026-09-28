@@ -6,6 +6,10 @@ configs:
   Release: release
 settings:
   IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+  # Project-level so the app and its Share extension (#178) can never disagree — App Store
+  # Connect rejects an extension whose version doesn't match its containing app's.
+  MARKETING_VERSION: 1.9.6
+  CURRENT_PROJECT_VERSION: 1
 packages:
   SignalRClient:
     url: https://github.com/dotnet/signalr-client-swift
@@ -17,6 +21,7 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: App
+      - path: Shared
     settings:
       base:
         # Debug builds install under a SEPARATE bundle id (.dev) so they can sit alongside the
@@ -33,8 +38,6 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: BCH6CDU76R
-        MARKETING_VERSION: 1.9.6
-        CURRENT_PROJECT_VERSION: 1
         # To re-enable the 🔊 audio diagnostics (AudioPlayerService.alog, for debugging the
         # wireless-CarPlay audio path), add AUDIO_DIAG here, then run `xcodegen generate`:
         #   SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) AUDIO_DIAG
@@ -55,6 +58,36 @@ targets:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: SignalRClient
+      - target: OldMansBookClubShare
+
+  # #178 — "Share to OMBC" from any app's share sheet: photos (several), a link, or text, sent
+  # to a chosen book chat. Talks to the API directly (ShareExtension/ShareAPI.swift) using the
+  # app's JWT via the shared keychain group; see Shared/SharedContainer.swift.
+  OldMansBookClubShare:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: ShareExtension
+        excludes:
+          - "*.entitlements"
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.markleit.oldmansbookclub$(OMBC_BUNDLE_SUFFIX).share
+        OMBC_BUNDLE_SUFFIX: ""
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/OldMansBookClubShare.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: BCH6CDU76R
+        APPLICATION_EXTENSION_API_ONLY: YES
+      configs:
+        Debug:
+          OMBC_BUNDLE_SUFFIX: .dev
+          OMBC_DISPLAY_SUFFIX: (DEV)
+          CODE_SIGN_ENTITLEMENTS: ShareExtension/OldMansBookClubShare.Debug.entitlements
+        Release:
+          OMBC_DISPLAY_SUFFIX: ""
 
   # Unit tests (#32/#126). Hermetic: no simulator UI, no network, no backend — they construct
   # types directly and run in a couple of seconds, which is what lets them gate every PR.

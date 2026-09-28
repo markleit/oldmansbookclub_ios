@@ -24,6 +24,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         DiagnosticsReporter.shared.start()
         // Screen/lifecycle trail attached to the crashed process's next MetricKit report.
         Breadcrumbs.start()
+        // #178 — hand the Share extension what it can't read from this app's own UserDefaults.
+        // Re-published every launch so an install that predates the extension is covered too.
+        ServerEnvironment.publishToSharedContainer()
+        SharedContainer.defaults?.set(TokenStore.shared.registeredDeviceToken, forKey: SharedContainer.Key.deviceToken)
         // Recreate the background upload session so any task that finished while the app was
         // suspended/killed delivers its completion (marks the queue item uploaded).
         BackgroundUploadService.shared.activate()
