@@ -91,10 +91,10 @@ struct ShareView: View {
                     .disabled(isSending || model.remaining != nil)
             }
             switch model.phase {
-            case .sending(let done, let total):
+            case .sending(let done, let total, let label):
                 Section {
                     ProgressView(value: Double(done), total: Double(max(total, 1))) {
-                        Text(total > 1 ? "Sending \(min(done + 1, total)) of \(total)…" : "Sending…")
+                        Text(label)
                     }
                 }
             case .failedToSend(let text):

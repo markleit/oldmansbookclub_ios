@@ -11,7 +11,7 @@ final class ShareModel: ObservableObject {
         case signedOut
         case failedToLoad(String)
         case ready
-        case sending(done: Int, total: Int)
+        case sending(done: Int, total: Int, label: String)
         case failedToSend(String)
     }
 
@@ -63,7 +63,8 @@ final class ShareModel: ObservableObject {
         }
 
         while let step = remaining?.first {
-            phase = .sending(done: total - (remaining?.count ?? 0), total: total)
+            phase = .sending(done: total - (remaining?.count ?? 0), total: total,
+                             label: SharePlan.progressLabel(for: step, photoCount: photos.count))
             do {
                 switch step {
                 case .text(let body): try await api.sendText(body, bookId: book.id)

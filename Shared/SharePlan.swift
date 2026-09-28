@@ -56,6 +56,18 @@ enum SharePlan {
         return steps
     }
 
+    /// What the sheet says while `step` is in flight. Counts photos, not messages: a caption is
+    /// its own message sent first, so "Sending 2 of 3" for two photos + a caption was accurate but
+    /// read as a wrong count (#178 TestFlight feedback).
+    static func progressLabel(for step: Step, photoCount: Int) -> String {
+        switch step {
+        case .photo(let n):
+            return photoCount > 1 ? "Sending photo \(n + 1) of \(photoCount)…" : "Sending photo…"
+        case .text:
+            return photoCount > 0 ? "Sending your message…" : "Sending…"
+        }
+    }
+
     /// One section per club (clubs with no books omitted); within it the current read first,
     /// then upcoming, then past, alphabetical within each.
     static func sections(books: [ShareBook], clubs: [ShareClub]) -> [ShareClubSection] {
