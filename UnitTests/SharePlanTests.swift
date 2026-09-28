@@ -43,4 +43,16 @@ final class SharePlanTests: XCTestCase {
         XCTAssertEqual(sections.map(\.name), ["Club A", "Club B"])
         XCTAssertEqual(sections[0].books.map(\.title), ["Now", "Alpha", "Zed"])
     }
+
+    func testProgressCountsPhotosNotMessages() {
+        // Two photos + a caption is three messages; the label must still say "of 2".
+        let steps = SharePlan.steps(for: [.photo, .photo], caption: "Look")
+        XCTAssertEqual(steps.map { SharePlan.progressLabel(for: $0, photoCount: 2) },
+                       ["Sending your message…", "Sending photo 1 of 2…", "Sending photo 2 of 2…"])
+    }
+
+    func testSinglePhotoAndTextOnlyLabels() {
+        XCTAssertEqual(SharePlan.progressLabel(for: .photo(0), photoCount: 1), "Sending photo…")
+        XCTAssertEqual(SharePlan.progressLabel(for: .text("x"), photoCount: 0), "Sending…")
+    }
 }
