@@ -28,6 +28,7 @@ final class TextSendQueue {
         let body: String
         let parentMessageId: UUID?
         let queuedAt: Date
+        var seq: Int? = nil   // SendOrder position in its chat; nil = queued by an older build
     }
 
     private(set) var items: [PendingSend] = []

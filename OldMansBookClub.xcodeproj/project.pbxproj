@@ -87,6 +87,7 @@
 		BE17F4E08A9013771FDE6A47 /* TranscriptStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05DE224CB1318D203D6469B /* TranscriptStore.swift */; };
 		C004223039BA5E1313EF0F03 /* TextSendQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69980EEDDF44D464D9643DDA /* TextSendQueueTests.swift */; };
 		C1446459207EFE368581046D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36B897A6BA8DF56597F8CFEF /* SettingsView.swift */; };
+		C1D5F7E9ADB143641A4C8A39 /* SendOrder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 587F68D2C35FB730E89B2089 /* SendOrder.swift */; };
 		CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BDC572FF6DDD04153861DF /* ContentView.swift */; };
 		D276830DF84A62553CFADC78 /* message_voice_signalr.json in Resources */ = {isa = PBXBuildFile; fileRef = E8466AF0D43C0E71A76D1DD2 /* message_voice_signalr.json */; };
 		D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */; };
@@ -99,6 +100,7 @@
 		F02AC1E26B21AB7FEF189976 /* ClubSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78B795F384775724D68C0D6 /* ClubSetupView.swift */; };
 		F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */; };
 		F76B74D6EB1E049342EE6D99 /* AuthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */; };
+		F8C95C0F653B2A7C20EE3A3D /* SendOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7467093FC538932DE73D9583 /* SendOrderTests.swift */; };
 		F9AE685BB9F682A14AACA8CF /* DiagnosticsReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95456BDAC5F9127940A4FDE6 /* DiagnosticsReporter.swift */; };
 		FC11DE5A382604127A366BD2 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010D3939D82C530D2050FDBA /* LoginView.swift */; };
 /* End PBXBuildFile section */
@@ -176,6 +178,7 @@
 		4ACCD7863CB77E5D9326D08C /* MessagePrefetcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagePrefetcher.swift; sourceTree = "<group>"; };
 		52DE7679A3B99FB9C646DA4C /* HeardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeardStore.swift; sourceTree = "<group>"; };
 		57BA59A9B28BD1A41767C19C /* OldMansBookClubTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = OldMansBookClubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		587F68D2C35FB730E89B2089 /* SendOrder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendOrder.swift; sourceTree = "<group>"; };
 		59E0F879AC20F63014F28CB5 /* BookDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailView.swift; sourceTree = "<group>"; };
 		59E68E7D40C53AC04911DB03 /* SharePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePlan.swift; sourceTree = "<group>"; };
 		5B2380AEE35AAC8B7ACC10D3 /* AddBookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddBookView.swift; sourceTree = "<group>"; };
@@ -187,6 +190,7 @@
 		6DB5467593838CAFB2324BC7 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		6F8565B17BB0071A8D450251 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		709A4DBF49CF32A164D28746 /* CarPlaySceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CarPlaySceneDelegate.swift; sourceTree = "<group>"; };
+		7467093FC538932DE73D9583 /* SendOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendOrderTests.swift; sourceTree = "<group>"; };
 		785A72030A13869F8B069614 /* BackgroundUploadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundUploadService.swift; sourceTree = "<group>"; };
 		7A39EDBB008EDDF420B181A6 /* ServerEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEnvironment.swift; sourceTree = "<group>"; };
 		7A96910B3A00CA3ADB2FAE43 /* EULAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EULAView.swift; sourceTree = "<group>"; };
@@ -302,6 +306,7 @@
 				F20856D8F1ADFB8460B25274 /* NetworkReachability.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */,
+				587F68D2C35FB730E89B2089 /* SendOrder.swift */,
 				9E70DFCEC2883172B2091C7E /* SendReconciler.swift */,
 				7A39EDBB008EDDF420B181A6 /* ServerEnvironment.swift */,
 				DD283E8A3FF4EB01FB323EFA /* TextSendQueue.swift */,
@@ -425,6 +430,7 @@
 				0FD3B5790CD36AB0A956D837 /* EmojiSkinToneTests.swift */,
 				0FD1A38295A510B628498DAA /* Fixtures.swift */,
 				81AE905B2D02E166DF203676 /* HeardStoreTests.swift */,
+				7467093FC538932DE73D9583 /* SendOrderTests.swift */,
 				17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */,
 				06500729FE6E02A980E8F502 /* ServerEnvironmentTests.swift */,
 				D016EBEB1A732CB33BE2F1B7 /* SharePlanTests.swift */,
@@ -704,6 +710,7 @@
 				DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */,
 				062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
+				C1D5F7E9ADB143641A4C8A39 /* SendOrder.swift in Sources */,
 				9B5616C5F64A844602390C55 /* SendReconciler.swift in Sources */,
 				9E206FCEBF6C0A9A52AD2378 /* ServerEnvironment.swift in Sources */,
 				C1446459207EFE368581046D /* SettingsView.swift in Sources */,
@@ -726,6 +733,7 @@
 				73F7600E4458D3DB1A60896D /* EmojiSkinToneTests.swift in Sources */,
 				5226C060B27C3D605B12B74A /* Fixtures.swift in Sources */,
 				094930F4028DC4B717DAAF64 /* HeardStoreTests.swift in Sources */,
+				F8C95C0F653B2A7C20EE3A3D /* SendOrderTests.swift in Sources */,
 				1DD038AAF9DE70CA1DBB6C96 /* SendReconcilerTests.swift in Sources */,
 				08AC8EDA4FA34B756AF74DF8 /* ServerEnvironmentTests.swift in Sources */,
 				EF27EC1E5EEFE888D298AC20 /* SharePlanTests.swift in Sources */,
