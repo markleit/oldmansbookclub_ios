@@ -36,8 +36,9 @@ struct AdminView: View {
             // navigation bar ↔ scroll view) while the app was backgrounding. This screen was the
             // odd one out: a large title over a VStack whose List sat BELOW a segmented Picker
             // (and, on Members, a club Picker + Divider), so the bar couldn't treat the list as
-            // its scroll view. Now the segmented control lives in the bar, the title is inline,
-            // and each list is the direct content under the bar — the standard arrangement.
+            // its scroll view. Every tab is now a List that is the direct content under the bar,
+            // with the segmented control as its first row — the same arrangement as Profile's
+            // Form (avatar row inside it), so the large title matches Library and Profile.
             Group {
                 if showAdminTabs && selectedTab == 1 {
                     requestsView
@@ -48,7 +49,6 @@ struct AdminView: View {
                 }
             }
             .navigationTitle(navigationTitle)
-            .navigationBarTitleDisplayMode(.inline)
             .onChange(of: selectedTab) { tab in
                 Breadcrumbs.record("admin \(["members", "requests", "reports"][min(max(tab, 0), 2)])")
             }
@@ -62,17 +62,6 @@ struct AdminView: View {
             }
             .toolbar {
                 if showAdminTabs {
-                    ToolbarItem(placement: .principal) {
-                        Picker("Section", selection: $selectedTab) {
-                            Text("Members").tag(0)
-                            Text("Requests").tag(1)
-                            if isGlobalAdmin {
-                                Text("Reports").tag(2)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
-                    }
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button { showFeedback = true } label: {
                             Image(systemName: "exclamationmark.bubble")
@@ -109,23 +98,57 @@ struct AdminView: View {
         }
     }
 
+    // MARK: - Shared rows
+
+    // First row of every tab's List (see the note in `body`). Drawn on the list background with
+    // no separator, so it reads as a control under the title rather than as a list item.
+    @ViewBuilder
+    private var sectionPickerRow: some View {
+        if showAdminTabs {
+            Picker("Section", selection: $selectedTab) {
+                Text("Members").tag(0)
+                Text("Requests").tag(1)
+                if isGlobalAdmin {
+                    Text("Reports").tag(2)
+                }
+            }
+            .pickerStyle(.segmented)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    private var loadingRow: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 48)
+            .listRowSeparator(.hidden)
+    }
+
+    private func emptyRow(_ symbol: String, _ text: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 40))
+                .foregroundColor(.secondary)
+            Text(text)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 48)
+        .listRowSeparator(.hidden)
+    }
+
     // MARK: - Requests
 
     private var requestsView: some View {
-        Group {
+        List {
+            sectionPickerRow
             if isLoading && joinRequests.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                loadingRow
             } else if joinRequests.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "checkmark.seal")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("No pending requests")
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyRow("checkmark.seal", "No pending requests")
             } else {
-                List(joinRequests) { request in
+                ForEach(joinRequests) { request in
                     HStack(spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(request.displayName).font(.headline)
@@ -159,12 +182,14 @@ struct AdminView: View {
                 }
             }
         }
+        .listStyle(.plain)
     }
 
     // MARK: - Members
 
     private var membersView: some View {
         List {
+            sectionPickerRow
             if isGlobalAdmin || myClubs.count > 1 {
                 Section {
                     Picker("Club", selection: $selectedClubId) {
@@ -249,20 +274,14 @@ struct AdminView: View {
     // MARK: - Reports
 
     private var reportsView: some View {
-        Group {
+        List {
+            sectionPickerRow
             if isLoading && reports.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                loadingRow
             } else if reports.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "flag.slash")
-                        .font(.system(size: 40))
-                        .foregroundColor(.secondary)
-                    Text("No reports")
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyRow("flag.slash", "No reports")
             } else {
-                List(reports) { report in
+                ForEach(reports) { report in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(report.senderName).font(.headline)
@@ -302,6 +321,7 @@ struct AdminView: View {
                 }
             }
         }
+        .listStyle(.plain)
     }
 
     // MARK: - Data
