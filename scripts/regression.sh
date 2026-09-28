@@ -155,6 +155,8 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <only-tes
     # REAL app or test regression fails the same assertion both times and this changes nothing
     # about that — retrying twice a test that is actually broken just makes it fail twice, loudly.
     local attempt status
+    local xcodebuild_log
+    xcodebuild_log=$(mktemp -t ombc-xcodebuild)
     for attempt in 1 2; do
         set +e
         set -o pipefail
@@ -163,8 +165,11 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <only-tes
             -scheme OldMansBookClub \
             -destination "$destination" \
             "${args[@]}" \
-            | tail -40
+            | tee "$xcodebuild_log" | tail -40
         status=$?
+        # tail -40 alone dropped the assertion messages, so a CI failure named the test but
+        # not why. Surface every failure line from the full log.
+        grep -E "error: -\[|: error: " "$xcodebuild_log" | head -20 || true
         set +o pipefail
         set -e
         if [[ $status -eq 0 ]]; then break; fi

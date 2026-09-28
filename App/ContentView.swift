@@ -32,6 +32,8 @@ struct ContentView: View {
         }
         .onChange(of: selectedTab) { tab in
             if tab == 1 { profilePath = NavigationPath() }
+            let names = ["Library", "Profile", "Admin"]
+            Breadcrumbs.record("tab \(names.indices.contains(tab) ? names[tab] : String(tab))")
         }
         .onChange(of: deepLink.pendingBookId) { bookId in
             if bookId != nil { selectedTab = 0 }

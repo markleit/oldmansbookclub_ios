@@ -540,6 +540,7 @@ final class APIClient {
         let osVersion: String?
         let deviceModel: String?
         let payloadJson: String?
+        let breadcrumbs: String?
     }
 
     func reportDiagnostic(_ report: DiagnosticReport) async throws {
