@@ -170,7 +170,7 @@ final class HermeticUITests: XCTestCase {
         app.buttons["🍔"].firstMatch.tap()
         XCTAssertTrue(app.buttons["🍕"].waitForExistence(timeout: 5), "switching category did not change the grid")
         app.buttons["Cancel"].firstMatch.tap()
-        XCTAssertFalse(app.buttons["🍕"].waitForExistence(timeout: 3), "the picker never dismissed")
+        XCTAssertTrue(waitForDisappearance(app.buttons["🍕"]), "the picker never dismissed")
     }
 
     // #173 — iOS-keyboard model: a quick tap sends the emoji (the hold gesture must not eat taps);
@@ -198,7 +198,7 @@ final class HermeticUITests: XCTestCase {
         // A quick tap on a tone-able emoji still sends it and closes the picker.
         openPeopleGrid()
         app.buttons["emoji.👋"].tap()
-        XCTAssertFalse(cancel.waitForExistence(timeout: 3), "a quick tap on a tone-able emoji did not pick it")
+        XCTAssertTrue(waitForDisappearance(cancel), "a quick tap on a tone-able emoji did not pick it")
 
         // Hold → variants → pick dark.
         openPeopleGrid()
@@ -207,7 +207,7 @@ final class HermeticUITests: XCTestCase {
         let dark = app.buttons["skinTone.5"]
         XCTAssertTrue(dark.waitForExistence(timeout: 5), "press-and-hold did not open the tone variants")
         dark.tap()
-        XCTAssertFalse(cancel.waitForExistence(timeout: 3), "choosing a tone did not pick the emoji")
+        XCTAssertTrue(waitForDisappearance(cancel), "choosing a tone did not pick the emoji")
 
         // Remembered for 👍 only: quick bar and grid show it; ✋ is untouched.
         message.press(forDuration: 0.6)
@@ -232,6 +232,14 @@ final class HermeticUITests: XCTestCase {
         app.buttons["emoji.👍"].press(forDuration: 0.8)
         XCTAssertTrue(app.buttons["skinTone.0"].waitForExistence(timeout: 5))
         app.buttons["skinTone.0"].tap()
+    }
+
+    /// Waits for an element to GO AWAY. `XCTAssertFalse(x.waitForExistence(...))` is not this: it
+    /// returns true the instant the element is still on screen — e.g. a sheet mid-dismiss on a slow
+    /// CI runner — so it failed a correct dismissal in CI while passing locally.
+    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
+        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
     }
 
     // ---- control API (talks to the host-level stub, not an in-process object) ----------------
