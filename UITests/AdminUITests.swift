@@ -65,9 +65,10 @@ final class AdminUITests: XCTestCase {
         app.buttons["Members"].tap()
     }
 
-    /// approveRequest()/declineRequest() only mutate the local joinRequests array — neither
-    /// appends the newly approved member to the already-fetched members array, so checking
-    /// Members afterward needs its own refresh. Swipes on the whole app window rather than
+    /// approveRequest() reloads Members itself now, so a just-approved member appears without
+    /// this; it remains as a fallback (and for declineRequest, which doesn't reload). NOTE: on the
+    /// iOS 26.5/27 simulators XCUITest's swipeDown() doesn't reliably register as a pull-to-refresh
+    /// (confirmed via app logging: load() never re-ran), so don't make a test depend on it. Swipes on the whole app window rather than
     /// hunting for a specific List element type (`.tables`, `.collectionViews`, ...) — which one
     /// SwiftUI's List actually renders as is a version/style-dependent implementation detail, not
     /// something worth pinning a test to; a plain window-level swipe lands on whatever scrollable
@@ -84,10 +85,22 @@ final class AdminUITests: XCTestCase {
     private func waitForTextAfterRefresh(_ text: String, attempts: Int = 3, timeout: TimeInterval = 8) -> Bool {
         let element = app.staticTexts[text]
         for _ in 0..<attempts {
-            if element.waitForExistence(timeout: timeout) { return true }
+            if element.waitForExistence(timeout: timeout) || scrollToReveal(element) { return true }
             pullToRefresh()
         }
-        return element.waitForExistence(timeout: timeout)
+        return element.waitForExistence(timeout: timeout) || scrollToReveal(element)
+    }
+
+    /// Members is sorted by name and the dev database isn't reset between runs, so the list grows
+    /// run over run and a new member can land below the fold — where SwiftUI hasn't created the
+    /// row yet, so no query finds it. Scroll down looking for it; leave it on screen for the
+    /// swipe actions that follow.
+    private func scrollToReveal(_ element: XCUIElement, maxSwipes: Int = 8) -> Bool {
+        for _ in 0..<maxSwipes {
+            if element.exists && element.isHittable { return true }
+            app.swipeUp()
+        }
+        return element.exists && element.isHittable
     }
 
     // MARK: - Seeding a second member
@@ -117,6 +130,22 @@ final class AdminUITests: XCTestCase {
         return succeeded
     }
 
+    /// The Requests row for `name`. Approve/Decline must be tapped in THIS row: the dev database
+    /// isn't reset between runs, so earlier runs' pending requests can be on screen too, and a bare
+    /// `.firstMatch` then acts on someone else's request — the named row stays put and the test
+    /// fails for a reason that has nothing to do with the app.
+    private func requestRow(_ name: String) -> XCUIElement {
+        app.cells.containing(NSPredicate(format: "label == %@", name)).firstMatch
+    }
+
+    /// Waits for an element to GO AWAY. `XCTAssertFalse(x.waitForExistence(...))` is not this: it
+    /// returns true the instant the element is still on screen (a row mid-removal animation), so it
+    /// fails a correct removal on a slow run.
+    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 8) -> Bool {
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
+        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
+    }
+
     private func uniqueName(_ label: String) -> String {
         "\(label) \(Int(Date().timeIntervalSince1970 * 1000) % 1_000_000)"
     }
@@ -131,8 +160,8 @@ final class AdminUITests: XCTestCase {
         openRequestsTab()
         let row = app.staticTexts[name]
         XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded join request '\(name)' never appeared in Requests")
-        app.buttons["approveJoinRequestButton"].firstMatch.tap()
-        XCTAssertFalse(row.waitForExistence(timeout: 5), "approved request still showing in Requests")
+        requestRow(name).buttons["approveJoinRequestButton"].tap()
+        XCTAssertTrue(waitForDisappearance(row), "approved request still showing in Requests")
 
         openMembersTab()
         XCTAssertTrue(waitForTextAfterRefresh(name), "approved member never appeared in Members")
@@ -156,15 +185,20 @@ final class AdminUITests: XCTestCase {
         openRequestsTab()
         let row = app.staticTexts[name]
         XCTAssertTrue(row.waitForExistence(timeout: 10), "seeded join request never appeared")
-        app.buttons["declineJoinRequestButton"].firstMatch.tap()
-        XCTAssertFalse(row.waitForExistence(timeout: 5), "declined request still showing in Requests")
+        requestRow(name).buttons["declineJoinRequestButton"].tap()
+        XCTAssertTrue(waitForDisappearance(row), "declined request still showing in Requests")
 
         // Without this refresh, `members` is still the snapshot fetched at launch — BEFORE this
         // request even existed — so the assertion below would pass vacuously even if Decline
         // incorrectly created a membership server-side. See feedback_false_passing_uitests.
-        openMembersTab()
-        pullToRefresh()
-        XCTAssertFalse(app.staticTexts[name].waitForExistence(timeout: 3), "declined user was added as a member anyway")
+        // Relaunch rather than pull-to-refresh (which XCUITest can't reliably trigger here): a
+        // fresh launch is a guaranteed server reload. Wait for a known member first so the
+        // absence check below can't pass merely because the list hadn't loaded yet.
+        app.terminate()
+        launchAndLogin()
+        openAdminTab()
+        XCTAssertTrue(app.staticTexts["Mark"].waitForExistence(timeout: 10), "Members list never loaded")
+        XCTAssertFalse(scrollToReveal(app.staticTexts[name]), "declined user was added as a member anyway")
     }
 
     // MARK: - Member management
@@ -203,16 +237,25 @@ final class AdminUITests: XCTestCase {
         let row = app.staticTexts[name]
         row.swipeLeft()
         app.buttons["kickMemberButton"].tap()
-        XCTAssertFalse(row.waitForExistence(timeout: 5), "kicked member still shows in Members")
+        XCTAssertTrue(waitForDisappearance(row), "kicked member still shows in Members")
     }
 
-    func testDeletingAMemberRemovesThemFromTheList() throws {
-        // #153: AdminController.DeleteUser calls db.Database.BeginTransactionAsync() on a
-        // DbContext registered with EnableRetryOnFailure, which EF rejects at runtime for EVERY
-        // caller ("does not support user-initiated transactions") — not just the heard/reacted
-        // subset #133 describes. Confirmed directly here: the delete request 500s, the Swift
-        // catch sets errorMessage and never removes the row, so the row stays. Same skip
-        // convention as Tests/BookClubApi.Tests/Api/AdminTests.cs — unskip once #153 is fixed.
-        throw XCTSkip("#153: DeleteUser 500s for every user (execution strategy vs. transaction) — not fixed yet.")
+    func testDeletingAMemberRemovesThemFromTheList() {
+        // Was a bare XCTSkip("#153 …") with no body; #153 (DeleteUser 500 for every caller) was
+        // fixed and deployed in 1.9.5, so this now actually exercises the delete.
+        let name = uniqueName("UITest Delete")
+        seedAndApproveMember(name: name)
+
+        let row = app.staticTexts[name]
+        row.swipeLeft()
+        let delete = app.buttons["deleteMemberButton"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), "delete action never appeared")
+        delete.tap()
+        XCTAssertTrue(waitForDisappearance(row), "deleted member still shows in Members")
+
+        // And it stays gone after a server round-trip — a failed delete (e.g. a 500) leaves the
+        // row in place, and a local-only removal would bring it back here.
+        pullToRefresh()
+        XCTAssertFalse(app.staticTexts[name].waitForExistence(timeout: 3), "deleted member came back after refresh")
     }
 }
