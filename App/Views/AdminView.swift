@@ -375,6 +375,9 @@ struct AdminView: View {
         do {
             try await APIClient.shared.approveJoinRequest(id: id)
             joinRequests.removeAll { $0.id == id }
+            // The approved person is now a member, but `members` is the list fetched when the tab
+            // loaded — without this they only appeared after a pull-to-refresh or relaunch.
+            await loadMembers()
         } catch {
             errorMessage = "Failed to approve request."
         }
