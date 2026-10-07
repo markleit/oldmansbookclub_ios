@@ -71,6 +71,8 @@
     <string>Used for sending voice messages.</string>
     <key>NSCameraUsageDescription</key>
     <string>Used for taking photos to share in discussions.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Lets you save photos and videos from book discussions to your library.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Used for sharing photos in discussions.</string>
     <key>UILaunchScreen</key>

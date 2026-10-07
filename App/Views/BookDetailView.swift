@@ -372,18 +372,14 @@ struct BookDetailView: View {
                 onUpdated?(updated)
             }
         }
-        .overlay(alignment: .top) {
-            if viewModel.messageSaved {
-                Label("Message saved", systemImage: "bookmark.fill")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Color.accentColor, in: Capsule())
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .animation(.spring(duration: 0.3), value: viewModel.messageSaved)
+        .toast($viewModel.toast)
+        .alert("Can't Save to Photos", isPresented: $viewModel.photosAccessDenied) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Allow Old Man's Book Club to add photos in Settings.")
         }
         .onAppear { Breadcrumbs.record("chat open") }
         .task {
@@ -689,7 +685,15 @@ struct MessageRow: View {
                     viewModel.consumeHeard([message.id])
                 }
             }
-            menuRow("Save", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
+            // #193 — like Messages' "Save": photos/videos go to the Photos library. The Saved
+            // Messages action is "Bookmark" so the two never read the same.
+            if message.type == .photo || message.type == .video,
+               let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
+                menuRow("Save to Photos", "square.and.arrow.down") {
+                    Task { await viewModel.saveToPhotos(message.type == .photo ? .photo : .video, from: url) }
+                }
+            }
+            menuRow("Bookmark", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
             if isMe {
                 menuRow("Delete", "trash", destructive: true) { Task { await viewModel.deleteMessage(id: message.id) } }
             } else {
@@ -1485,6 +1489,8 @@ struct PhotoMessageBubble: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Photo")
+            .accessibilityIdentifier("photoMessage")
             .contentShape(RoundedRectangle(cornerRadius: 16))
             .disabled(isSending || isFailed)
             if isSending {
@@ -1554,45 +1560,6 @@ struct SendStateBadge: View {
                     .background(Color.black.opacity(0.3))
                     .clipShape(Circle())
             }
-        }
-    }
-}
-
-struct FullScreenVideoView: View {
-    let url: URL
-    @Environment(\.dismiss) private var dismiss
-    @State private var player: AVPlayer?
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.ignoresSafeArea()
-            if let player {
-                VideoPlayer(player: player)
-                    .ignoresSafeArea()
-            }
-            Button {
-                player?.pause()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white, .black.opacity(0.5))
-                    .padding()
-            }
-        }
-        .onAppear {
-            // Finalize-and-send any in-progress recording before claiming AVAudioSession for
-            // playback — the two silently fight over the shared session otherwise (#160).
-            AudioRecorder.forceStopForPlayback?()
-            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
-            try? AVAudioSession.sharedInstance().setActive(true)
-            let p = AVPlayer(url: url)
-            player = p
-            p.play()
-        }
-        .onDisappear {
-            player?.pause()
-            player = nil
         }
     }
 }
@@ -1713,58 +1680,6 @@ extension View {
             self.presentationCompactAdaptation(.popover)
         } else {
             self
-        }
-    }
-}
-
-struct FullScreenImageView: View {
-    let url: URL
-    @Environment(\.dismiss) private var dismiss
-    @State private var scale: CGFloat = 1.0
-    @State private var dragOffset: CGSize = .zero
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            AsyncImage(url: url) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .scaleEffect(scale)
-                        .offset(dragOffset)
-                        .gesture(
-                            MagnificationGesture()
-                                .onChanged { scale = $0 }
-                                .onEnded { _ in withAnimation { scale = max(1.0, scale) } }
-                        )
-                        .gesture(
-                            DragGesture()
-                                .onChanged { if scale <= 1.0 { dragOffset = $0.translation } }
-                                .onEnded { value in
-                                    if scale <= 1.0 && abs(value.translation.height) > 80 {
-                                        dismiss()
-                                    } else {
-                                        withAnimation { dragOffset = .zero }
-                                    }
-                                }
-                        )
-                } else if phase.error != nil {
-                    Image(systemName: "photo")
-                        .font(.system(size: 50))
-                        .foregroundColor(.secondary)
-                } else {
-                    ProgressView().tint(.white)
-                }
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            Button { dismiss() } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white, Color.black.opacity(0.5))
-                    .padding()
-            }
         }
     }
 }

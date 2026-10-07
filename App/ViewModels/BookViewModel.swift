@@ -44,7 +44,8 @@ final class BookViewModel: ObservableObject {
     @Published var showSavedMessages = false
     @Published var savedMessages: [SavedMessage] = []
     @Published var isLoadingSaved = false
-    @Published var messageSaved = false
+    @Published var toast: Toast?
+    @Published var photosAccessDenied = false
     @Published var reads: [APIClient.ChatReadDto] = [] {
         didSet { recomputeReadFrontiers() }
     }
@@ -1325,11 +1326,21 @@ final class BookViewModel: ObservableObject {
     func saveMessage(id: UUID) async {
         do {
             try await APIClient.shared.saveMessage(messageId: id)
-            messageSaved = true
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            messageSaved = false
+            toast = Toast(text: "Message bookmarked", systemImage: "bookmark.fill")
         } catch {
             errorMessage = "Failed to save message."
+        }
+    }
+
+    // #193 — long-press "Save to Photos" on a photo/video message.
+    func saveToPhotos(_ kind: PhotoLibrarySaver.Kind, from url: URL) async {
+        do {
+            try await PhotoLibrarySaver.save(kind, from: url)
+            toast = Toast(text: "Saved to Photos", systemImage: "checkmark.circle.fill")
+        } catch PhotoLibrarySaver.SaveError.accessDenied {
+            photosAccessDenied = true
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
