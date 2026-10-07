@@ -1600,10 +1600,10 @@ struct BunnySpeedIcon: View {
     }
 }
 
-// Vertical 1–4× speed slider shown in a popover anchored to the bunny (hare = faster on top,
-// tortoise = slower at the bottom). Free-flowing (#61) — lands on any speed, with a light
-// haptic detent only at whole multipliers. Applies the rate live (persisted via
-// AudioPlayerService). Custom track for reliable vertical drag.
+// Vertical 1–4× speed slider shown in a popover anchored to the bunny, with + (faster, top) and
+// − (slower, bottom) buttons. The slider is free-flowing (#61) for getting close fast; the
+// buttons step a quarter at a time for dialing in a particular speaker's speed (#190). Applies
+// the rate live (persisted via AudioPlayerService). Custom track for reliable vertical drag.
 struct VerticalSpeedSlider: View {
     let rate: Float
     let onChange: (Float) -> Void
@@ -1621,10 +1621,11 @@ struct VerticalSpeedSlider: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "hare.fill").font(.system(size: 13))
+            stepButton("plus", label: "Faster", id: "speedUp", to: SpeedStep.up(value))
             Text(BunnySpeedIcon.label(Float(value)))
                 .font(.system(size: 13, weight: .semibold))
                 .monospacedDigit()
+                .accessibilityIdentifier("speedValue")
             SpeedTrack(value: $value) { newValue in
                 // Haptic only when crossing a whole multiplier, so a free-flowing drag
                 // still gets a light tactile detent at 1×/2×/3×/4× without buzzing continuously.
@@ -1633,12 +1634,50 @@ struct VerticalSpeedSlider: View {
                 onChange(Float(newValue))
             }
             .frame(width: 40, height: 150)
-            Image(systemName: "tortoise.fill").font(.system(size: 13))
+            stepButton("minus", label: "Slower", id: "speedDown", to: SpeedStep.down(value))
         }
         .foregroundColor(.secondary)
         .padding(.vertical, 18)
         .padding(.horizontal, 16)
         .onAppear { haptic.prepare() }
+    }
+
+    // Round + / − buttons; dimmed (and inert) at the 1× / 4× ends.
+    private func stepButton(_ symbol: String, label: String, id: String, to target: Double) -> some View {
+        Button {
+            guard target != value else { return }
+            value = target
+            lastDetent = Int(target)
+            haptic.selectionChanged()
+            onChange(Float(target))
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .bold))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color.secondary.opacity(0.15)))
+                .foregroundColor(.accentColor)
+        }
+        .buttonStyle(.plain)
+        .disabled(target == value)
+        .opacity(target == value ? 0.35 : 1)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+}
+
+// #190 — the speed buttons move a quarter at a time and land on the quarter grid: from a slider
+// value between quarters (2.3×) the first tap goes to the next quarter in that direction
+// (+ → 2.5×, − → 2.25×). Clamped to 1–4×.
+enum SpeedStep {
+    static let step = 0.25
+    static let range = 1.0...4.0
+
+    static func up(_ value: Double) -> Double {
+        min(range.upperBound, (floor(value / step + 1e-6) + 1) * step)
+    }
+
+    static func down(_ value: Double) -> Double {
+        max(range.lowerBound, (ceil(value / step - 1e-6) - 1) * step)
     }
 }
 

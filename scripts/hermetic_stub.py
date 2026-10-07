@@ -76,7 +76,17 @@ def _test_png(width=2400, height=1600):
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
 
 
-_MEDIA = {"photo.png": ("image/png", _test_png())}
+def _fixture(name):
+    import os
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", name), "rb") as f:
+        return f.read()
+
+
+_MEDIA = {"photo.png": ("image/png", _test_png()),
+          # 30s of silent AAC (afconvert), long enough to still be playing while a UI test
+          # drives the speed controls (#190) — they only show during playback. Must be real
+          # AAC: the app caches voice audio as .m4a, so a WAV would never play.
+          "voice.m4a": ("audio/mp4", _fixture("voice-30s-silent.m4a"))}
 
 
 def _message(item, index):
@@ -87,11 +97,13 @@ def _message(item, index):
         body = item.get("body")
         if kind == "Photo":
             media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
+        elif kind == "Voice":
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/voice.m4a"
     return {
         "id": f"88888888-8888-8888-8888-{index:012d}", "club_id": CLUB_ID,
         "sender_id": "99999999-9999-9999-9999-999999999999", "sender_name": "Dixie",
         "sender_avatar_url": None, "type": kind, "body": body, "media_url": media_url,
-        "duration_seconds": None, "sent_at": f"2026-09-01T12:00:0{index % 10}.000Z",
+        "duration_seconds": 30 if kind == "Voice" else None, "sent_at": f"2026-09-01T12:00:0{index % 10}.000Z",
         "is_deleted": False, "is_forwarded": False, "client_id": None, "parent_message_id": None,
         "parent_sender_name": None, "parent_preview": None, "parent_sent_at": None,
         "transcript": None, "reactions": None,
@@ -106,11 +118,13 @@ def _saved(item, index):
         body = item.get("body")
         if kind == "Photo":
             media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
+        elif kind == "Voice":
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/voice.m4a"
     return {
         "saved_id": f"aaaaaaaa-aaaa-aaaa-aaaa-{index:012d}",
         "message_id": f"bbbbbbbb-bbbb-bbbb-bbbb-{index:012d}",
         "sender_name": "Dixie", "type": kind, "body": body, "media_url": media_url,
-        "duration_seconds": None, "sent_at": "2026-09-01T12:00:00.000Z",
+        "duration_seconds": 30 if kind == "Voice" else None, "sent_at": "2026-09-01T12:00:00.000Z",
         "saved_at": "2026-09-02T12:00:00.000Z", "is_deleted": False,
     }
 
@@ -169,16 +183,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         route = self.path.split("?")[0]
 
         if route.startswith("/_stub/media/"):
-            print(f"media GET {route}", flush=True)
+            print(f"media GET {route} {self.headers.get('Range', '')}", flush=True)
             media = _MEDIA.get(route.rsplit("/", 1)[-1])
             if media is None:
                 return self._send_not_found()
             content_type, data = media
-            self.send_response(200)
+            # AVPlayer streams over HTTP with byte-range requests (Azure Blob honours them) and
+            # won't play from a server that ignores Range, so answer "bytes=a-b" with a 206.
+            status, start, end = 200, 0, len(data) - 1
+            header = self.headers.get("Range", "")
+            if header.startswith("bytes="):
+                first, _, last = header[len("bytes="):].partition("-")
+                start = int(first) if first else 0
+                end = min(int(last), len(data) - 1) if last else len(data) - 1
+                status = 206
+            body = data[start:end + 1]
+            self.send_response(status)
             self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(len(body)))
+            if status == 206:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
             self.end_headers()
-            self.wfile.write(data)
+            self.wfile.write(body)
             return
 
         if route == "/_stub/requests":

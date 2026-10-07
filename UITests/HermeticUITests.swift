@@ -431,6 +431,46 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "forwarding should leave you in Saved Messages")
     }
 
+    // ---- playback speed −/+ (#190) --------------------------------------------------------------
+
+    /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved
+    /// Messages, whose voice row shows the speed control without playing: the chat bubble's only
+    /// appears DURING playback, and a CI simulator may stop playback (no audio device) and close
+    /// the popover mid-test. Same VerticalSpeedSlider either way.
+    func testSpeedButtonsStepAQuarterAndStopAtTheEnds() throws {
+        try setSaved([["type": "Voice"]])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let bunny = app.buttons["Playback speed"].firstMatch
+        XCTAssertTrue(bunny.waitForExistence(timeout: 10), "saved voice row has no speed control")
+        bunny.tap()
+
+        let value = app.staticTexts["speedValue"]
+        let up = app.buttons["speedUp"], down = app.buttons["speedDown"]
+        XCTAssertTrue(value.waitForExistence(timeout: 5), "speed popover never opened")
+
+        // Start from a known place: down to the 1× floor (persisted rate may be anything).
+        for _ in 0..<12 where down.isEnabled { down.tap() }
+        XCTAssertEqual(value.label, "1×")
+        XCTAssertFalse(down.isEnabled, "− should be disabled at 1×")
+
+        up.tap()
+        XCTAssertEqual(value.label, "1.25×")
+        up.tap()
+        XCTAssertEqual(value.label, "1.5×")
+        down.tap()
+        XCTAssertEqual(value.label, "1.25×")
+
+        for _ in 0..<12 where up.isEnabled { up.tap() }
+        XCTAssertEqual(value.label, "4×")
+        XCTAssertFalse(up.isEnabled, "+ should be disabled at 4×")
+
+        // Leave the persisted rate at 1× for whatever runs next.
+        for _ in 0..<12 where down.isEnabled { down.tap() }
+    }
+
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
