@@ -6,48 +6,58 @@ import VisionKit
 
 // MARK: - Full-screen photo
 
-// Full-screen photo viewer, modeled on Messages (#191, #193):
+// Full-screen photo viewer, modeled on Messages (#191, #193, #201):
 // - pinch zooms around the fingers, and a zoomed photo pans to every edge (the old SwiftUI
 //   version only allowed dragging at 1×, so the sides of a zoomed photo were unreachable);
 // - double-tap zooms in on that spot / back out; single tap hides or shows the controls;
+// - swipe left/right pages through the chat's photos ("3 of 12") — at 1× only; zoomed, the
+//   same swipe pans the photo, so zooming in never flips to another photo by accident;
 // - pull down to close, but only when not zoomed, so it never fights panning;
-// - Share opens the system sheet (Save Image, Copy, AirDrop…) on the ORIGINAL file;
+// - Share opens the system sheet (Save Image, Copy, AirDrop…) on the current ORIGINAL file;
 // - press-and-hold on the photo is Live Text / subject lift where the device supports it.
 struct FullScreenImageView: View {
-    let url: URL
+    let urls: [URL]
     @Environment(\.dismiss) private var dismiss
-    @State private var image: UIImage?
-    @State private var loadFailed = false
+    @State private var index: Int
     @State private var chromeHidden = false
     @State private var preparingShare = false
     @State private var pullProgress: CGFloat = 0   // 0…1 while dragging the photo down to close
+
+    init(url: URL) {
+        self.init(urls: [url], startIndex: 0)
+    }
+
+    init(urls: [URL], startIndex: Int) {
+        self.urls = urls
+        _index = State(initialValue: min(max(0, startIndex), max(0, urls.count - 1)))
+    }
 
     var body: some View {
         ZStack {
             // Fades as the photo is pulled down, revealing the chat underneath (Messages-style).
             Color.black.opacity(1 - pullProgress).ignoresSafeArea()
-            if let image {
-                ZoomableImageView(
-                    image: image,
-                    chromeHidden: chromeHidden,
-                    onSingleTap: { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } },
-                    onPullProgress: { pullProgress = $0 },
-                    onPullDismiss: { dismiss() }
-                )
-                .ignoresSafeArea()
-            } else if loadFailed {
-                Image(systemName: "photo")
-                    .font(.system(size: 50))
-                    .foregroundColor(.secondary)
-            } else {
-                ProgressView().tint(.white)
+            TabView(selection: $index) {
+                ForEach(urls.indices, id: \.self) { i in
+                    PhotoPage(
+                        url: urls[i],
+                        isCurrent: i == index,
+                        chromeHidden: chromeHidden,
+                        onSingleTap: { withAnimation(.easeInOut(duration: 0.2)) { chromeHidden.toggle() } },
+                        onPullProgress: { pullProgress = $0 },
+                        onPullDismiss: { dismiss() }
+                    )
+                    .tag(i)
+                }
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
         }
         .overlay(alignment: .top) {
             if !chromeHidden {
                 ViewerTopBar(
-                    shareEnabled: image != nil,
+                    shareEnabled: !urls.isEmpty,
                     preparingShare: preparingShare,
+                    counter: urls.count > 1 ? "\(index + 1) of \(urls.count)" : nil,
                     onShare: share,
                     onClose: { dismiss() }
                 )
@@ -57,7 +67,60 @@ struct FullScreenImageView: View {
         }
         .presentationBackgroundClear()
         .statusBarHidden(chromeHidden)
-        .task { await load() }
+    }
+
+    // Share the original file so "Save Image" keeps full quality; fall back to the cached
+    // decoded image if the download fails (e.g. offline).
+    private func share() {
+        guard !preparingShare, urls.indices.contains(index) else { return }
+        let url = urls[index]
+        preparingShare = true
+        Task {
+            var item: Any?
+            if let file = try? await MediaDownloader.localFile(for: url, defaultExtension: "jpg") {
+                item = file
+            } else if let cached = await ImageCache.shared.get(url) {
+                item = cached
+            }
+            preparingShare = false
+            if let item { ShareSheet.present([item]) }
+        }
+    }
+}
+
+// One photo in the pager: loads (cache first) and hosts the zooming scroll view.
+private struct PhotoPage: View {
+    let url: URL
+    let isCurrent: Bool
+    let chromeHidden: Bool
+    let onSingleTap: () -> Void
+    let onPullProgress: (CGFloat) -> Void
+    let onPullDismiss: () -> Void
+    @State private var image: UIImage?
+    @State private var loadFailed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                ZoomableImageView(
+                    image: image,
+                    isCurrent: isCurrent,
+                    chromeHidden: chromeHidden,
+                    onSingleTap: onSingleTap,
+                    onPullProgress: onPullProgress,
+                    onPullDismiss: onPullDismiss
+                )
+            } else if loadFailed {
+                Image(systemName: "photo")
+                    .font(.system(size: 50))
+                    .foregroundColor(.secondary)
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
+        .task(id: url) { await load() }
     }
 
     private func load() async {
@@ -78,32 +141,13 @@ struct FullScreenImageView: View {
         ImageCache.shared[url] = decoded
         image = decoded
     }
-
-    // Share the original file so "Save Image" keeps full quality; fall back to the decoded
-    // image if the download fails (e.g. offline but cached).
-    private func share() {
-        guard !preparingShare else { return }
-        preparingShare = true
-        Task {
-            let item: Any
-            if let file = try? await MediaDownloader.localFile(for: url, defaultExtension: "jpg") {
-                item = file
-            } else if let image {
-                item = image
-            } else {
-                preparingShare = false
-                return
-            }
-            preparingShare = false
-            ShareSheet.present([item])
-        }
-    }
 }
 
 // Close (top-right) and Share (top-left), white-on-translucent so they read over any photo.
 private struct ViewerTopBar: View {
     let shareEnabled: Bool
     let preparingShare: Bool
+    var counter: String? = nil   // "3 of 12" when paging through several photos
     let onShare: () -> Void
     let onClose: () -> Void
 
@@ -126,6 +170,17 @@ private struct ViewerTopBar: View {
             .accessibilityLabel("Share")
             .accessibilityIdentifier("viewerShare")
             Spacer()
+            if let counter {
+                Text(counter)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.black.opacity(0.5)))
+                    .accessibilityIdentifier("photoCounter")
+                Spacer()
+            }
             Button(action: onClose) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 30))
@@ -144,6 +199,7 @@ private struct ViewerTopBar: View {
 // photo viewer does; recreating that with SwiftUI gestures is what left #191 broken.
 struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
+    var isCurrent: Bool = true
     var chromeHidden: Bool
     var onSingleTap: () -> Void
     var onPullProgress: (CGFloat) -> Void
@@ -164,6 +220,10 @@ struct ZoomableImageView: UIViewRepresentable {
         view.onPullDismiss = onPullDismiss
         if view.imageView.image !== image { view.setImage(image) }
         view.setLiveTextButtonHidden(chromeHidden)
+        // Only the page on screen answers to "fullScreenImage" (UI tests query it), and a page
+        // swiped away goes back to 1× so it isn't still zoomed when you swipe back to it.
+        view.accessibilityIdentifier = isCurrent ? "fullScreenImage" : "fullScreenImageOffscreen"
+        if !isCurrent, view.zoomScale > view.minimumZoomScale { view.setZoomScale(view.minimumZoomScale, animated: false) }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
@@ -187,6 +247,7 @@ final class ZoomingImageScrollView: UIScrollView {
     var onPullProgress: (CGFloat) -> Void = { _ in }
     var onPullDismiss: () -> Void = {}
     private lazy var dismissPan = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
+    private let dismissPanDelegate = DismissPanDelegate()
     private var laidOutBounds: CGSize = .zero
     private var analysis: ImageAnalysisInteraction?
     private var analysisTask: Task<Void, Never>?
@@ -216,6 +277,10 @@ final class ZoomingImageScrollView: UIScrollView {
         let singleTap = UITapGestureRecognizer(target: self, action: #selector(handleSingleTap))
         singleTap.require(toFail: doubleTap)
         addGestureRecognizer(singleTap)
+        // One finger only: a two-finger pinch that drifts downward must stay a pinch on a real
+        // device (the simulator's synthetic pinch never drifts, so tests can't catch this).
+        dismissPan.maximumNumberOfTouches = 1
+        dismissPan.delegate = dismissPanDelegate
         addGestureRecognizer(dismissPan)
         updateGestureModes()
 
@@ -298,13 +363,26 @@ final class ZoomingImageScrollView: UIScrollView {
         let atFit = zoomScale <= minimumZoomScale + 0.01
         isScrollEnabled = !atFit
         dismissPan.isEnabled = atFit
+        // #201 — zoomed, the photo pager stands still: panning to the edge of a zoomed photo
+        // (reading the side of a list) must not flip to the next photo. Zoom out to page again.
+        pagingAncestor?.isScrollEnabled = atFit
     }
 
-    override func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
-        guard gesture === dismissPan else { return super.gestureRecognizerShouldBegin(gesture) }
-        let v = dismissPan.velocity(in: self)
-        return v.y > abs(v.x)   // downward only
+    // The photo pager's scroll view (SwiftUI's page-style TabView), if this page is inside one.
+    private var pagingAncestor: UIScrollView? {
+        var view = superview
+        while let current = view {
+            if let scroll = current as? UIScrollView, scroll.isPagingEnabled { return scroll }
+            view = current.superview
+        }
+        return nil
     }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { updateGestureModes() }
+    }
+
 
     // The photo follows the finger; past a distance or a flick, close — otherwise spring back.
     // (A translation transform on the zooming view is safe here: this only runs at 1×.)
@@ -366,6 +444,23 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+// Pull-to-close starts only on a downward drag, and tracks ALONGSIDE other gestures instead of
+// competing with them: as a plain competing pan on every page it swallowed the photo pager's
+// sideways swipe (#201), even though it then declined to begin. Its own delegate object, because
+// the scroll view is already the delegate of its pan/pinch and must keep its default behavior.
+private final class DismissPanDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gesture: UIGestureRecognizer) -> Bool {
+        guard let pan = gesture as? UIPanGestureRecognizer else { return true }
+        let v = pan.velocity(in: pan.view)
+        return v.y > abs(v.x)   // downward only
+    }
+
+    func gestureRecognizer(_ gesture: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
     }
 }
 

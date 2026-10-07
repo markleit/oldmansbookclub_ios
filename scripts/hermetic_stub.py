@@ -41,7 +41,7 @@ CURRENT_BOOK_ID = "66666666-6666-6666-6666-666666666666"
 FUTURE_BOOK_ID = "77777777-7777-7777-7777-777777777777"
 
 _lock = threading.Lock()
-_state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": []}
+_state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": [], "sent": []}
 
 
 def _user():
@@ -96,7 +96,8 @@ def _message(item, index):
         kind = item.get("type", "Text")
         body = item.get("body")
         if kind == "Photo":
-            media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
+            # Distinct URL per message (same bytes) so the viewer pages through separate photos.
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png?m={index}"
         elif kind == "Voice":
             media_url = f"http://127.0.0.1:{PORT}/_stub/media/voice.m4a"
     return {
@@ -136,8 +137,9 @@ def _echo_sent(body_bytes):
         parsed = {}
     return {
         "id": str(uuid.uuid4()), "club_id": CLUB_ID, "sender_id": USER_ID,
-        "sender_name": "Mark", "sender_avatar_url": None, "type": "Text",
-        "body": parsed.get("body", ""), "media_url": None, "duration_seconds": None,
+        "sender_name": "Mark", "sender_avatar_url": None, "type": parsed.get("type", "Text"),
+        "body": parsed.get("body", ""), "media_url": parsed.get("media_url"),
+        "duration_seconds": parsed.get("duration_seconds"),
         "sent_at": "2026-09-01T12:30:00.000Z", "is_deleted": False, "is_forwarded": False,
         "client_id": parsed.get("client_id"), "parent_message_id": None,
         "parent_sender_name": None, "parent_preview": None, "parent_sent_at": None,
@@ -208,6 +210,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if route == "/_stub/sent":
+            with _lock:
+                return self._send_json(_state["sent"])
+
         if route == "/_stub/requests":
             with _lock:
                 return self._send_json(_state["requested_paths"])
@@ -259,6 +265,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _state["saved"] = []
                 _state["refuse_sends"] = False
                 _state["requested_paths"] = []
+                _state["sent"] = []
             return self._send_json({"status": "reset"})
 
         if route == "/_stub/messages":
@@ -288,12 +295,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "access_token": "stub-access-token", "refresh_token": "stub-refresh-token",
                 "user": _user(),
             })
+        # Media send (#201): hand out an upload URL on this stub, accept the PUT, and serve the
+        # "uploaded" photo back from /_stub/media so the sent bubble renders.
+        if route == "/media/upload-url":
+            blob = uuid.uuid4().hex
+            return self._send_json({
+                "upload_url": f"http://127.0.0.1:{PORT}/_stub/upload/{blob}.jpg",
+                "media_url": f"http://127.0.0.1:{PORT}/_stub/media/photo.png?u={blob}",
+            })
+        if route.startswith("/_stub/upload/"):
+            return self._send_json({})
+
         if route == f"/books/{CURRENT_BOOK_ID}/messages":
             with _lock:
                 refuse = _state["refuse_sends"]
             if refuse:
                 return self._send_json({"error": "stub refused this send"})
-            return self._send_json(_echo_sent(body))
+            echoed = _echo_sent(body)
+            with _lock:
+                _state["sent"].append({"type": echoed["type"], "body": echoed["body"],
+                                       "media_url": echoed["media_url"]})
+            return self._send_json(echoed)
 
         return self._send_json({})
 

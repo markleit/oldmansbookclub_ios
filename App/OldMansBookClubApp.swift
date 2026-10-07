@@ -11,6 +11,14 @@ struct OldMansBookClubApp: App {
             memoryCapacity: 50 * 1024 * 1024,
             diskCapacity: 200 * 1024 * 1024
         )
+        #if DEBUG
+        // Hermetic UI tests launch with `-uiTestClearChatCache YES` so each test starts from the
+        // stub's messages alone, not ones cached by earlier tests (their sends would otherwise
+        // pile up and push the seeded messages off screen). Launch-argument scoped: not persisted.
+        if UserDefaults.standard.bool(forKey: "uiTestClearChatCache") {
+            CacheService.shared.removeAll(withKeyPrefix: "messages_")
+        }
+        #endif
     }
 
     var body: some Scene {

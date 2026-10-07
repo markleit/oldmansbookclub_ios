@@ -47,6 +47,17 @@ final class CacheService {
         }
     }
 
+    // Deletes every cached value whose key starts with `prefix` (e.g. all chats' messages).
+    func removeAll(withKeyPrefix prefix: String) {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        ioQueue.sync {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            for name in names where name.hasPrefix("cache_\(prefix)") {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+            }
+        }
+    }
+
     func load<T: Decodable>(_ type: T.Type, key: String) -> T? {
         guard let data = try? Data(contentsOf: fileURL(key: key)) else { return nil }
         return try? decoder.decode(type, from: data)
