@@ -7,7 +7,9 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Xcode 27 (GitHub preview image) — matches the toolchain releases are archived with and the
+    # iOS 27 our users run; `macos-latest` still defaults to Xcode 26.6 (#185).
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
       - name: Install xcodegen
