@@ -372,15 +372,7 @@ struct BookDetailView: View {
                 onUpdated?(updated)
             }
         }
-        .toast($viewModel.toast)
-        .alert("Can't Save to Photos", isPresented: $viewModel.photosAccessDenied) {
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Allow Old Man's Book Club to add photos in Settings.")
-        }
+        .modifier(SaveFeedback(viewModel: viewModel))
         .onAppear { Breadcrumbs.record("chat open") }
         .task {
             await viewModel.load()
@@ -505,6 +497,26 @@ struct BookDetailView: View {
         guard let msg = viewModel.visibleMessages.first(where: { $0.id == id }),
               msg.type == .voice, let urlStr = msg.mediaUrl, let url = URL(string: urlStr) else { return }
         AudioCache.shared.prefetch(url)
+    }
+}
+
+// Toast + "Can't Save to Photos" alert for the chat (#193). Kept as its own modifier: adding
+// them inline to BookDetailView's long modifier chain pushed Xcode 26's type-checker past its
+// time limit in CI.
+private struct SaveFeedback: ViewModifier {
+    @ObservedObject var viewModel: BookViewModel
+
+    func body(content: Content) -> some View {
+        content
+            .toast($viewModel.toast)
+            .alert("Can't Save to Photos", isPresented: $viewModel.photosAccessDenied) {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Allow Old Man's Book Club to add photos in Settings.")
+            }
     }
 }
 
