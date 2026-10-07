@@ -63,8 +63,8 @@ final class HermeticUITests: XCTestCase {
         app.launchArguments += [
             "-debugServerBaseURL", stubBaseURL,
             "-hasAcceptedEULA_v2", "YES",
-            // Start from the stub's messages alone — see OldMansBookClubApp.init.
-            "-uiTestClearChatCache", "YES",
+            // Start from the stub's data alone — see OldMansBookClubApp.init.
+            "-uiTestFreshLocalState", "YES",
         ]
         app.launch()
         SystemAlerts.dismissAny()
@@ -612,6 +612,52 @@ final class HermeticUITests: XCTestCase {
         XCTAssertEqual(sent.map { $0["type"] as? String }, ["Text"] + Array(repeating: "Photo", count: toSend),
                        "expected the caption then \(toSend) photos, in that order; got \(sent)")
         XCTAssertEqual(sent.first?["body"] as? String, "a caption")
+    }
+
+    // ---- batch sends start together (#203) ---------------------------------------------------------
+
+    /// A photo batch must start every photo's send at once. Started one after another, each
+    /// upload-link wait stacked behind the previous one — on a bad network N photos took N
+    /// timeouts to resolve. The stub holds each upload-link request for 2 s and records when it
+    /// ARRIVED: started together they arrive within moments; one-at-a-time they'd be ~2 s apart.
+    func testAPhotoBatchStartsEveryUploadTogether() throws {
+        try setMessages([])
+        try controlRequest(path: "/_stub/upload-url-delay", method: "POST", jsonBody: ["seconds": 2])
+        launch()
+        openCurrentBook()
+
+        app.buttons["attachmentMenuButton"].tap()
+        app.buttons["Photos"].tap()
+        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
+        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
+        for i in 0..<3 { thumbs.element(boundBy: i).tap() }
+        app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch.tap()
+        let pending = app.descendants(matching: .any).matching(identifier: "pendingPhoto")
+        XCTAssertTrue(pending.element(boundBy: 2).waitForExistence(timeout: 20))
+        let picked = pending.count
+        app.buttons["sendButton"].tap()
+
+        var times: [Double] = []
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            let data = try controlRequest(path: "/_stub/upload-url-times", method: "GET")
+            times = (try JSONSerialization.jsonObject(with: data) as? [Double]) ?? []
+            if times.count >= picked { break }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertEqual(times.count, picked, "expected one upload-link request per photo")
+        let spread = (times.max() ?? 0) - (times.min() ?? 0)
+        XCTAssertLessThan(spread, 1.5, "upload-link requests were spread over \(spread)s — the batch started one at a time")
+
+        // And starting together doesn't change posting order: every photo posts, in order.
+        var sent: [[String: Any]] = []
+        let postDeadline = Date().addingTimeInterval(45)
+        while Date() < postDeadline {
+            sent = try sentMessages()
+            if sent.count >= picked { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(sent.map { $0["type"] as? String }, Array(repeating: "Photo", count: picked))
     }
 
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {

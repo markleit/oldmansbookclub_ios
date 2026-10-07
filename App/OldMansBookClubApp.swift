@@ -12,11 +12,17 @@ struct OldMansBookClubApp: App {
             diskCapacity: 200 * 1024 * 1024
         )
         #if DEBUG
-        // Hermetic UI tests launch with `-uiTestClearChatCache YES` so each test starts from the
-        // stub's messages alone, not ones cached by earlier tests (their sends would otherwise
-        // pile up and push the seeded messages off screen). Launch-argument scoped: not persisted.
-        if UserDefaults.standard.bool(forKey: "uiTestClearChatCache") {
+        // Hermetic UI tests launch with `-uiTestFreshLocalState YES` so each test starts from the
+        // stub's data alone: no chat cache from earlier tests (their sends piled up and pushed the
+        // seeded messages off screen) and no unsent items left in the durable send queues (#203's
+        // reconnect resend picked one up and skewed a later test's request count). Runs before
+        // either queue's singleton loads. Launch-argument scoped: not persisted.
+        if UserDefaults.standard.bool(forKey: "uiTestFreshLocalState") {
             CacheService.shared.removeAll(withKeyPrefix: "messages_")
+            UserDefaults.standard.removeObject(forKey: "pendingTextSends")
+            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("media_queue.json"))
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("PendingMedia"))
         }
         #endif
     }
@@ -70,7 +76,7 @@ struct RootView: View {
                             // Get pending blob uploads moving on every foreground (and first
                             // launch), regardless of which screen is open — the bytes upload
                             // in the background; the send completes when the chat connects.
-                            Task { await BackgroundUploadService.shared.resumePendingUploads() }
+                            Task { await BackgroundUploadService.shared.resumePendingUploads(trigger: "foreground") }
                             // Retry any read/heard receipt that never reached the server (#119) —
                             // until it does, this device's unread count and the server's disagree.
                             Task { await ReceiptQueue.shared.flush() }

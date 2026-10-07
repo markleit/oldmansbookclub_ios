@@ -24,15 +24,30 @@ final class NetworkReachability: @unchecked Sendable {
     // Optimistic until the first path update lands, so a send issued in the first moments after
     // launch is never falsely failed before the monitor has reported anything.
     private var status: NWPath.Status = .satisfied
+    private var reachableHandlers: [@Sendable () -> Void] = []
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             lock.lock()
+            let wasUnsatisfied = status == .unsatisfied
             status = path.status
+            let handlers = (wasUnsatisfied && path.status == .satisfied) ? reachableHandlers : []
             lock.unlock()
+            if wasUnsatisfied != (path.status == .unsatisfied) {
+                SendLog.note(path.status == .unsatisfied ? "network lost" : "network back")
+            }
+            handlers.forEach { $0() }
         }
         monitor.start(queue: DispatchQueue(label: "network-reachability"))
+    }
+
+    /// #203 — called (on the monitor's queue) each time the device goes from no network path to
+    /// a usable one, so queued sends can resume without waiting for the app to be reopened.
+    func onBecameReachable(_ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        reachableHandlers.append(handler)
+        lock.unlock()
     }
 
     var hasNetworkPath: Bool {

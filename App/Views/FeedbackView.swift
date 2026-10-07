@@ -169,7 +169,7 @@ struct FeedbackComposeView: View {
                 } header: {
                     Text("Description")
                 } footer: {
-                    Text("Type, or tap Dictate to record and transcribe your description.")
+                    Text("Type, or tap Dictate to record and transcribe your description.\n\nA technical log of recent message sends (times and status only — never message text) is attached to help diagnose sending problems.")
                 }
             }
             .navigationTitle("New Feedback")
@@ -260,6 +260,17 @@ struct FeedbackComposeView: View {
         return clipped + "…"
     }
 
+    // #203 — the recent send trail, so "a message didn't send" arrives with its evidence and no
+    // one has to collect logs from the phone. Collapsed in the GitHub issue; capped well under
+    // GitHub's 65,536-character body limit. Device + OS help read it (background behaviour varies).
+    private static func sendLogAttachment() -> String {
+        var log = SendLog.recent(limit: 300)
+        guard !log.isEmpty else { return "" }
+        if log.count > 40_000 { log = String(log.suffix(40_000)) }
+        let device = "\(UIDevice.current.model), iOS \(UIDevice.current.systemVersion)"
+        return "\n\n<details><summary>Send log (\(device), times UTC)</summary>\n\n```\n\(log)\n```\n</details>"
+    }
+
     private func submit() async {
         isSubmitting = true
         defer { isSubmitting = false }
@@ -268,7 +279,7 @@ struct FeedbackComposeView: View {
         do {
             let created = try await APIClient.shared.submitFeedback(
                 title: title.trimmingCharacters(in: .whitespaces),
-                body: text.trimmingCharacters(in: .whitespaces),
+                body: text.trimmingCharacters(in: .whitespaces) + Self.sendLogAttachment(),
                 appVersion: "\(short) (\(build))")
             await onSubmitted(created)
             dismiss()

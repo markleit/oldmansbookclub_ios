@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         DiagnosticsReporter.shared.start()
         // Screen/lifecycle trail attached to the crashed process's next MetricKit report.
         Breadcrumbs.start()
+        // #203 — send-path trail (also attached to in-app Feedback).
+        SendLog.start()
         // #178 — hand the Share extension what it can't read from this app's own UserDefaults.
         // Re-published every launch so an install that predates the extension is covered too.
         ServerEnvironment.publishToSharedContainer()
@@ -31,6 +33,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Recreate the background upload session so any task that finished while the app was
         // suspended/killed delivers its completion (marks the queue item uploaded).
         BackgroundUploadService.shared.activate()
+        // #203 — the moment the network comes back, restart any queued media upload from whatever
+        // screen is up (getting the upload link + the blob PUT; the post lands when its chat is
+        // open). Previously this only happened when the app came to the foreground.
+        NetworkReachability.shared.onBecameReachable {
+            Task { @MainActor in await BackgroundUploadService.shared.resumePendingUploads(trigger: "network back") }
+        }
         // Cold launch: notification payload is in launchOptions before any view exists
         if let notification = launchOptions?[.remoteNotification] as? [String: Any],
            let bookIdStr = notification["bookId"] as? String,

@@ -31,6 +31,7 @@ import json
 import socketserver
 import sys
 import threading
+import time
 import uuid
 
 PORT = 51235
@@ -41,7 +42,8 @@ CURRENT_BOOK_ID = "66666666-6666-6666-6666-666666666666"
 FUTURE_BOOK_ID = "77777777-7777-7777-7777-777777777777"
 
 _lock = threading.Lock()
-_state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": [], "sent": []}
+_state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": [], "sent": [],
+          "upload_url_delay": 0.0, "upload_url_times": []}
 
 
 def _user():
@@ -210,6 +212,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        if route == "/_stub/upload-url-times":
+            with _lock:
+                return self._send_json(_state["upload_url_times"])
+
         if route == "/_stub/sent":
             with _lock:
                 return self._send_json(_state["sent"])
@@ -266,6 +272,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _state["refuse_sends"] = False
                 _state["requested_paths"] = []
                 _state["sent"] = []
+                _state["upload_url_delay"] = 0.0
+                _state["upload_url_times"] = []
             return self._send_json({"status": "reset"})
 
         if route == "/_stub/messages":
@@ -297,7 +305,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
         # Media send (#201): hand out an upload URL on this stub, accept the PUT, and serve the
         # "uploaded" photo back from /_stub/media so the sent bubble renders.
+        if route == "/_stub/upload-url-delay":
+            payload = json.loads(body) if body else {}
+            with _lock:
+                _state["upload_url_delay"] = float(payload.get("seconds", 0))
+            return self._send_json({"status": "ok"})
+
         if route == "/media/upload-url":
+            # #203 — record when each request ARRIVES (before any delay), so a test can tell a
+            # batch whose sends start together from one that starts them one after another.
+            with _lock:
+                _state["upload_url_times"].append(time.time())
+                delay = _state["upload_url_delay"]
+            if delay:
+                time.sleep(delay)
             blob = uuid.uuid4().hex
             return self._send_json({
                 "upload_url": f"http://127.0.0.1:{PORT}/_stub/upload/{blob}.jpg",

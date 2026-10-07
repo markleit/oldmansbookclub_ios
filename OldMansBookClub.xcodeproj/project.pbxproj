@@ -23,6 +23,7 @@
 		1B2441A795EDBBDC5B267BC0 /* UnreadStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EA7704306F3C8AC3415BE20 /* UnreadStoreTests.swift */; };
 		1C1CF8F415F49FFBAC8EF033 /* SharePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59E68E7D40C53AC04911DB03 /* SharePlan.swift */; };
 		1DD038AAF9DE70CA1DBB6C96 /* SendReconcilerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */; };
+		1F4C31AC37C57716B642D110 /* SendLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A124CBD2DBA68F6F276FF8 /* SendLog.swift */; };
 		205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846D01E26072CD8D40035684 /* SavedMessagesSheet.swift */; };
 		238255509291CD03907584E8 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 111F73E1A3C941B1B4F0B051 /* AudioRecorder.swift */; };
 		26672DB86F18A2D0362B0CB1 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC45DA3F39CDD44BE38949F9 /* ProfileView.swift */; };
@@ -95,6 +96,7 @@
 		CB720BE2B0C4658577DAA812 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5BDC572FF6DDD04153861DF /* ContentView.swift */; };
 		D276830DF84A62553CFADC78 /* message_voice_signalr.json in Resources */ = {isa = PBXBuildFile; fileRef = E8466AF0D43C0E71A76D1DD2 /* message_voice_signalr.json */; };
 		D4BAAD8171555916E45E8F09 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02F5446A1CEBD7D20D4D2E90 /* TokenStore.swift */; };
+		D87E83FE9A423C6CF7111515 /* SendLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7885A377AFBF336B977F2CB /* SendLogTests.swift */; };
 		D90FD186BE73D23DF173C12E /* Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40CB6C91B09B06C1D5531269 /* Extensions.swift */; };
 		DBDABF09DE022E138FB463FB /* CachedBookCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3797FC65323C0493452D32B2 /* CachedBookCover.swift */; };
 		DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2F641E7CD804B9A68D92873 /* ReadOrderView.swift */; };
@@ -212,7 +214,9 @@
 		9BC51C4C84ECB54C1E797EB1 /* AdminUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminUITests.swift; sourceTree = "<group>"; };
 		9E70DFCEC2883172B2091C7E /* SendReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendReconciler.swift; sourceTree = "<group>"; };
 		A518484880F73D42F012B0EA /* FeedbackView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackView.swift; sourceTree = "<group>"; };
+		A7885A377AFBF336B977F2CB /* SendLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLogTests.swift; sourceTree = "<group>"; };
 		A7F7A1AF7EB1010796E756CD /* message_deleted_rest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = message_deleted_rest.json; sourceTree = "<group>"; };
+		A9A124CBD2DBA68F6F276FF8 /* SendLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLog.swift; sourceTree = "<group>"; };
 		AE63F0933E8888822C23DCE3 /* AuthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthViewModel.swift; sourceTree = "<group>"; };
 		B561ED5FA32D5FF7BE41DA80 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		B57D23A46A12A8249A5DAD23 /* BookDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDetailsView.swift; sourceTree = "<group>"; };
@@ -315,6 +319,7 @@
 				F501215D7E646D6FF6A59172 /* PhotoLibrarySaver.swift */,
 				6CF0045E825B582AC958ED2A /* PlaybackProgressStore.swift */,
 				FE1B3720F88FF7A2676BFF07 /* ReceiptQueue.swift */,
+				A9A124CBD2DBA68F6F276FF8 /* SendLog.swift */,
 				587F68D2C35FB730E89B2089 /* SendOrder.swift */,
 				9E70DFCEC2883172B2091C7E /* SendReconciler.swift */,
 				7A39EDBB008EDDF420B181A6 /* ServerEnvironment.swift */,
@@ -441,6 +446,7 @@
 				0FD3B5790CD36AB0A956D837 /* EmojiSkinToneTests.swift */,
 				0FD1A38295A510B628498DAA /* Fixtures.swift */,
 				81AE905B2D02E166DF203676 /* HeardStoreTests.swift */,
+				A7885A377AFBF336B977F2CB /* SendLogTests.swift */,
 				7467093FC538932DE73D9583 /* SendOrderTests.swift */,
 				17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */,
 				06500729FE6E02A980E8F502 /* ServerEnvironmentTests.swift */,
@@ -724,6 +730,7 @@
 				DBEB98C8618D92B70AFF3855 /* ReadOrderView.swift in Sources */,
 				062991CF8F8EC5DEBC11CCC0 /* ReceiptQueue.swift in Sources */,
 				205E6E9BD97AF60BD97A9539 /* SavedMessagesSheet.swift in Sources */,
+				1F4C31AC37C57716B642D110 /* SendLog.swift in Sources */,
 				C1D5F7E9ADB143641A4C8A39 /* SendOrder.swift in Sources */,
 				9B5616C5F64A844602390C55 /* SendReconciler.swift in Sources */,
 				9E206FCEBF6C0A9A52AD2378 /* ServerEnvironment.swift in Sources */,
@@ -748,6 +755,7 @@
 				73F7600E4458D3DB1A60896D /* EmojiSkinToneTests.swift in Sources */,
 				5226C060B27C3D605B12B74A /* Fixtures.swift in Sources */,
 				094930F4028DC4B717DAAF64 /* HeardStoreTests.swift in Sources */,
+				D87E83FE9A423C6CF7111515 /* SendLogTests.swift in Sources */,
 				F8C95C0F653B2A7C20EE3A3D /* SendOrderTests.swift in Sources */,
 				1DD038AAF9DE70CA1DBB6C96 /* SendReconcilerTests.swift in Sources */,
 				08AC8EDA4FA34B756AF74DF8 /* ServerEnvironmentTests.swift in Sources */,
