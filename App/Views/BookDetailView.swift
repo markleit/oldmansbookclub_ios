@@ -296,14 +296,14 @@ struct BookDetailView: View {
 
             MessageInputView(
                 text: $viewModel.messageText,
-                pendingImage: $viewModel.pendingImage,
+                pendingImages: $viewModel.pendingImages,
                 pendingVideo: $viewModel.pendingVideo,
                 isRecording: viewModel.isRecording,
                 isUploading: viewModel.isUploading,
                 isOffline: viewModel.isOffline,
                 tapToTalk: tapToTalk,
                 onSend: { Task { await viewModel.sendMessage() } },
-                onSendPhoto: { Task { await viewModel.sendPhoto() } },
+                onSendPhotos: { Task { await viewModel.sendPhotos() } },
                 onSendVideo: { Task { await viewModel.sendVideo() } },
                 onToggleRecording: { Task { await viewModel.toggleRecording() } },
                 onStartRecording: { Task { await viewModel.startRecording() } },
@@ -582,8 +582,11 @@ struct MessageRow: View {
                 }
             }
             .fullScreenCover(isPresented: $showFullScreen) {
+                // #201 — open on this photo, swipeable through every photo loaded in the chat.
+                let gallery = viewModel.photoGallery()
                 if let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
-                    FullScreenImageView(url: url)
+                    FullScreenImageView(urls: gallery.isEmpty ? [url] : gallery,
+                                        startIndex: gallery.firstIndex(of: url) ?? 0)
                 }
             }
             if !isMe { Spacer() }

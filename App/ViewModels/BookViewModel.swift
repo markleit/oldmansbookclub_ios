@@ -27,7 +27,9 @@ final class BookViewModel: ObservableObject {
     @Published var blockedUserIds: Set<UUID> = [] {
         didSet { recomputeVisibleMessages() }   // #9
     }
-    @Published var pendingImage: UIImage?
+    // #201 — up to 10 photos picked for one send (or one video in pendingVideo, never both).
+    @Published var pendingImages: [UIImage] = []
+    static let maxPendingPhotos = 10
     @Published var pendingVideo: URL?
     @Published var isRecording = false {
         didSet {
@@ -463,11 +465,19 @@ final class BookViewModel: ObservableObject {
     }
 
     func sendMessage() async {
+        guard let clientId = enqueueText() else { return }
+        await finishTextSend(clientId)
+    }
+
+    // The synchronous half of a text send: bubble, durable queue entry and its place in the
+    // chat's send order (SendOrder). No awaits, so a caller can queue text and media back to
+    // back and know the order they'll post in. Returns nil when there's nothing to send.
+    private func enqueueText() -> UUID? {
         let text = messageText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else { return nil }
         guard let userId = TokenStore.shared.userId else {
             errorMessage = "Session error — please sign out and back in."
-            return
+            return nil
         }
         messageText = ""
         let reply = replyingTo
@@ -501,9 +511,13 @@ final class BookViewModel: ObservableObject {
             clientId: clientId, bookId: book.id, clubId: book.clubId,
             body: text, parentMessageId: reply?.id, queuedAt: Date(), seq: SendOrder.nextSeq()))
 
+        announceTextFailure.insert(clientId)
+        return clientId
+    }
+
+    private func finishTextSend(_ clientId: UUID) async {
         // Posted by the pump, in tap order: if an earlier photo/video in this chat is still
         // uploading, this waits (bubble stays .sending) rather than overtaking it on the server.
-        announceTextFailure.insert(clientId)
         await pumpSendQueue()
         // Still queued and not failed = waiting behind something sent earlier. Show the spinner
         // so it doesn't read as delivered; a text that posted straight away never shows one.
@@ -611,17 +625,28 @@ final class BookViewModel: ObservableObject {
         }
     }
 
-    func sendPhoto() async {
-        guard let image = pendingImage,
-              let data = image.resizedForUpload().jpegData(compressionQuality: 0.7),
-              let userId = TokenStore.shared.userId,
-              let persistentUrl = MediaSendQueue.shared.saveToQueue(data: data, extension: "jpg")
-        else { return }
-        pendingImage = nil
-        await enqueueAndSendMedia(
-            kind: .photo, contentType: "image/jpeg", durationSeconds: nil,
-            persistentUrl: persistentUrl, userId: userId
-        )
+    // #201 — send the picked photos (1–10) as one batch: any typed text first as the caption
+    // (like the share sheet), then each photo as its own message, in the order they were picked.
+    // Everything is queued — bubbles, durable entries, send-order seqs — before any network work
+    // starts, so a force-quit mid-batch can't drop the later photos, and the pump posts them in
+    // exactly this order however their uploads happen to finish.
+    func sendPhotos() async {
+        let images = pendingImages
+        guard !images.isEmpty, let userId = TokenStore.shared.userId else { return }
+        pendingImages = []   // consumed before any await, so a double-tap can't send twice
+        let captionId = enqueueText()
+
+        // Resize + encode off the main actor: ten full-size photos would otherwise hitch the UI.
+        let encoded: [Data] = await Task.detached(priority: .userInitiated) {
+            images.compactMap { $0.resizedForUpload().jpegData(compressionQuality: 0.7) }
+        }.value
+        let items = encoded.compactMap { data -> MediaQueueItem? in
+            guard let url = MediaSendQueue.shared.saveToQueue(data: data, extension: "jpg") else { return nil }
+            return enqueueMedia(kind: .photo, contentType: "image/jpeg", durationSeconds: nil,
+                                persistentUrl: url, userId: userId)
+        }
+        for item in items { await sendMediaItem(item) }   // each just starts its background upload
+        if let captionId { await finishTextSend(captionId) }
     }
 
     func sendVideo() async {
@@ -631,8 +656,7 @@ final class BookViewModel: ObservableObject {
         // across that window let a second invocation clear the guard above and send the same
         // recording again as an independent message (observed on device: two videos, distinct
         // clientIds and blobs, ~9s apart, so server-side clientId dedup couldn't catch it).
-        // sendPhoto is immune to this only because its work is synchronous — there's no
-        // suspension point between its guard and clearing pendingImage.
+        // sendPhotos is immune to this the same way: it clears pendingImages before its first await.
         pendingVideo = nil
 
         // Duration isn't affected by compression, so check it against the source first —
@@ -643,7 +667,7 @@ final class BookViewModel: ObservableObject {
             return
         }
 
-        // #146 — compress before the size check and before queueing (mirrors sendPhoto's
+        // #146 — compress before the size check and before queueing (mirrors sendPhotos'
         // resizedForUpload): video was previously sent unencoded, so a normal phone-shot clip a
         // few minutes long routinely exceeded the 100MB cap well before hitting the 5-minute
         // duration cap. Falls back to the original file if compression fails for any reason
@@ -675,7 +699,7 @@ final class BookViewModel: ObservableObject {
         )
     }
 
-    // #146 — HEVC 1080p, matching sendPhoto's "resize before upload" treatment for video.
+    // #146 — HEVC 1080p, matching sendPhotos' "resize before upload" treatment for video.
     // Caps resolution rather than targeting a bitrate directly: AVAssetExportSession doesn't
     // upscale, so an already-small source passes through roughly unchanged, while a 1080p/4K
     // phone recording — the common case that blew past the 100MB cap — gets meaningfully smaller.
@@ -721,6 +745,19 @@ final class BookViewModel: ObservableObject {
         persistentUrl: URL,
         userId: UUID
     ) async {
+        let item = enqueueMedia(kind: kind, contentType: contentType, durationSeconds: durationSeconds,
+                                persistentUrl: persistentUrl, userId: userId)
+        await sendMediaItem(item)
+    }
+
+    // The synchronous half of a media send (see enqueueText): bubble, durable queue entry, seq.
+    private func enqueueMedia(
+        kind: MediaQueueKind,
+        contentType: String,
+        durationSeconds: Int?,
+        persistentUrl: URL,
+        userId: UUID
+    ) -> MediaQueueItem {
         let localId = UUID()
         let reply = replyingTo
         replyingTo = nil
@@ -761,7 +798,7 @@ final class BookViewModel: ObservableObject {
             seq: SendOrder.nextSeq()
         )
         MediaSendQueue.shared.enqueue(item)
-        await sendMediaItem(item)
+        return item
     }
 
     func toggleRecording() async {
@@ -1329,6 +1366,15 @@ final class BookViewModel: ObservableObject {
             toast = Toast(text: "Message saved", systemImage: "bookmark.fill")
         } catch {
             errorMessage = "Failed to save message."
+        }
+    }
+
+    // #201 — the photo viewer's pages: every loaded, undeleted photo in this chat, oldest first
+    // (visibleMessages is newest-first), so swiping left moves forward in time as in Photos.
+    func photoGallery() -> [URL] {
+        visibleMessages.reversed().compactMap { message in
+            guard message.type == .photo, !message.isDeleted, let urlStr = message.mediaUrl else { return nil }
+            return URL(string: urlStr)
         }
     }
 

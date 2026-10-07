@@ -63,6 +63,8 @@ final class HermeticUITests: XCTestCase {
         app.launchArguments += [
             "-debugServerBaseURL", stubBaseURL,
             "-hasAcceptedEULA_v2", "YES",
+            // Start from the stub's messages alone — see OldMansBookClubApp.init.
+            "-uiTestClearChatCache", "YES",
         ]
         app.launch()
         SystemAlerts.dismissAny()
@@ -475,6 +477,141 @@ final class HermeticUITests: XCTestCase {
 
         // Leave the persisted rate at 1× for whatever runs next.
         for _ in 0..<12 where down.isEnabled { down.tap() }
+    }
+
+    // ---- swipe between photos + multi-photo send (#201) -----------------------------------------
+
+    /// The viewer's "k of N" as (k, N). The app's chat cache can hold photos from earlier tests
+    /// (same stub message ids), so tests reason about movement relative to where they start.
+    private func counterPosition() -> (Int, Int)? {
+        let parts = app.staticTexts["photoCounter"].label.components(separatedBy: " of ")
+        guard parts.count == 2, let k = Int(parts[0]), let n = Int(parts[1]) else { return nil }
+        return (k, n)
+    }
+
+    /// One page step: swipe, then wait for the counter. A synthetic swipe that lands while the
+    /// previous page is still settling can be dropped on a loaded machine (seen once locally
+    /// while a release build ran), so retry the swipe once — a wrong page still fails.
+    private func page(_ swipe: () -> Void, to expected: String) -> Bool {
+        for _ in 0..<2 {
+            swipe()
+            if waitForCounter(expected) { return true }
+        }
+        return false
+    }
+
+    private func waitForCounter(_ text: String, timeout: TimeInterval = 5) -> Bool {
+        let counter = app.staticTexts["photoCounter"]
+        let match = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: counter)
+        return XCTWaiter().wait(for: [match], timeout: timeout) == .completed
+    }
+
+    /// Tapping a photo opens the viewer on THAT photo; swiping pages through every photo in the
+    /// chat, oldest → newest, stopping at the ends.
+    func testSwipingPagesThroughTheChatsPhotos() throws {
+        try setMessages([["type": "Photo"], ["type": "Photo"], ["type": "Photo"]])
+        launch()
+        openCurrentBook()
+
+        let bubbles = app.buttons.matching(identifier: "photoMessage")
+        XCTAssertTrue(bubbles.element(boundBy: 2).waitForExistence(timeout: 15), "three photo bubbles never rendered")
+        let lastBubble = bubbles.element(boundBy: bubbles.count - 1)
+        lastBubble.tap()   // the newest photo → the last page
+        XCTAssertTrue(app.staticTexts["photoCounter"].waitForExistence(timeout: 10))
+        guard let (start, total) = counterPosition(), total >= 3 else {
+            return XCTFail("expected at least 3 photos, got \(app.staticTexts["photoCounter"].label)")
+        }
+        XCTAssertEqual(start, total, "tapping the newest photo should open on the last page")
+
+        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
+        viewer.swipeLeft()
+        XCTAssertTrue(waitForCounter("\(total) of \(total)"), "paged past the last photo")
+        XCTAssertTrue(page({ viewer.swipeRight() }, to: "\(total - 1) of \(total)"), "swipe right didn't move to the previous photo")
+        XCTAssertTrue(page({ viewer.swipeRight() }, to: "\(total - 2) of \(total)"))
+        XCTAssertTrue(page({ viewer.swipeLeft() }, to: "\(total - 1) of \(total)"), "swipe left didn't move to the next photo")
+    }
+
+    /// Zoomed in, sideways swipes pan the photo — even past its edge they must not flip to
+    /// another photo (reading the side of a zoomed list). Back at 1×, a swipe pages again.
+    func testAZoomedPhotoPansInsteadOfPaging() throws {
+        try setMessages([["type": "Photo"], ["type": "Photo"]])
+        launch()
+        openCurrentBook()
+
+        let bubbles = app.buttons.matching(identifier: "photoMessage")
+        XCTAssertTrue(bubbles.element(boundBy: 1).waitForExistence(timeout: 15))
+        bubbles.element(boundBy: 0).tap()
+        let counter = app.staticTexts["photoCounter"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 10), "viewer didn't open with a counter")
+        guard let (start, total) = counterPosition(), start < total else {
+            return XCTFail("need a photo after the opened one, got \(counter.label)")
+        }
+
+        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
+        viewer.doubleTap()
+        XCTAssertFalse(waitForValue(of: viewer, containing: "zoom=1.00", timeout: 1), "double-tap didn't zoom")
+        for _ in 0..<6 { viewer.swipeLeft() }   // well past the right edge
+        XCTAssertTrue(waitForValue(of: viewer, containing: "-1.00"), "didn't reach the right edge")
+        XCTAssertTrue(waitForCounter("\(start) of \(total)"), "a zoomed swipe paged to another photo: \(counter.label)")
+
+        viewer.doubleTap()   // back to 1×, and now a swipe pages
+        XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"))
+        viewer.swipeLeft()
+        XCTAssertTrue(waitForCounter("\(start + 1) of \(total)"), "at 1× a swipe should page: \(counter.label)")
+    }
+
+    private func sentMessages() throws -> [[String: Any]] {
+        let data = try controlRequest(path: "/_stub/sent", method: "GET")
+        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+    }
+
+    /// + → Photos picks several photos in the real system picker; one can be removed; Send posts
+    /// the typed caption first, then each photo, in picked order.
+    func testPickingSeveralPhotosSendsCaptionThenEachPhotoInOrder() throws {
+        try setMessages([])
+        launch()
+        openCurrentBook()
+
+        app.buttons["attachmentMenuButton"].tap()
+        let photos = app.buttons["Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), "+ menu has no Photos item")
+        XCTAssertTrue(app.buttons["Video"].exists, "+ menu has no Video item")
+        photos.tap()
+
+        // The system picker (out of process, reached through the app's accessibility tree).
+        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
+        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
+        XCTAssertGreaterThanOrEqual(thumbs.count, 3, "simulator library needs at least 3 sample photos")
+        for i in 0..<3 { thumbs.element(boundBy: i).tap() }
+        // The picker's confirm (✓) is identifier "Add" / label "Done". Not buttons["Add"]: that
+        // matches the app's own + button, whose accessibility label is "Add".
+        let confirm = app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "picker has no confirm button")
+        confirm.tap()
+
+        let pending = app.descendants(matching: .any).matching(identifier: "pendingPhoto")
+        XCTAssertTrue(pending.element(boundBy: 2).waitForExistence(timeout: 20), "picked photos didn't reach the composer")
+        let picked = pending.count
+        XCTAssertLessThanOrEqual(picked, 10)
+        app.buttons.matching(identifier: "removePendingPhoto").element(boundBy: 0).tap()
+        XCTAssertTrue(waitForDisappearance(pending.element(boundBy: picked - 1)), "removing a photo didn't shrink the strip")
+        let toSend = picked - 1
+
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText("a caption")
+        app.buttons["sendButton"].tap()
+
+        var sent: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(45)
+        while Date() < deadline {
+            sent = try sentMessages()
+            if sent.count >= toSend + 1 { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(sent.map { $0["type"] as? String }, ["Text"] + Array(repeating: "Photo", count: toSend),
+                       "expected the caption then \(toSend) photos, in that order; got \(sent)")
+        XCTAssertEqual(sent.first?["body"] as? String, "a caption")
     }
 
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {

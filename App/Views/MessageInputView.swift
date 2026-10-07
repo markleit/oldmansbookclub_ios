@@ -5,29 +5,44 @@ import UniformTypeIdentifiers
 
 struct MessageInputView: View {
     @Binding var text: String
-    @Binding var pendingImage: UIImage?
+    @Binding var pendingImages: [UIImage]   // #201 — up to BookViewModel.maxPendingPhotos
     @Binding var pendingVideo: URL?
     var isRecording: Bool
     var isUploading: Bool
     var isOffline: Bool = false
     var tapToTalk: Bool = false
     var onSend: () -> Void
-    var onSendPhoto: () -> Void
+    var onSendPhotos: () -> Void
     var onSendVideo: () -> Void
     var onToggleRecording: () -> Void
     var onStartRecording: () -> Void = {}
     var onStopRecording: () -> Void = {}
     var onShowSaved: () -> Void
 
-    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var selectedVideoItem: PhotosPickerItem?
     @State private var showingCamera = false
     @State private var showingPhotoPicker = false
+    @State private var showingVideoPicker = false
     @State private var pulsing = false
     @State private var elapsedSeconds = 0
     @State private var isPreparingMedia = false
 
     private var hasContent: Bool {
-        !text.trimmingCharacters(in: .whitespaces).isEmpty || pendingImage != nil || pendingVideo != nil
+        !text.trimmingCharacters(in: .whitespaces).isEmpty || !pendingImages.isEmpty || pendingVideo != nil
+    }
+
+    private var photoRoomLeft: Int { BookViewModel.maxPendingPhotos - pendingImages.count }
+
+    // Photos and a video never mix in one send: adding one kind replaces the other.
+    private func addPhoto(_ image: UIImage) {
+        pendingVideo = nil
+        if pendingImages.count < BookViewModel.maxPendingPhotos { pendingImages.append(image) }
+    }
+
+    private func setVideo(_ url: URL) {
+        pendingImages = []
+        pendingVideo = url
     }
 
     var body: some View {
@@ -79,28 +94,37 @@ struct MessageInputView: View {
                     .transition(.opacity)
                 }
 
-                // Pending image thumbnail
-                if let image = pendingImage {
-                    HStack {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 64, height: 64)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(alignment: .topTrailing) {
-                                Button {
-                                    pendingImage = nil
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundStyle(.white, .black)
-                                        .font(.title3)
-                                }
-                                .offset(x: 6, y: -6)
+                // Pending photo thumbnails (#201) — in send order, each removable.
+                if !pendingImages.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(Array(pendingImages.enumerated()), id: \.offset) { index, image in
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 64, height: 64)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .accessibilityElement()
+                                    .accessibilityLabel("Photo \(index + 1) of \(pendingImages.count)")
+                                    .accessibilityIdentifier("pendingPhoto")
+                                    .overlay(alignment: .topTrailing) {
+                                        Button {
+                                            pendingImages.remove(at: index)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.white, .black)
+                                                .font(.title3)
+                                        }
+                                        .accessibilityLabel("Remove photo \(index + 1)")
+                                        .accessibilityIdentifier("removePendingPhoto")
+                                        .offset(x: 6, y: -6)
+                                    }
                             }
-                        Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 14)
+                        .padding(.bottom, 2)
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 8)
                 }
 
                 // Pending video thumbnail
@@ -137,7 +161,13 @@ struct MessageInputView: View {
                         Button {
                             showingPhotoPicker = true
                         } label: {
-                            Label("Photo Library", systemImage: "photo")
+                            Label("Photos", systemImage: "photo.on.rectangle")
+                        }
+                        .disabled(photoRoomLeft == 0)
+                        Button {
+                            showingVideoPicker = true
+                        } label: {
+                            Label("Video", systemImage: "video")
                         }
                         Button {
                             showingCamera = true
@@ -161,8 +191,7 @@ struct MessageInputView: View {
                     GrowingTextEditor(text: $text, placeholder: "Message…") { image in
                         // #178 — screenshot → "Copy and Delete" → long-press → Paste lands here
                         // as a pending photo, exactly as if it had been picked with +.
-                        pendingImage = image
-                        pendingVideo = nil
+                        addPhoto(image)
                     }
 
                     // Walkie-talkie / send button
@@ -173,8 +202,8 @@ struct MessageInputView: View {
                         Button {
                             if pendingVideo != nil {
                                 onSendVideo()
-                            } else if pendingImage != nil {
-                                onSendPhoto()
+                            } else if !pendingImages.isEmpty {
+                                onSendPhotos()   // also sends any typed text, first, as the caption
                             } else {
                                 onSend()
                             }
@@ -193,33 +222,46 @@ struct MessageInputView: View {
                 .padding(.vertical, 8)
         }
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isRecording)
-        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItem, matching: .any(of: [.images, .videos]))
-        .onChange(of: selectedPhotoItem) { item in
+        // #201 — up to 10 photos at once, numbered in the order they're tapped (= send order).
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedPhotoItems,
+                      maxSelectionCount: max(1, photoRoomLeft), selectionBehavior: .ordered,
+                      matching: .images)
+        .onChange(of: selectedPhotoItems) { items in
+            guard !items.isEmpty else { return }
             Task {
-                guard let item else { return }
                 isPreparingMedia = true
                 defer { isPreparingMedia = false }
-                if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) || $0.conforms(to: .video) }) {
-                    if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
-                        pendingVideo = video.url
-                        pendingImage = nil
+                for item in items {   // sequential, to keep the picked order
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        addPhoto(image)
                     }
-                } else if let data = try? await item.loadTransferable(type: Data.self),
-                          let image = UIImage(data: data) {
-                    pendingImage = image
-                    pendingVideo = nil
                 }
-                selectedPhotoItem = nil
+                selectedPhotoItems = []
             }
+        }
+        .background {
+            // A second picker on its own view: one video, as before.
+            Color.clear
+                .photosPicker(isPresented: $showingVideoPicker, selection: $selectedVideoItem, matching: .videos)
+                .onChange(of: selectedVideoItem) { item in
+                    guard let item else { return }
+                    Task {
+                        isPreparingMedia = true
+                        defer { isPreparingMedia = false }
+                        if let video = try? await item.loadTransferable(type: VideoTransferable.self) {
+                            setVideo(video.url)
+                        }
+                        selectedVideoItem = nil
+                    }
+                }
         }
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
-                pendingImage = image
-                pendingVideo = nil
+                addPhoto(image)
                 showingCamera = false
             } onCaptureVideo: { url in
-                pendingVideo = url
-                pendingImage = nil
+                setVideo(url)
                 showingCamera = false
             } onCancel: {
                 showingCamera = false
