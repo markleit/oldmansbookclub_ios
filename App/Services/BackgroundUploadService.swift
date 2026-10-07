@@ -67,19 +67,23 @@ final class BackgroundUploadService: NSObject {
     /// The (cheap) SignalR invoke still lands when the matching chat connects (D's flush /
     /// handleUploadCompleted). `getUploadUrl` needs auth, so this no-ops when signed out.
     @MainActor
-    func resumePendingUploads() async {
+    func resumePendingUploads(trigger: String) async {
         guard TokenStore.shared.token != nil else { return }
-        for item in MediaSendQueue.shared.items where item.uploadedMediaUrl == nil {
+        let pending = MediaSendQueue.shared.items.filter { $0.uploadedMediaUrl == nil }
+        if !pending.isEmpty { SendLog.note("resume uploads", nil, "trigger=\(trigger) items=\(pending.count)") }
+        for item in pending {
             if await hasInflightUpload(itemId: item.id) { continue }
             guard FileManager.default.fileExists(atPath: item.localFileUrl.path) else { continue }
             do {
                 let ext = (item.fileName as NSString).pathExtension
                 let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
                 guard let uploadUrl = URL(string: response.uploadUrl) else { continue }
+                SendLog.note("upload started (resume)", item.id)
                 upload(itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
                        mediaUrl: response.mediaUrl, contentType: item.contentType)
             } catch {
-                continue   // transient (e.g. auth/network) — retried on the next launch/foreground
+                SendLog.note("upload link failed (resume)", item.id, SendLog.describe(error))
+                continue   // transient (e.g. auth/network) — retried on the next launch/foreground/reconnect
             }
         }
     }
@@ -167,6 +171,7 @@ final class BackgroundUploadService: NSObject {
 
         let status = (task.response as? HTTPURLResponse)?.statusCode ?? -1
         let data = responseBuffers[task.taskIdentifier]
+        SendLog.note("post finished", itemId, "status=\(status)\(error.map { " " + SendLog.describe($0) } ?? "")")
 
         guard error == nil, (200..<300).contains(status), let data,
               let message = try? Self.jsonDecoder.decode(Message.self, from: data) else {
@@ -210,6 +215,7 @@ extension BackgroundUploadService: URLSessionDataDelegate {
 
         let status = (task.response as? HTTPURLResponse)?.statusCode ?? -1
         let success = error == nil && (200..<300).contains(status)
+        SendLog.note("upload finished", itemId, "status=\(status)\(error.map { " " + SendLog.describe($0) } ?? "")")
 
         Task { @MainActor in
             guard success else {
