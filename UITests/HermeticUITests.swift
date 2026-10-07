@@ -433,17 +433,18 @@ final class HermeticUITests: XCTestCase {
 
     // ---- playback speed −/+ (#190) --------------------------------------------------------------
 
-    /// The slider stays; + / − step a quarter at a time and stop at the ends.
+    /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved
+    /// Messages, whose voice row shows the speed control without playing: the chat bubble's only
+    /// appears DURING playback, and a CI simulator may stop playback (no audio device) and close
+    /// the popover mid-test. Same VerticalSpeedSlider either way.
     func testSpeedButtonsStepAQuarterAndStopAtTheEnds() throws {
-        try setMessages([["type": "Voice"]])
+        try setSaved([["type": "Voice"]])
         launch()
         openCurrentBook()
+        openSavedMessages()
 
-        let play = app.buttons["voicePlayButton"].firstMatch
-        XCTAssertTrue(play.waitForExistence(timeout: 10), "voice bubble never rendered")
-        play.tap()
-        let bunny = app.buttons.containing(NSPredicate(format: "label CONTAINS '×'")).firstMatch
-        XCTAssertTrue(bunny.waitForExistence(timeout: 15), "speed button never appeared — voice didn't start playing")
+        let bunny = app.buttons["Playback speed"].firstMatch
+        XCTAssertTrue(bunny.waitForExistence(timeout: 10), "saved voice row has no speed control")
         bunny.tap()
 
         let value = app.staticTexts["speedValue"]

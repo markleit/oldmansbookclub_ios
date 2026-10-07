@@ -118,11 +118,13 @@ def _saved(item, index):
         body = item.get("body")
         if kind == "Photo":
             media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
+        elif kind == "Voice":
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/voice.m4a"
     return {
         "saved_id": f"aaaaaaaa-aaaa-aaaa-aaaa-{index:012d}",
         "message_id": f"bbbbbbbb-bbbb-bbbb-bbbb-{index:012d}",
         "sender_name": "Dixie", "type": kind, "body": body, "media_url": media_url,
-        "duration_seconds": None, "sent_at": "2026-09-01T12:00:00.000Z",
+        "duration_seconds": 30 if kind == "Voice" else None, "sent_at": "2026-09-01T12:00:00.000Z",
         "saved_at": "2026-09-02T12:00:00.000Z", "is_deleted": False,
     }
 
