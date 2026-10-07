@@ -237,6 +237,124 @@ final class HermeticUITests: XCTestCase {
     /// Waits for an element to GO AWAY. `XCTAssertFalse(x.waitForExistence(...))` is not this: it
     /// returns true the instant the element is still on screen — e.g. a sheet mid-dismiss on a slow
     /// CI runner — so it failed a correct dismissal in CI while passing locally.
+    // ---- photo viewer (#191) and Save to Photos (#193) ------------------------------------------
+
+    private func openPhotoViewer() -> XCUIElement {
+        let bubble = app.buttons["photoMessage"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "photo bubble never rendered")
+        bubble.tap()
+        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "full-screen photo never opened")
+        XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"), "viewer didn't lay out at 1×")
+        return viewer
+    }
+
+    private func waitForValue(of element: XCUIElement, containing text: String, timeout: TimeInterval = 5) -> Bool {
+        let predicate = NSPredicate(format: "value CONTAINS %@", text)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// The bug (#191): once zoomed, the photo couldn't be dragged, so its sides were unreachable.
+    /// The viewer reports the visible horizontal slice of the photo ("visible=0.00-1.00" is the
+    /// whole width), so this proves a zoomed photo pans all the way to each edge.
+    func testAZoomedPhotoPansToBothEdgesAndPullsDownToClose() throws {
+        try setMessages([["type": "Photo"], "after the photo"])
+        launch()
+        openCurrentBook()
+        let viewer = openPhotoViewer()
+
+        viewer.pinch(withScale: 3, velocity: 2)
+        let zoomed = NSPredicate(format: "NOT (value CONTAINS 'zoom=1.00') AND NOT (value CONTAINS 'visible=0.00-1.00')")
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: zoomed, object: viewer)], timeout: 5),
+                       .completed, "pinch didn't zoom: \(viewer.value ?? "nil")")
+
+        for _ in 0..<6 { viewer.swipeRight() }
+        XCTAssertTrue(waitForValue(of: viewer, containing: "visible=0.00-"),
+                      "a zoomed photo couldn't be panned to its left edge: \(viewer.value ?? "nil")")
+        for _ in 0..<8 { viewer.swipeLeft() }
+        XCTAssertTrue(waitForValue(of: viewer, containing: "-1.00"),
+                      "a zoomed photo couldn't be panned to its right edge: \(viewer.value ?? "nil")")
+
+        // Pull-down must not close a zoomed photo (it pans instead)…
+        viewer.swipeDown()
+        XCTAssertTrue(viewer.exists, "pulling down on a zoomed photo closed the viewer")
+
+        // …double-tap returns to 1×, and then pull-down closes.
+        viewer.doubleTap()
+        XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"), "double-tap didn't zoom back out")
+        viewer.swipeDown()
+        XCTAssertTrue(waitForDisappearance(viewer), "pull-down at 1× didn't close the viewer")
+    }
+
+    func testDoubleTapZoomsInOnAPhoto() throws {
+        try setMessages([["type": "Photo"]])
+        launch()
+        openCurrentBook()
+        let viewer = openPhotoViewer()
+        viewer.doubleTap()
+        let zoomed = NSPredicate(format: "NOT (value CONTAINS 'zoom=1.00')")
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: zoomed, object: viewer)], timeout: 5),
+                       .completed, "double-tap didn't zoom in")
+        app.buttons["viewerClose"].tap()
+        XCTAssertTrue(waitForDisappearance(viewer))
+    }
+
+    /// Messages' model: press-and-hold a photo → "Save to Photos". The bookmark action is
+    /// "Bookmark" now, so the two never share a name.
+    func testSaveToPhotosFromThePhotoMenu() throws {
+        try setMessages([["type": "Photo"]])
+        launch()
+        openCurrentBook()
+        let bubble = app.buttons["photoMessage"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10))
+        bubble.press(forDuration: 0.8)
+
+        let save = app.buttons["Save to Photos"]
+        XCTAssertTrue(save.waitForExistence(timeout: 5), "photo menu has no Save to Photos")
+        XCTAssertTrue(app.buttons["Bookmark"].exists, "bookmark action should be named Bookmark")
+        XCTAssertFalse(app.buttons["Save"].exists, "a bare 'Save' would be ambiguous next to Save to Photos")
+        save.tap()
+        // First use asks for add-only Photos access and the save carries on once it's answered;
+        // with access already granted the toast shows at once and only lasts 2s — so watch for
+        // either rather than waiting out an alert that may never come.
+        let toast = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Saved to Photos'")).firstMatch
+        // (Not SystemAlerts.dismissAny: after answering it waits 2s for a follow-up prompt, which
+        // is exactly the toast's lifetime.)
+        let photosAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch
+        var sawToast = false
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline && !sawToast {
+            if toast.exists { sawToast = true; break }
+            if photosAlert.exists, photosAlert.buttons["Allow"].exists { photosAlert.buttons["Allow"].tap() }
+        }
+        XCTAssertTrue(sawToast, "no Saved to Photos confirmation")
+    }
+
+    /// Text messages get no Save to Photos.
+    func testTextMessagesHaveNoSaveToPhotos() throws {
+        launch()
+        openCurrentBook()
+        let text = app.staticTexts["First seeded message"]
+        XCTAssertTrue(text.waitForExistence(timeout: 10))
+        text.press(forDuration: 0.8)
+        XCTAssertTrue(app.buttons["Bookmark"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Save to Photos"].exists)
+    }
+
+    /// The viewer's Share button opens the system sheet on the downloaded original.
+    func testThePhotoViewerSharesTheImage() throws {
+        try setMessages([["type": "Photo"]])
+        launch()
+        openCurrentBook()
+        _ = openPhotoViewer()
+        app.buttons["viewerShare"].tap()
+        let sheetAppeared = app.otherElements["ActivityListView"].waitForExistence(timeout: 10)
+            || app.buttons["Save Image"].waitForExistence(timeout: 2)
+            || app.cells["Save Image"].exists
+        XCTAssertTrue(sheetAppeared, "share sheet never appeared")
+    }
+
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
@@ -244,7 +362,8 @@ final class HermeticUITests: XCTestCase {
 
     // ---- control API (talks to the host-level stub, not an in-process object) ----------------
 
-    private func setMessages(_ messages: [String]) throws {
+    /// Each item is a text body, or e.g. `["type": "Photo"]` for a photo the stub serves itself.
+    private func setMessages(_ messages: [Any]) throws {
         try controlRequest(path: "/_stub/messages", method: "POST", jsonBody: messages)
     }
 

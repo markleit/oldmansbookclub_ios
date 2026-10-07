@@ -60,11 +60,37 @@ def _book(book_id, title, status, order):
     }
 
 
-def _message(body, index):
+def _test_png(width=2400, height=1600):
+    """A wide photo whose left and right thirds differ (red | white | blue), so a test can tell
+    whether a zoomed viewer can actually be panned to each edge (#191). Pure-stdlib PNG."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    third = width // 3
+    row = b"\x00" + b"\xd0\x30\x30" * third + b"\xf0\xf0\xf0" * (width - 2 * third) + b"\x30\x30\xd0" * third
+    raw = row * height
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b"")
+
+
+_MEDIA = {"photo.png": ("image/png", _test_png())}
+
+
+def _message(item, index):
+    # A plain string is a text message; {"type": "Photo"} is a photo served by this stub.
+    body, kind, media_url = item, "Text", None
+    if isinstance(item, dict):
+        kind = item.get("type", "Text")
+        body = item.get("body")
+        if kind == "Photo":
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
     return {
         "id": f"88888888-8888-8888-8888-{index:012d}", "club_id": CLUB_ID,
         "sender_id": "99999999-9999-9999-9999-999999999999", "sender_name": "Dixie",
-        "sender_avatar_url": None, "type": "Text", "body": body, "media_url": None,
+        "sender_avatar_url": None, "type": kind, "body": body, "media_url": media_url,
         "duration_seconds": None, "sent_at": f"2026-09-01T12:00:0{index % 10}.000Z",
         "is_deleted": False, "is_forwarded": False, "client_id": None, "parent_message_id": None,
         "parent_sender_name": None, "parent_preview": None, "parent_sent_at": None,
@@ -124,6 +150,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         route = self.path.split("?")[0]
+
+        if route.startswith("/_stub/media/"):
+            print(f"media GET {route}", flush=True)
+            media = _MEDIA.get(route.rsplit("/", 1)[-1])
+            if media is None:
+                return self._send_not_found()
+            content_type, data = media
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
 
         if route == "/_stub/requests":
             with _lock:
