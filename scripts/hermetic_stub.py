@@ -41,7 +41,7 @@ CURRENT_BOOK_ID = "66666666-6666-6666-6666-666666666666"
 FUTURE_BOOK_ID = "77777777-7777-7777-7777-777777777777"
 
 _lock = threading.Lock()
-_state = {"messages": [], "refuse_sends": False, "requested_paths": []}
+_state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": []}
 
 
 def _user():
@@ -95,6 +95,23 @@ def _message(item, index):
         "is_deleted": False, "is_forwarded": False, "client_id": None, "parent_message_id": None,
         "parent_sender_name": None, "parent_preview": None, "parent_sent_at": None,
         "transcript": None, "reactions": None,
+    }
+
+
+def _saved(item, index):
+    # Saved Messages (#192): same item shapes as /_stub/messages.
+    body, kind, media_url = item, "Text", None
+    if isinstance(item, dict):
+        kind = item.get("type", "Text")
+        body = item.get("body")
+        if kind == "Photo":
+            media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png"
+    return {
+        "saved_id": f"aaaaaaaa-aaaa-aaaa-aaaa-{index:012d}",
+        "message_id": f"bbbbbbbb-bbbb-bbbb-bbbb-{index:012d}",
+        "sender_name": "Dixie", "type": kind, "body": body, "media_url": media_url,
+        "duration_seconds": None, "sent_at": "2026-09-01T12:00:00.000Z",
+        "saved_at": "2026-09-02T12:00:00.000Z", "is_deleted": False,
     }
 
 
@@ -183,6 +200,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _book(CURRENT_BOOK_ID, "Seed: Current Read", "current", 0),
                 _book(FUTURE_BOOK_ID, "Seed: Future Read", "future", 0),
             ])
+        if route == "/messages/saved":
+            with _lock:
+                saved = list(_state["saved"])
+            return self._send_json([_saved(item, i) for i, item in enumerate(saved)])
         if route == f"/books/{CURRENT_BOOK_ID}/messages":
             with _lock:
                 messages = list(_state["messages"])
@@ -208,6 +229,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if route == "/_stub/reset":
             with _lock:
                 _state["messages"] = []
+                _state["saved"] = []
                 _state["refuse_sends"] = False
                 _state["requested_paths"] = []
             return self._send_json({"status": "reset"})
@@ -215,6 +237,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if route == "/_stub/messages":
             with _lock:
                 _state["messages"] = json.loads(body) if body else []
+            return self._send_json({"status": "ok"})
+
+        if route == "/_stub/saved":
+            with _lock:
+                _state["saved"] = json.loads(body) if body else []
             return self._send_json({"status": "ok"})
 
         if route == "/_stub/refuse-sends":
