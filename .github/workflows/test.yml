@@ -30,7 +30,12 @@ jobs:
 
   ios:
     name: iOS unit + hermetic UI
-    runs-on: macos-latest
+    # Xcode 27 (GitHub preview image) so CI tests on iOS 27 like our users' phones (#185).
+    runs-on: xcode-27
+    env:
+      # An iOS 27-only device name, so a co-installed older runtime is never picked by name;
+      # regression.sh falls back to any available iPhone if the image doesn't have it.
+      OMBC_SIMULATOR: iPhone 18 Pro
     steps:
       - uses: actions/checkout@v7
       - name: Install xcodegen
