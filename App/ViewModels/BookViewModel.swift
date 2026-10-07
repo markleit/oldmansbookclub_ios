@@ -1364,14 +1364,14 @@ final class BookViewModel: ObservableObject {
         }
     }
 
-    func forwardMessage(savedMessage: SavedMessage) async {
-        showSavedMessages = false
-        isUploading = true
-        defer { isUploading = false }
+    // #192 — forward a saved message to the chat the user picked (any book in their clubs; the
+    // server checks membership). Saved Messages stays open and reports the outcome itself.
+    func forwardMessage(savedMessage: SavedMessage, to bookId: UUID) async -> Bool {
         do {
-            try await ChatService.shared.forwardMessage(bookId: book.id, messageId: savedMessage.messageId)
+            try await ChatService.shared.forwardMessage(bookId: bookId, messageId: savedMessage.messageId)
+            return true
         } catch {
-            errorMessage = "Failed to forward message."
+            return false
         }
     }
 

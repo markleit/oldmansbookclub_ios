@@ -355,6 +355,82 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(sheetAppeared, "share sheet never appeared")
     }
 
+    // ---- Saved Messages: open vs forward (#192) ------------------------------------------------
+
+    private func setSaved(_ saved: [Any]) throws {
+        try controlRequest(path: "/_stub/saved", method: "POST", jsonBody: saved)
+    }
+
+    private func openSavedMessages() {
+        let menu = app.buttons["attachmentMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let item = app.buttons["Saved Messages"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "+ menu has no Saved Messages")
+        item.tap()
+        XCTAssertTrue(app.navigationBars["Saved Messages"].waitForExistence(timeout: 10), "Saved Messages never opened")
+    }
+
+    /// The bug (#192): tapping a saved message forwarded it into the current chat and closed the
+    /// sheet. Now it opens the photo, and Saved Messages is still there afterwards.
+    func testTappingASavedPhotoOpensItInsteadOfForwarding() throws {
+        try setSaved([["type": "Photo"]])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let open = app.buttons["savedOpen"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 10), "saved photo row never rendered")
+        open.tap()
+        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "tapping a saved photo didn't open it")
+        app.buttons["viewerClose"].tap()
+        XCTAssertTrue(waitForDisappearance(viewer))
+        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "Saved Messages closed — the tap forwarded instead of opening")
+    }
+
+    func testTappingSavedTextShowsItInFull() throws {
+        let long = "A saved thought that is long enough to be cut off in the list row, so the detail screen has to show all of it — every last word."
+        try setSaved([long])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let row = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'A saved thought'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Saved Message"].waitForExistence(timeout: 5), "text detail never opened")
+        XCTAssertTrue(app.staticTexts[long].exists, "detail doesn't show the full text")
+        XCTAssertTrue(app.buttons["Copy"].exists)
+    }
+
+    /// Forward is separate: ↗ → pick any chat (this one pinned first) → confirm. The stub has no
+    /// SignalR hub, so the send itself fails here — which also proves a failure is reported in
+    /// Saved Messages instead of silently closing it. (A real forward is covered on device.)
+    func testForwardAsksWhichChatThenConfirms() throws {
+        try setSaved(["Forward me"])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let forward = app.buttons["savedForward"].firstMatch
+        XCTAssertTrue(forward.waitForExistence(timeout: 10), "no Forward button on the saved row")
+        forward.tap()
+        XCTAssertTrue(app.navigationBars["Forward to…"].waitForExistence(timeout: 5), "chat picker never opened")
+        XCTAssertTrue(app.buttons["forwardTo-Seed: Current Read"].waitForExistence(timeout: 10), "current chat not offered")
+        let other = app.buttons["forwardTo-Seed: Future Read"]
+        XCTAssertTrue(other.waitForExistence(timeout: 10), "other chats in the club not offered")
+
+        other.tap()
+        XCTAssertTrue(app.staticTexts["Forward to Seed: Future Read?"].waitForExistence(timeout: 5), "no confirmation before forwarding")
+        let confirm = app.buttons["Forward"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.alerts["Couldn't Forward"].waitForExistence(timeout: 30), "a failed forward wasn't reported")
+        app.alerts["Couldn't Forward"].buttons["OK"].tap()
+        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "forwarding should leave you in Saved Messages")
+    }
+
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
