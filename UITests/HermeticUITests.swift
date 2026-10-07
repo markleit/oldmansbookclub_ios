@@ -300,8 +300,8 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(viewer))
     }
 
-    /// Messages' model: press-and-hold a photo → "Save to Photos". The bookmark action is
-    /// "Bookmark" now, so the two never share a name.
+    /// Messages' model: press-and-hold a photo → "Save to Photos". The other save is
+    /// "Save Message" (matching the Saved Messages screen), so the two never share a name.
     func testSaveToPhotosFromThePhotoMenu() throws {
         try setMessages([["type": "Photo"]])
         launch()
@@ -312,7 +312,7 @@ final class HermeticUITests: XCTestCase {
 
         let save = app.buttons["Save to Photos"]
         XCTAssertTrue(save.waitForExistence(timeout: 5), "photo menu has no Save to Photos")
-        XCTAssertTrue(app.buttons["Bookmark"].exists, "bookmark action should be named Bookmark")
+        XCTAssertTrue(app.buttons["Save Message"].exists, "saving to Saved Messages should be named Save Message")
         XCTAssertFalse(app.buttons["Save"].exists, "a bare 'Save' would be ambiguous next to Save to Photos")
         save.tap()
         // First use asks for add-only Photos access and the save carries on once it's answered;
@@ -338,8 +338,14 @@ final class HermeticUITests: XCTestCase {
         let text = app.staticTexts["First seeded message"]
         XCTAssertTrue(text.waitForExistence(timeout: 10))
         text.press(forDuration: 0.8)
-        XCTAssertTrue(app.buttons["Bookmark"].waitForExistence(timeout: 5))
+        let saveMessage = app.buttons["Save Message"]
+        XCTAssertTrue(saveMessage.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Save to Photos"].exists)
+
+        // Same words as the screen it lands in: "Save Message" → "Message saved" → Saved Messages.
+        saveMessage.tap()
+        let toast = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Message saved'")).firstMatch
+        XCTAssertTrue(toast.waitForExistence(timeout: 5), "no 'Message saved' confirmation")
     }
 
     /// The viewer's Share button opens the system sheet on the downloaded original.

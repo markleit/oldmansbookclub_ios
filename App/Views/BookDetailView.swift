@@ -697,15 +697,15 @@ struct MessageRow: View {
                     viewModel.consumeHeard([message.id])
                 }
             }
-            // #193 — like Messages' "Save": photos/videos go to the Photos library. The Saved
-            // Messages action is "Bookmark" so the two never read the same.
+            // #193 — like Messages' "Save": photos/videos go to the Photos library. The other save
+            // is "Save Message" — it matches the Saved Messages screen and never reads as Photos.
             if message.type == .photo || message.type == .video,
                let urlStr = message.mediaUrl, let url = URL(string: urlStr) {
                 menuRow("Save to Photos", "square.and.arrow.down") {
                     Task { await viewModel.saveToPhotos(message.type == .photo ? .photo : .video, from: url) }
                 }
             }
-            menuRow("Bookmark", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
+            menuRow("Save Message", "bookmark") { Task { await viewModel.saveMessage(id: message.id) } }
             if isMe {
                 menuRow("Delete", "trash", destructive: true) { Task { await viewModel.deleteMessage(id: message.id) } }
             } else {

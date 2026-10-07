@@ -1,6 +1,6 @@
 import SwiftUI
 
-// A brief confirmation banner ("Saved to Photos", "Message bookmarked") that slides in at the
+// A brief confirmation banner ("Saved to Photos", "Message saved") that slides in at the
 // top and clears itself. Owners hold a `Toast?` and attach `.toast($toast)`; setting a new value
 // restarts the timer, so back-to-back confirmations don't cut each other short.
 struct Toast: Equatable {

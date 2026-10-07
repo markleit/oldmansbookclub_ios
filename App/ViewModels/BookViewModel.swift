@@ -1326,7 +1326,7 @@ final class BookViewModel: ObservableObject {
     func saveMessage(id: UUID) async {
         do {
             try await APIClient.shared.saveMessage(messageId: id)
-            toast = Toast(text: "Message bookmarked", systemImage: "bookmark.fill")
+            toast = Toast(text: "Message saved", systemImage: "bookmark.fill")
         } catch {
             errorMessage = "Failed to save message."
         }
