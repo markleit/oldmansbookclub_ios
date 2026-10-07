@@ -9,7 +9,7 @@ settings:
   # Project-level so the app and its Share extension (#178) can never disagree — App Store
   # Connect rejects an extension whose version doesn't match its containing app's.
   MARKETING_VERSION: "2.1"
-  CURRENT_PROJECT_VERSION: 1
+  CURRENT_PROJECT_VERSION: 2
 packages:
   SignalRClient:
     url: https://github.com/dotnet/signalr-client-swift
