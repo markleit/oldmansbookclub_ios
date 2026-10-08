@@ -225,11 +225,12 @@ struct CachedBookCover: View {
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .task(id: refreshToken) { await load() }
+        // Reload when the cover itself changes (Edit Book → Change Cover), not only on refresh.
+        .task(id: "\(refreshToken)|\(urlString ?? "")") { await load() }
     }
 
     private func load() async {
-        guard let urlString, let url = URL(string: urlString) else { return }
+        guard let urlString, let url = URL(string: urlString) else { image = nil; return }
         if let cached = await ImageCache.shared.get(url) { image = cached; return }
         let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad)
         guard let (data, _) = try? await URLSession.shared.data(for: request) else { return }

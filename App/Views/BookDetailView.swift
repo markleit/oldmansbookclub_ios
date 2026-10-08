@@ -321,6 +321,7 @@ struct BookDetailView: View {
                 Menu { bookMenuItems } label: {
                     Image(systemName: "ellipsis.circle")
                 }
+                .accessibilityIdentifier("bookMenuButton")
             }
         }
         .alert("Delete \"\(viewModel.book.title)\"?", isPresented: $showingDeleteConfirm) {

@@ -174,6 +174,7 @@ final class LibraryViewModel: ObservableObject {
             books[idx].author = book.author
             books[idx].seriesName = book.seriesName
             books[idx].seriesOrder = book.seriesOrder
+            books[idx].coverBlobUrl = book.coverBlobUrl
             saveCache(books)
         }
     }

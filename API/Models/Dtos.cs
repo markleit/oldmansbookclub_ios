@@ -93,7 +93,9 @@ public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, 
 public record SetBookCoverRequest(string BookTitle, string CoverUrl);
 public record BookDto(Guid Id, Guid ClubId, string Title, string Author, string? CoverBlobUrl, DateTime AddedAt, DateTime? FinishedAt, string Status, string? Description, int? PublishedYear, int? PageCount, int UnreadCount = 0, string? SeriesName = null, int? SeriesOrder = null);
 public record CreateBookRequest(Guid ClubId, string Title, string Author, string? CoverUrl, string? SeriesName = null);
-public record UpdateBookRequest(string Title, string Author, string? SeriesName = null);
+// CoverUrl (2.1): optional — omitted/null leaves the cover untouched, which is what every older
+// client sends. Either an image this club uploaded via /media/upload-url, or a Google Books cover.
+public record UpdateBookRequest(string Title, string Author, string? SeriesName = null, string? CoverUrl = null);
 public record SetBookStatusRequest(string Status);
 // #137 — kept for backward compat: a still-live old client may call the future-read-order
 // route with this shape for days after a server deploy (App Store review lag). #144 added the

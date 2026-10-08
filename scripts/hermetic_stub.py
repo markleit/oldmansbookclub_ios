@@ -43,7 +43,8 @@ FUTURE_BOOK_ID = "77777777-7777-7777-7777-777777777777"
 
 _lock = threading.Lock()
 _state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": [], "sent": [],
-          "upload_url_delay": 0.0, "upload_url_times": [], "by_client_id": {}, "post_attempts": 0}
+          "upload_url_delay": 0.0, "upload_url_times": [], "by_client_id": {}, "post_attempts": 0,
+          "book_patches": []}
 
 
 def _user():
@@ -216,6 +217,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 return self._send_json(_state["upload_url_times"])
 
+        if route == "/_stub/book-patches":
+            with _lock:
+                return self._send_json(_state["book_patches"])
+
         if route == "/_stub/sent":
             with _lock:
                 return self._send_json(_state["sent"])
@@ -276,6 +281,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _state["upload_url_times"] = []
                 _state["by_client_id"] = {}
                 _state["post_attempts"] = 0
+                _state["book_patches"] = []
             return self._send_json({"status": "reset"})
 
         if route == "/_stub/messages":
@@ -328,6 +334,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             })
         if route.startswith("/_stub/upload/"):
             return self._send_json({})
+
+        # Edit Book (incl. the 2.1 cover change): record what was sent, answer with the book.
+        if self.command == "PATCH" and route == f"/books/{CURRENT_BOOK_ID}":
+            payload = json.loads(body) if body else {}
+            with _lock:
+                _state["book_patches"].append(payload)
+            book = _book(CURRENT_BOOK_ID, payload.get("title", "Seed: Current Read"), "current", 0)
+            book["author"] = payload.get("author", book["author"])
+            if payload.get("cover_url"):
+                book["cover_blob_url"] = payload["cover_url"]
+            return self._send_json(book)
 
         if route == f"/books/{CURRENT_BOOK_ID}/messages":
             with _lock:

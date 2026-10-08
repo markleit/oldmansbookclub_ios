@@ -667,6 +667,81 @@ final class HermeticUITests: XCTestCase {
         XCTAssertEqual(sent.map { $0["type"] as? String }, Array(repeating: "Photo", count: picked))
     }
 
+    // ---- Edit Book → Change Cover (2.1) ---------------------------------------------------------
+
+    /// A club admin picks a photo as the book's cover: it previews on the Edit screen, and Save
+    /// uploads it (club media) and sends its URL with the edit — and only then.
+    func testEditBookChangesTheCoverToAChosenPhoto() throws {
+        launch()
+        openCurrentBook()
+
+        let menu = app.buttons["bookMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let edit = app.buttons["Edit Book"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "book menu has no Edit Book")
+        edit.tap()
+
+        let change = app.buttons["changeCoverMenu"]
+        XCTAssertTrue(change.waitForExistence(timeout: 10), "Edit Book has no Change Cover")
+        change.tap()
+        XCTAssertFalse(app.buttons["Take Photo"].exists, "camera was deliberately left out")
+        XCTAssertTrue(app.buttons["Search Google Books"].exists)
+        app.buttons["Choose Photo"].tap()
+
+        // Single-selection picker: tapping a photo picks it and closes the picker.
+        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
+        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
+        thumbs.element(boundBy: 0).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chosenCoverImage"].waitForExistence(timeout: 15),
+                      "the chosen photo didn't preview as the cover")
+        XCTAssertTrue(try bookPatches().isEmpty, "nothing should be sent before Save")
+
+        app.buttons["saveBookButton"].tap()
+
+        var patches: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            patches = try bookPatches()
+            if !patches.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(patches.count, 1, "Save should send exactly one edit")
+        let cover = patches.first?["cover_url"] as? String ?? ""
+        XCTAssertTrue(cover.contains("/_stub/media/photo.png?u="),
+                      "the edit should carry the uploaded photo's URL, got '\(cover)'")
+        XCTAssertEqual(patches.first?["title"] as? String, "Seed: Current Read", "title must be untouched")
+    }
+
+    /// Editing only the title must not send a cover at all — the server keeps the existing one.
+    func testEditBookWithoutTouchingTheCoverSendsNoCover() throws {
+        launch()
+        openCurrentBook()
+        app.buttons["bookMenuButton"].tap()
+        app.buttons["Edit Book"].tap()
+
+        let titleField = app.textFields["bookTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 10))
+        titleField.tap()
+        titleField.typeText(" 2")
+        app.buttons["saveBookButton"].tap()
+
+        var patches: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            patches = try bookPatches()
+            if !patches.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(patches.count, 1)
+        XCTAssertNil(patches.first?["cover_url"], "an untouched cover must be left out of the edit")
+    }
+
+    private func bookPatches() throws -> [[String: Any]] {
+        let data = try controlRequest(path: "/_stub/book-patches", method: "GET")
+        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+    }
+
     private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
         return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed

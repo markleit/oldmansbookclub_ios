@@ -311,10 +311,13 @@ final class APIClient {
         let title: String
         let author: String
         let seriesName: String?
+        let coverUrl: String?   // nil = leave the cover as it is (omitted from the JSON)
     }
 
-    func updateBook(bookId: UUID, title: String, author: String, seriesName: String? = nil) async throws -> Book {
-        try await patch(path: "/books/\(bookId.uuidString)", body: UpdateBookRequest(title: title, author: author, seriesName: seriesName))
+    func updateBook(bookId: UUID, title: String, author: String, seriesName: String? = nil,
+                    coverUrl: String? = nil) async throws -> Book {
+        try await patch(path: "/books/\(bookId.uuidString)",
+                        body: UpdateBookRequest(title: title, author: author, seriesName: seriesName, coverUrl: coverUrl))
     }
 
     struct BookSearchResult: Identifiable, Decodable {

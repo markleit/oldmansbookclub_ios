@@ -61,8 +61,39 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .ToListAsync();
 
         var unread = await ComputeUnreadCountsAsync(books.Select(b => b.Id).ToList());
+        var signCover = await CoverSignerAsync(books.Select(b => b.CoverBlobUrl));
 
-        return books.Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, b.CoverBlobUrl, b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount, unread.GetValueOrDefault(b.Id), b.SeriesName, b.SeriesOrder));
+        return books.Select(b => new BookDto(b.Id, b.ClubId, b.Title, b.Author, signCover(b.CoverBlobUrl), b.AddedAt, b.FinishedAt, b.Status, b.Description, b.PublishedYear, b.PageCount, unread.GetValueOrDefault(b.Id), b.SeriesName, b.SeriesOrder));
+    }
+
+    // Uploaded covers (Edit Book → Choose Photo) live in the club's private media container, so
+    // they go out with a fresh read SAS, exactly like chat media; Google Books covers pass
+    // through untouched. One delegation key per response, fetched only if a book needs it.
+    private bool IsOwnBlob(string? url) =>
+        url is not null && Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Host == blob.AccountHost;
+
+    private async Task<Func<string?, string?>> CoverSignerAsync(IEnumerable<string?> covers)
+    {
+        if (!covers.Any(IsOwnBlob)) return cover => cover;
+        var (key, expiresOn) = await blob.GetReadDelegationKeyAsync();
+        return cover => IsOwnBlob(cover) ? blob.GenerateFreshReadUrl(cover, key, expiresOn) : cover;
+    }
+
+    private async Task<BookDto> ToDtoAsync(Book book)
+    {
+        var signCover = await CoverSignerAsync([book.CoverBlobUrl]);
+        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, signCover(book.CoverBlobUrl), book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
+    }
+
+    // A cover an admin may set on this book: one of this club's own uploads (the path
+    // /media/upload-url hands out for it), or a Google Books cover — nothing else, so a client
+    // can't point the library at another club's media or an arbitrary host.
+    private bool IsAcceptableCover(string url, Guid clubId)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https") return false;
+        if (uri.Host == blob.AccountHost)
+            return uri.AbsolutePath.StartsWith($"/club-media/{clubId}/", StringComparison.OrdinalIgnoreCase);
+        return uri.Host == "books.google.com" || uri.Host.EndsWith(".googleusercontent.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private Task<Dictionary<Guid, int>> ComputeUnreadCountsAsync(List<Guid> bookIds)
@@ -274,8 +305,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         db.Books.Add(book);
         await db.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetMyBooks),
-            new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder));
+        return CreatedAtAction(nameof(GetMyBooks), await ToDtoAsync(book));
     }
 
     // #138 — empty/whitespace-only means "not in a series", same as null. Trimmed so "Dune "
@@ -332,11 +362,11 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             await db.SaveChangesAsync();
         }
 
-        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
+        return await ToDtoAsync(book);
     }
 
-    // Edit a book's title/author (backs the "Edit Book" action). Club-admin only, like
-    // create/delete. Cover + metadata are left untouched.
+    // Edit a book's title/author/series and, optionally, its cover (backs the "Edit Book" action).
+    // Club-admin only, like create/delete. Metadata is left untouched.
     [HttpPatch("{bookId}")]
     public async Task<ActionResult<BookDto>> UpdateBook(Guid bookId, [FromBody] UpdateBookRequest request)
     {
@@ -361,9 +391,39 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             book.SeriesOrder = newSeriesName is null ? null : await NextSeriesOrderAsync(book.ClubId, newSeriesName);
         }
 
+        // 2.1 — Edit Book can change the cover. Null = untouched (older clients never send it).
+        if (request.CoverUrl is not null)
+        {
+            if (!IsAcceptableCover(request.CoverUrl, book.ClubId)) return BadRequest("Invalid cover URL.");
+            // Our own uploads are stored plain (a read SAS is added when served); a Google cover
+            // URL keeps its query — that's where the volume id lives.
+            book.CoverBlobUrl = IsOwnBlob(request.CoverUrl) ? request.CoverUrl.Split('?')[0] : request.CoverUrl;
+            // GetBook's one-time Google backfill would otherwise replace this cover with the top
+            // search match the first time anyone opens the book. Do that backfill now for the
+            // other details instead (description, year, pages) and mark it done.
+            if (book.MetadataFetchedAt is null)
+            {
+                try
+                {
+                    var match = (await FetchGoogleBooksAsync(book.Title)).FirstOrDefault();
+                    if (match is not null)
+                    {
+                        book.Description ??= match.Description;
+                        book.PublishedYear ??= match.PublishedYear;
+                        book.PageCount ??= match.PageCount;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Metadata backfill during cover change failed for book {BookId}", book.Id);
+                }
+                book.MetadataFetchedAt = DateTime.UtcNow;
+            }
+        }
+
         await db.SaveChangesAsync();
 
-        return new BookDto(book.Id, book.ClubId, book.Title, book.Author, book.CoverBlobUrl, book.AddedAt, book.FinishedAt, book.Status, book.Description, book.PublishedYear, book.PageCount, SeriesName: book.SeriesName, SeriesOrder: book.SeriesOrder);
+        return await ToDtoAsync(book);
     }
 
     // #137 — kept as-is for backward compat: a client still on a pre-#144 build may call this

@@ -1512,11 +1512,12 @@ final class BookViewModel: ObservableObject {
         }
     }
 
-    // Reflect an "Edit Book" save locally — only title/author change; keep the rest
-    // (status, unread count, cover, metadata) as-is.
+    // Reflect an "Edit Book" save locally — title, author and cover; keep the rest
+    // (status, unread count, metadata) as-is.
     func applyEdit(_ updated: Book) {
         book.title = updated.title
         book.author = updated.author
+        book.coverBlobUrl = updated.coverBlobUrl
     }
 
     func setStatus(_ status: BookStatus) async {

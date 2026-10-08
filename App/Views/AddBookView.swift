@@ -1,9 +1,10 @@
 import SwiftUI
+import PhotosUI
 
 struct AddBookView: View {
     @Environment(\.dismiss) private var dismiss
     let clubId: UUID
-    // Non-nil = edit an existing book (title/author only); nil = add a new book.
+    // Non-nil = edit an existing book (title/author/series/cover); nil = add a new book.
     private let editingBook: Book?
     var onSaved: (Book) -> Void
 
@@ -32,6 +33,14 @@ struct AddBookView: View {
     // Set true right before we fill the title from a picked result, so its
     // .onChange doesn't kick off another search and clobber the selection.
     @State private var suppressSearch = false
+    // Edit Book → Change Cover (2.1): a photo from the library (uploaded on Save), or another
+    // Google Books edition's cover. `coverChanged` decides whether Save sends a cover at all —
+    // untouched, the server leaves the existing one alone.
+    @State private var newCoverImage: UIImage?
+    @State private var coverChanged = false
+    @State private var showingCoverPhotoPicker = false
+    @State private var coverPickerItem: PhotosPickerItem?
+    @State private var isFindingCovers = false
 
     var body: some View {
         NavigationStack {
@@ -54,10 +63,17 @@ struct AddBookView: View {
                     }
                 }
 
-                if isSearching || coverUrl != nil {
+                if isEditing || isSearching || coverUrl != nil {
                     Section("Cover") {
                         HStack {
-                            if isSearching {
+                            if let newCoverImage {
+                                Image(uiImage: newCoverImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 80, height: 120)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .accessibilityIdentifier("chosenCoverImage")
+                            } else if isSearching || isFindingCovers {
                                 RoundedRectangle(cornerRadius: 8)
                                     .fill(Color.gray.opacity(0.2))
                                     .frame(width: 80, height: 120)
@@ -71,8 +87,31 @@ struct AddBookView: View {
                                 }
                                 .frame(width: 80, height: 120)
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                            } else if isEditing {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.gray.opacity(0.2))
+                                    .frame(width: 80, height: 120)
+                                    .overlay(Image(systemName: "book.closed").foregroundColor(.secondary))
                             }
                             Spacer()
+                            if isEditing {
+                                Menu {
+                                    Button {
+                                        showingCoverPhotoPicker = true
+                                    } label: {
+                                        Label("Choose Photo", systemImage: "photo")
+                                    }
+                                    Button {
+                                        Task { await findGoogleCovers() }
+                                    } label: {
+                                        Label("Search Google Books", systemImage: "magnifyingglass")
+                                    }
+                                } label: {
+                                    Text("Change Cover")
+                                }
+                                .accessibilityIdentifier("changeCoverMenu")
+                                .disabled(isFindingCovers || isLoading)
+                            }
                         }
                         .padding(.vertical, 4)
                     }
@@ -84,7 +123,7 @@ struct AddBookView: View {
                     HStack {
                         Text("Author")
                         Spacer()
-                        if !searchResults.isEmpty {
+                        if !searchResults.isEmpty && !isEditing {
                             Button(searchResults.count > 1 ? "Choose edition" : "Use match") {
                                 showingPicker = true
                             }
@@ -139,9 +178,21 @@ struct AddBookView: View {
                 }
             }
             .sheet(isPresented: $showingPicker) {
-                BookPickerSheet(results: searchResults) { result in
+                BookPickerSheet(results: isEditing ? searchResults.filter { $0.coverUrl != nil } : searchResults) { result in
                     apply(result)
                     showingPicker = false
+                }
+            }
+            .photosPicker(isPresented: $showingCoverPhotoPicker, selection: $coverPickerItem, matching: .images)
+            .onChange(of: coverPickerItem) { item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        newCoverImage = image
+                        coverChanged = true
+                    }
+                    coverPickerItem = nil
                 }
             }
         }
@@ -177,9 +228,31 @@ struct AddBookView: View {
         }
     }
 
+    // Edit Book → Change Cover → Search Google Books: other editions of this title, to pick a
+    // different cover. Only the cover changes — the title/author being edited are left alone.
+    private func findGoogleCovers() async {
+        let t = title.trimmingCharacters(in: .whitespaces)
+        guard t.count >= 2 else { return }
+        isFindingCovers = true
+        defer { isFindingCovers = false }
+        searchResults = await APIClient.shared.searchBooks(title: t)
+        if searchResults.contains(where: { $0.coverUrl != nil }) {
+            showingPicker = true
+        } else {
+            errorMessage = "No Google Books covers found for this title."
+        }
+    }
+
     // Explicit selection from the picker: pull the full metadata, including the
     // title (overwriting/completing whatever partial text was typed).
     private func apply(_ result: APIClient.BookSearchResult) {
+        if isEditing {
+            guard let cover = result.coverUrl else { return }
+            newCoverImage = nil
+            coverUrl = cover
+            coverChanged = true
+            return
+        }
         if title != result.title {
             suppressSearch = true
             title = result.title
@@ -209,7 +282,20 @@ struct AddBookView: View {
         do {
             let book: Book
             if let editing = editingBook {
-                book = try await APIClient.shared.updateBook(bookId: editing.id, title: t, author: a, seriesName: s.isEmpty ? nil : s)
+                // A chosen photo goes up first, the same way chat photos do (club media); a picked
+                // Google edition sends its URL as-is; an untouched cover sends nothing.
+                var newCover: String?
+                if let image = newCoverImage,
+                   let data = image.resizedForUpload(maxDimension: 1000).jpegData(compressionQuality: 0.8) {
+                    let upload = try await APIClient.shared.getUploadUrl(clubId: editing.clubId, ext: "jpg")
+                    guard let uploadUrl = URL(string: upload.uploadUrl) else { throw URLError(.badURL) }
+                    try await APIClient.shared.uploadMedia(data: data, to: uploadUrl, contentType: "image/jpeg")
+                    newCover = upload.mediaUrl
+                } else if coverChanged {
+                    newCover = coverUrl
+                }
+                book = try await APIClient.shared.updateBook(bookId: editing.id, title: t, author: a,
+                                                             seriesName: s.isEmpty ? nil : s, coverUrl: newCover)
             } else {
                 book = try await APIClient.shared.createBook(clubId: clubId, title: t, author: a, coverUrl: coverUrl, seriesName: s.isEmpty ? nil : s)
             }
