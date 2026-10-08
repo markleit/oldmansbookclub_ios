@@ -612,6 +612,13 @@ final class HermeticUITests: XCTestCase {
         XCTAssertEqual(sent.map { $0["type"] as? String }, ["Text"] + Array(repeating: "Photo", count: toSend),
                        "expected the caption then \(toSend) photos, in that order; got \(sent)")
         XCTAssertEqual(sent.first?["body"] as? String, "a caption")
+
+        // #203 — each photo may be posted twice (directly and via the background session); the
+        // chat must still show exactly one bubble per photo once everything has been confirmed.
+        let bubbles = app.buttons.matching(identifier: "photoMessage")
+        let settled = NSPredicate(format: "count == %d", toSend)
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: settled, object: bubbles)], timeout: 15),
+                       .completed, "expected \(toSend) photo bubbles, found \(bubbles.count)")
     }
 
     // ---- batch sends start together (#203) ---------------------------------------------------------

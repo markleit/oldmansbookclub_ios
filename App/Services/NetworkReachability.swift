@@ -30,12 +30,15 @@ final class NetworkReachability: @unchecked Sendable {
         monitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             lock.lock()
-            let wasUnsatisfied = status == .unsatisfied
+            let previous = status
             status = path.status
-            let handlers = (wasUnsatisfied && path.status == .satisfied) ? reachableHandlers : []
+            let cameBack = Self.cameBack(from: previous, to: path.status)
+            let handlers = cameBack ? reachableHandlers : []
             lock.unlock()
-            if wasUnsatisfied != (path.status == .unsatisfied) {
-                SendLog.note(path.status == .unsatisfied ? "network lost" : "network back")
+            if previous == .satisfied && path.status != .satisfied {
+                SendLog.note("network lost", nil, "status=\(path.status)")
+            } else if cameBack {
+                SendLog.note("network back")
             }
             handlers.forEach { $0() }
         }
@@ -48,6 +51,13 @@ final class NetworkReachability: @unchecked Sendable {
         lock.lock()
         reachableHandlers.append(handler)
         lock.unlock()
+    }
+
+    /// Whether a status change means the network just became usable. Turning airplane mode off
+    /// goes unsatisfied → requiresConnection → satisfied, so "was unsatisfied" missed it (#203,
+    /// seen in a device send log on 2.1 (4)); any not-satisfied → satisfied counts.
+    static func cameBack(from old: NWPath.Status, to new: NWPath.Status) -> Bool {
+        old != .satisfied && new == .satisfied
     }
 
     var hasNetworkPath: Bool {

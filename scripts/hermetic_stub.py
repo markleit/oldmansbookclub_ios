@@ -43,7 +43,7 @@ FUTURE_BOOK_ID = "77777777-7777-7777-7777-777777777777"
 
 _lock = threading.Lock()
 _state = {"messages": [], "saved": [], "refuse_sends": False, "requested_paths": [], "sent": [],
-          "upload_url_delay": 0.0, "upload_url_times": []}
+          "upload_url_delay": 0.0, "upload_url_times": [], "by_client_id": {}, "post_attempts": 0}
 
 
 def _user():
@@ -274,6 +274,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _state["sent"] = []
                 _state["upload_url_delay"] = 0.0
                 _state["upload_url_times"] = []
+                _state["by_client_id"] = {}
+                _state["post_attempts"] = 0
             return self._send_json({"status": "reset"})
 
         if route == "/_stub/messages":
@@ -332,8 +334,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 refuse = _state["refuse_sends"]
             if refuse:
                 return self._send_json({"error": "stub refused this send"})
+            # Mirror the real server's clientId dedup (MessageSendService): a repeat of a clientId
+            # returns the message already created, and isn't a second message. The app now posts
+            # media both directly and via the background session (#203), so this matters.
             echoed = _echo_sent(body)
             with _lock:
+                _state["post_attempts"] += 1
+                cid = echoed.get("client_id")
+                if cid and cid in _state["by_client_id"]:
+                    return self._send_json(_state["by_client_id"][cid])
+                if cid:
+                    _state["by_client_id"][cid] = echoed
                 _state["sent"].append({"type": echoed["type"], "body": echoed["body"],
                                        "media_url": echoed["media_url"]})
             return self._send_json(echoed)

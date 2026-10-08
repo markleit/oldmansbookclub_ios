@@ -36,6 +36,24 @@ final class BackgroundUploadService: NSObject {
     // serial delegate queue (delegateQueue: nil above) already guarantees run one at a time.
     private var responseBuffers: [Int: Data] = [:]
 
+    // #203 — items whose upload is being started right now (upload link requested, PUT not yet
+    // handed to the session). `hasInflightUpload` only sees the PUT once it exists, so three
+    // retry paths (foreground resume, the chat's flush, network-back) each passed it while the
+    // others were still waiting on the upload link — and uploaded the same file 2–3 times.
+    private let claimLock = NSLock()
+    private var startingUploads: Set<UUID> = []
+
+    /// Claim the right to start this item's upload. False if another path already is.
+    func claimUploadStart(_ id: UUID) -> Bool {
+        claimLock.lock(); defer { claimLock.unlock() }
+        return startingUploads.insert(id).inserted
+    }
+
+    func releaseUploadStart(_ id: UUID) {
+        claimLock.lock(); defer { claimLock.unlock() }
+        startingUploads.remove(id)
+    }
+
     private override init() { super.init() }
 
     /// Recreate the session at launch so queued/finished background tasks deliver their
@@ -71,9 +89,13 @@ final class BackgroundUploadService: NSObject {
         guard TokenStore.shared.token != nil else { return }
         let pending = MediaSendQueue.shared.items.filter { $0.uploadedMediaUrl == nil }
         if !pending.isEmpty { SendLog.note("resume uploads", nil, "trigger=\(trigger) items=\(pending.count)") }
+        // No network at all: don't park on the upload-link request; the next trigger retries.
+        guard NetworkReachability.shared.hasNetworkPath else { return }
         for item in pending {
             if await hasInflightUpload(itemId: item.id) { continue }
             guard FileManager.default.fileExists(atPath: item.localFileUrl.path) else { continue }
+            guard claimUploadStart(item.id) else { continue }
+            defer { releaseUploadStart(item.id) }
             do {
                 let ext = (item.fileName as NSString).pathExtension
                 let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
@@ -152,6 +174,16 @@ final class BackgroundUploadService: NSObject {
         task.resume()
     }
 
+    /// #203 — the direct (foreground) post for this item already landed: drop the background copy
+    /// so it doesn't linger in nsurlsessiond. Harmless if it already went (the server dedups by
+    /// clientId); its cancelled completion is ignored below.
+    func cancelSend(itemId: UUID) {
+        let description = "\(Self.sendTaskPrefix)\(itemId.uuidString)"
+        session.getAllTasks { tasks in
+            tasks.filter { $0.taskDescription == description }.forEach { $0.cancel() }
+        }
+    }
+
     /// Whether a background send for this item is already running/queued (mirrors
     /// `hasInflightUpload`) — guards a re-entrant sendMediaItem from kicking a second POST.
     func hasInflightSend(itemId: UUID) async -> Bool {
@@ -171,6 +203,11 @@ final class BackgroundUploadService: NSObject {
 
         let status = (task.response as? HTTPURLResponse)?.statusCode ?? -1
         let data = responseBuffers[task.taskIdentifier]
+        if (error as? URLError)?.code == .cancelled {
+            // Cancelled because the direct post already delivered it (cancelSend) — not a failure.
+            SendLog.note("background post cancelled (delivered directly)", itemId)
+            return
+        }
         SendLog.note("post finished", itemId, "status=\(status)\(error.map { " " + SendLog.describe($0) } ?? "")")
 
         guard error == nil, (200..<300).contains(status), let data,
