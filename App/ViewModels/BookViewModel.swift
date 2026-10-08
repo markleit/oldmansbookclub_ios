@@ -1017,6 +1017,25 @@ final class BookViewModel: ObservableObject {
                 scheduleUploadWatchdog(for: item.id)
                 return
             }
+            // #203 — no network at all: fail now instead of parking ~30 s on the upload-link
+            // request, and don't spend the auto-retry budget on it — being offline isn't a failed
+            // attempt. Network-back / foreground / Retry pick it up.
+            guard NetworkReachability.shared.hasNetworkPath else {
+                SendLog.note("offline — upload link skipped", item.id)
+                if let idx = messages.firstIndex(where: { $0.id == item.id }) {
+                    messages[idx].sendState = .failed
+                }
+                sendFailed.insert(item.id)
+                await pumpSendQueue()
+                return
+            }
+            // Another path (foreground resume, network-back, a flush) is already starting it.
+            guard BackgroundUploadService.shared.claimUploadStart(item.id) else {
+                SendLog.note("upload start already claimed", item.id)
+                scheduleUploadWatchdog(for: item.id)
+                return
+            }
+            defer { BackgroundUploadService.shared.releaseUploadStart(item.id) }
             do {
                 let ext = (item.fileName as NSString).pathExtension
                 SendLog.note("upload link requested", item.id, "kind=\(item.kind.rawValue) retries=\(item.retryCount)")
@@ -1094,12 +1113,40 @@ final class BookViewModel: ObservableObject {
         // through the same completion — don't start a second one.
         if await BackgroundUploadService.shared.hasInflightSend(itemId: item.id) {
             SendLog.note("post already in flight", item.id)
-            return
+        } else {
+            SendLog.note("post \(item.kind.rawValue)", item.id)
+            BackgroundUploadService.shared.sendMessage(
+                itemId: item.id, bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
+                durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
         }
-        SendLog.note("post \(item.kind.rawValue)", item.id)
-        BackgroundUploadService.shared.sendMessage(
-            itemId: item.id, bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
-            durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
+        // #203 — and, while the app is in the foreground, the same POST directly. The background
+        // post (#140) is what guarantees delivery if the app is suspended, but nsurlsessiond
+        // schedules it on its own clock: a device log on 2.1 (4) showed one held 86 s on the
+        // phone (server log: handled in 0.3 s on arrival) with two photos waiting behind it.
+        // Whichever lands first wins; the server dedups by clientId, so a second copy returns the
+        // same message with no re-broadcast or push.
+        if UIApplication.shared.applicationState == .active {
+            Task { await postMediaDirect(item, mediaUrl: mediaUrl) }
+        }
+    }
+
+    private var directPostsInFlight: Set<UUID> = []
+
+    private func postMediaDirect(_ item: MediaQueueItem, mediaUrl: String) async {
+        guard NetworkReachability.shared.hasNetworkPath,
+              directPostsInFlight.insert(item.id).inserted else { return }
+        defer { directPostsInFlight.remove(item.id) }
+        do {
+            let sent = try await APIClient.shared.sendMessage(
+                bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
+                durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
+            SendLog.note("posted directly", item.id)
+            BackgroundUploadService.shared.cancelSend(itemId: item.id)
+            handleSendCompleted(itemId: item.id, success: true, message: sent, errorMessage: nil)
+        } catch {
+            // Not a failure of the send: the background post is still carrying it.
+            SendLog.note("direct post failed (background post continues)", item.id, SendLog.describe(error))
+        }
     }
 
     // Drive the send once a background upload finishes. On success the queue item now has
@@ -1173,6 +1220,13 @@ final class BookViewModel: ObservableObject {
     // itself proves the message reached the server (or tells us definitively why it didn't).
     @MainActor
     private func handleSendCompleted(itemId: UUID, success: Bool, message: Message?, errorMessage: String?) {
+        // #203 — with the direct + background posts racing, the second result for an item that's
+        // already been delivered (and left the queue) is a no-op, never a failure.
+        guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }) else {
+            mediaPostsAwaitingResult.remove(itemId)
+            Task { await pumpSendQueue() }
+            return
+        }
         mediaPostsAwaitingResult.remove(itemId)
         // Either way this item is resolved for now — let the next one in line post.
         defer { Task { await pumpSendQueue() } }
@@ -1586,7 +1640,19 @@ final class BookViewModel: ObservableObject {
             let wasOffline = prevStatus.value.map { $0 != .satisfied } ?? false
             prevStatus.value = path.status
             guard wasOffline, path.status == .satisfied else { return }
-            Task { await self?.load() }
+            SendLog.note("chat sees network back")
+            Task { @MainActor in
+                await self?.load()
+                // #203 — load() only flushes if its fetch succeeds, and right after airplane mode
+                // goes off that first fetch can still fail (2.1 (4) device log: no flush ran until
+                // the app was backgrounded and reopened). Retry queued sends directly, and once more
+                // a few seconds later in case the network wasn't fully usable the first time.
+                await self?.flushPendingMedia(trigger: "network back")
+                await self?.flushPendingText(trigger: "network back")
+                try? await Task.sleep(for: .seconds(5))
+                await self?.flushPendingMedia(trigger: "network back +5s")
+                await self?.flushPendingText(trigger: "network back +5s")
+            }
         }
         monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }
