@@ -1,10 +1,11 @@
 import Foundation
-import Security
 
 // #178 — the handful of endpoints the Share extension needs, over plain URLSession. Deliberately
-// NOT the app's APIClient: that carries token refresh, sign-out side effects, SignalR hand-offs
-// and background-session plumbing that an extension must not run. Same wire contract, though —
-// snake_case JSON both ways, the same upload-then-post media flow as BookViewModel.sendMediaItem.
+// NOT the app's APIClient: that carries sign-out side effects, SignalR hand-offs and
+// background-session plumbing that an extension must not run. Token refresh it does share, in
+// spirit: SignInSession (Shared/SharedSignIn.swift, #204) refreshes the one-hour access token the
+// same way and writes it back for the app. Same wire contract — snake_case JSON both ways, the
+// same upload-then-post media flow as BookViewModel.sendMediaItem.
 enum ShareError: LocalizedError {
     case signedOut
     case server(String)
@@ -19,15 +20,17 @@ enum ShareError: LocalizedError {
 
 struct ShareAPI {
     let baseURL: URL
-    let token: String
+    let signIn: SignInSession
     let deviceToken: String?
 
     /// nil when the app has no signed-in session this extension can read.
     static func current() -> ShareAPI? {
-        guard let token = readToken() else { return nil }
+        let store = KeychainSignInStore()
+        guard store.accessToken() != nil else { return nil }
         let defaults = SharedContainer.defaults
-        return ShareAPI(baseURL: resolveBaseURL(defaults),
-                        token: token,
+        let baseURL = resolveBaseURL(defaults)
+        return ShareAPI(baseURL: baseURL,
+                        signIn: SignInSession(baseURL: baseURL, store: store),
                         deviceToken: defaults?.string(forKey: SharedContainer.Key.deviceToken))
     }
 
@@ -42,21 +45,6 @@ struct ShareAPI {
         }
         #endif
         return productionURL
-    }
-
-    private static func readToken() -> String? {
-        var query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: SharedContainer.keychainService,
-            kSecAttrAccount: SharedContainer.keychainTokenAccount,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ]
-        if let group = SharedContainer.keychainAccessGroup { query[kSecAttrAccessGroup] = group }
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
     }
 
     // MARK: - Endpoints
@@ -108,26 +96,45 @@ struct ShareAPI {
         _ = try await send(req)
     }
 
+    /// The bearer token is added by `send`, which owns refreshing it.
     private func request(path: String, method: String = "GET") -> URLRequest {
         var req = URLRequest(url: URL(string: baseURL.absoluteString + path)!)
         req.httpMethod = method
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.timeoutInterval = 30
         return req
     }
 
-    private func send(_ req: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw ShareError.server("No response from the server.") }
-        // No refresh here: the JWT lives a year, and refreshing would rotate tokens behind the
-        // app's back. A rejected token means "go sign in in the app".
-        if http.statusCode == 401 { throw ShareError.signedOut }
+    /// #204 — the access token lasts an hour, so it's refreshed before sending when it's (nearly)
+    /// expired, and once more if the server refuses it anyway. Only a refused REFRESH means
+    /// "sign in in the app"; being unable to reach the server to refresh is a connection error.
+    private func send(_ unsigned: URLRequest) async throws -> Data {
+        var token = try await authorized { try await signIn.accessToken() }
+        var (data, http) = try await perform(unsigned, token: token)
+        if http.statusCode == 401 {
+            token = try await authorized { try await signIn.tokenAfterRejection(of: token) }
+            (data, http) = try await perform(unsigned, token: token)
+            if http.statusCode == 401 { throw ShareError.signedOut }
+        }
         guard (200..<300).contains(http.statusCode) else {
             struct ErrorBody: Decodable { let error: String }
             if let body = try? Self.decoder.decode(ErrorBody.self, from: data) { throw ShareError.server(body.error) }
             throw ShareError.server("Something went wrong (\(http.statusCode)). Try again.")
         }
         return data
+    }
+
+    private func perform(_ unsigned: URLRequest, token: String) async throws -> (Data, HTTPURLResponse) {
+        var req = unsigned
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw ShareError.server("No response from the server.") }
+        return (data, http)
+    }
+
+    private func authorized(_ get: () async throws -> String) async throws -> String {
+        do { return try await get() }
+        catch SignInError.signedOut { throw ShareError.signedOut }
+        catch { throw ShareError.server("Couldn't reach Old Man's Book Club. Check your connection and try again.") }
     }
 
     private static let decoder: JSONDecoder = {

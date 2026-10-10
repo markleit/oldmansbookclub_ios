@@ -29,7 +29,9 @@ enum SharedContainer {
         static let deviceToken = "apns_device_token"
     }
 
-    /// Same service/account TokenStore writes (TokenStore.keychainService / keychainTokenAccount).
+    /// Same service/accounts TokenStore writes (TokenStore.keychainService / keychainTokenAccount /
+    /// keychainRefreshAccount).
     static let keychainService = "com.example.oldmansbookclub"
     static let keychainTokenAccount = "jwt_token"
+    static let keychainRefreshAccount = "refresh_token"
 }
