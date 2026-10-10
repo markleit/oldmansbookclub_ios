@@ -138,25 +138,10 @@ builder.Services.AddAuthorization();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
-    // Auth endpoints: 10 attempts per minute per IP. Partitioned (#154) — AddFixedWindowLimiter
-    // with no partition key gives every caller ONE SHARED bucket for the whole process, so what
-    // looked like "10 per minute per IP" was actually 10 per minute, full stop: one client
-    // retrying a failed sign-in could 429 every other member's login for up to a minute.
-    options.AddPolicy("auth", httpContext => RateLimitPartition.GetFixedWindowLimiter(
-        httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-        _ => new FixedWindowRateLimiterOptions
-        {
-            Window = TimeSpan.FromMinutes(1),
-            PermitLimit = 10,
-            QueueLimit = 0,
-        }));
-    // Media upload-url endpoints: 30 per minute per user
-    options.AddFixedWindowLimiter("media", o =>
-    {
-        o.Window = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 30;
-        o.QueueLimit = 0;
-    });
+    // Auth: 10 attempts per minute per IP. Media upload links: 30 per minute per user (#204).
+    // Both partitioned — see RateLimitPolicies for why an unpartitioned limiter is a shared bucket.
+    options.AddPolicy("auth", httpContext => RateLimitPolicies.Auth(httpContext));
+    options.AddPolicy("media", httpContext => RateLimitPolicies.Media(httpContext));
 });
 
 var app = builder.Build();
@@ -167,7 +152,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Must run before UseRateLimiter: the auth partition key below reads Connection.RemoteIpAddress,
+// Must run before UseRateLimiter: the auth partition key (RateLimitPolicies.Auth) reads Connection.RemoteIpAddress,
 // which behind Azure App Service's front-end proxy is otherwise the proxy's own address, not the
 // caller's — every request would land back in one shared partition, changing nothing (#154).
 // KnownNetworks/KnownProxies default to loopback-only, which would silently ignore the header
@@ -182,8 +167,11 @@ forwardedHeadersOptions.KnownIPNetworks.Clear();
 forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
-app.UseRateLimiter();
+// Authentication BEFORE the rate limiter (#204): the media policy partitions by the signed-in
+// user, which only exists once the token has been read. Auth endpoints are anonymous, so their
+// per-IP policy is unaffected by the order.
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<ChatHub>("/hubs/chat");

@@ -271,6 +271,11 @@ it.
 | Make `UnreadStore` always write the badge | `testThePushPathUpdatesTheCountWithoutTouchingTheBadge` |
 | Add a camelCase policy to the server's `JsonStringEnumConverter` | the contract fixtures (three of them) |
 | Make `SendReconciler` always `.insert` | `testASentMessageAppearsOnceNotTwice` (the bubble renders twice) |
+| Rate-limit before the clientId dedup check | `Resending_a_message_the_server_already_has_is_free_even_at_the_limit` |
+| `UseRateLimiter` before `UseAuthentication`, or an unpartitioned `media` policy | `Upload_links_are_limited_per_member_not_for_the_whole_club` |
+| Drop the `CappedReadStream` wrapper in the file-body send | `A_body_with_no_declared_length_is_still_capped_while_it_streams` |
+| Validate sender/book after storing the file | the file-body `..._is_refused_and_nothing_is_stored` tests |
+| Answer a rate-limit refusal with 400 | `The_thirty_first_send_in_a_window_is_told_when_to_try_again` |
 
 **Where a test belongs.** Prefer the fastest lane that can actually prove the thing. Server logic
 is an API integration test; client logic is a unit test; a flow that needs the real app on screen

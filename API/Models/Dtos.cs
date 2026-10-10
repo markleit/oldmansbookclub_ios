@@ -54,6 +54,10 @@ public record MessageDto(
 
 // Client-required ClientId (unlike the hub's optional overloads) — every client build that
 // can reach the REST send endpoint already generates one per send for dedup/reconciliation.
+//
+// #204 — ForwardMessageId set = forward that saved message to this book (Type/Body/MediaUrl are
+// ignored; the original's are used). Replaces the hub's ForwardMessage for 2.2+, which had no
+// clientId and so could post twice on a retry.
 public record SendMessageRequest(
     MessageType Type,
     string? Body,
@@ -61,7 +65,8 @@ public record SendMessageRequest(
     int? DurationSeconds,
     Guid ClientId,
     Guid? ParentMessageId,
-    string? DeviceId
+    string? DeviceId,
+    Guid? ForwardMessageId = null
 );
 
 // #47 — per-user reactions carried on each message; the client derives emoji counts + "mine"

@@ -114,6 +114,39 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return Ok(new { status = "reset" });
     }
 
+    // #204 (T5) — what the server actually received, for checking a device test run: each
+    // message's client_id (matches the 8-char ids in the app's send log) and when it was stamped.
+    // Lets a device run prove "it arrived while the phone was still locked" from evidence rather
+    // than from what the screen showed afterwards. Development-only AND key-guarded, like
+    // reset-dev-db: it exposes every book's messages to anyone holding the seed key.
+    [AllowAnonymous]
+    [HttpGet("dev/recent-messages")]
+    public async Task<IActionResult> DevRecentMessages([FromQuery(Name = "book_id")] Guid? bookId, [FromQuery] int limit = 50)
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var seedKey = config["Seeding:Key"];
+        if (string.IsNullOrEmpty(seedKey) || Request.Headers["X-Seed-Key"].FirstOrDefault() != seedKey)
+            return Unauthorized();
+
+        var query = db.Messages.AsQueryable();
+        if (bookId is Guid b) query = query.Where(m => m.BookId == b);
+        var rows = await query
+            .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+            .Take(Math.Clamp(limit, 1, 500))
+            .Select(m => new
+            {
+                m.Id, m.BookId, m.SenderId,
+                SenderName = m.Sender.Nickname ?? m.Sender.DisplayName,
+                m.Type, m.ClientId, m.SentAt, m.IsForwarded,
+                HasMedia = m.MediaUrl != null,
+                IsDeleted = m.DeletedAt != null
+            })
+            .ToListAsync();
+        return Ok(rows);
+    }
+
     [AllowAnonymous]
     [HttpPost("seed-baseline")]
     public async Task<IActionResult> SeedBaseline()

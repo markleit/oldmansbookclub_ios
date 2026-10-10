@@ -294,7 +294,10 @@ public class AuthController(
             issuer: config["Jwt:Issuer"],
             audience: config["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(1),
+            // #204 — configurable so token expiry can be exercised in minutes on a dev server
+            // (a queued send outliving its token is a real case: the client must refresh and
+            // resubmit). Production leaves it unset: one hour, as before.
+            expires: DateTime.UtcNow.AddMinutes(config.GetValue("Jwt:AccessTokenMinutes", 60)),
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 
         return new JwtSecurityTokenHandler().WriteToken(token);

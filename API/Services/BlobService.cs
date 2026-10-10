@@ -57,6 +57,47 @@ public class BlobService
         return (uploadUrl, plainUrl);
     }
 
+    private volatile bool _mediaContainerEnsured;
+
+    /// #204 — store a message's file sent as the request body (the one-request voice/photo send)
+    /// and return its plain URL, named exactly like an upload-link blob (`{clubId}/{guid}.{ext}`)
+    /// so everything downstream — size checks, fresh read SAS, IsOwnBlobUrl — treats the two
+    /// paths identically. `content` may be non-seekable; the SDK uploads it in blocks, and a
+    /// stream that throws mid-way leaves only uncommitted blocks, never a partial blob.
+    public virtual async Task<string> UploadMediaAsync(Guid clubId, string extension, Stream content,
+        string contentType, CancellationToken ct)
+    {
+        var container = _client.GetBlobContainerClient(MediaContainer);
+        if (!_mediaContainerEnsured)
+        {
+            await container.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: ct);
+            _mediaContainerEnsured = true;
+        }
+        var blobClient = container.GetBlobClient($"{clubId}/{Guid.NewGuid()}.{extension.ToLowerInvariant()}");
+        await blobClient.UploadAsync(content,
+            new BlobUploadOptions { HttpHeaders = new BlobHttpHeaders { ContentType = contentType } }, ct);
+        return blobClient.Uri.ToString();
+    }
+
+    /// Best-effort delete of a media blob by its stored URL — used for a file-body send that lost
+    /// a same-clientId race (its blob is referenced by nothing). Never throws: an orphan left
+    /// behind costs a few KB, a failed send costs the user their message.
+    public virtual async Task DeleteMediaAsync(string storedUrl)
+    {
+        try
+        {
+            var plainUrl = storedUrl.Split('?')[0];
+            if (!Uri.TryCreate(plainUrl, UriKind.Absolute, out var uri)) return;
+            var segments = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+            if (segments.Length < 2) return;
+            await _client.GetBlobContainerClient(segments[0]).GetBlobClient(segments[1]).DeleteIfExistsAsync();
+        }
+        catch
+        {
+            // Deliberately swallowed — see above.
+        }
+    }
+
     public virtual async Task<(string UploadUrl, string AvatarUrl)> GenerateAvatarUploadUrlAsync(Guid userId)
     {
         var containerClient = _client.GetBlobContainerClient(AvatarContainer);

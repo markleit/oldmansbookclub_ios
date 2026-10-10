@@ -65,6 +65,24 @@ public class HubRateLimiterTests
     }
 
     [Fact]
+    public void A_refusal_reports_the_time_left_in_the_window()
+    {
+        // #204 — this becomes the 429's Retry-After, so a queued send waits exactly as long as it
+        // has to rather than guessing (too early: refused again; too late: needlessly slow).
+        var clock = new FakeTimeProvider();
+        var limiter = new HubRateLimiter(clock);
+        var user = Guid.NewGuid();
+
+        Assert.True(limiter.TryAcquire(user, out var allowedWait));
+        Assert.Equal(TimeSpan.Zero, allowedWait);
+        for (var i = 1; i < HubRateLimiter.MaxSendsPerWindow; i++) limiter.TryAcquire(user);
+        clock.Advance(TimeSpan.FromSeconds(20));
+
+        Assert.False(limiter.TryAcquire(user, out var retryAfter));
+        Assert.Equal(TimeSpan.FromSeconds(40), retryAfter);
+    }
+
+    [Fact]
     public void Reset_clears_every_bucket()
     {
         var limiter = new HubRateLimiter(new FakeTimeProvider());

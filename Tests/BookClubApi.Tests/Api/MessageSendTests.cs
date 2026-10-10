@@ -220,7 +220,7 @@ public class MessageSendTests(TestAppFixture fixture) : IntegrationTestBase(fixt
     // ---- rate limiting ----------------------------------------------------------------------
 
     [Fact]
-    public async Task The_thirty_first_send_in_a_window_is_refused()
+    public async Task The_thirty_first_send_in_a_window_is_told_when_to_try_again()
     {
         var (_, book, sender) = await ArrangeAsync();
 
@@ -232,8 +232,36 @@ public class MessageSendTests(TestAppFixture fixture) : IntegrationTestBase(fixt
 
         var refused = await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", TextSend(Guid.NewGuid(), "one too many"));
 
-        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        // #204 — 429 + Retry-After, not a 400: the one refusal that isn't final. A 2.2 client waits
+        // that long and resends instead of giving up on the message.
+        Assert.Equal(HttpStatusCode.TooManyRequests, refused.StatusCode);
+        var retryAfter = refused.Headers.RetryAfter?.Delta;
+        Assert.NotNull(retryAfter);
+        Assert.InRange(retryAfter!.Value.TotalSeconds, 1, 60);
+        // Same {error} body as before, so a 2.1-or-older client — which treats any 4xx as a
+        // refusal and shows its error — still tells the user why.
         Assert.Contains("Slow down", await refused.Content.ReadAsStringAsync());
+        Assert.Equal(30, Hub.OfMethod("NewMessage").Count());   // the refused one was never announced
+    }
+
+    [Fact]
+    public async Task Resending_a_message_the_server_already_has_is_free_even_at_the_limit()
+    {
+        // #204 — dedup runs before the limit. Each media send can reach the server twice (direct +
+        // background copies), and retries whose responses were lost re-send too; counted against
+        // the budget, a burst of photos could refuse itself.
+        var (_, book, sender) = await ArrangeAsync();
+        var first = Guid.NewGuid();
+        var original = await ReadAsync<MessageDto>(
+            await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", TextSend(first, "first")));
+        for (var i = 1; i < 30; i++)
+            await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", TextSend(Guid.NewGuid(), $"msg {i}"));
+
+        var resend = await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", TextSend(first, "first"));
+        var fresh = await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", TextSend(Guid.NewGuid(), "new"));
+
+        Assert.Equal(original.Id, (await ReadAsync<MessageDto>(resend)).Id);
+        Assert.Equal(HttpStatusCode.TooManyRequests, fresh.StatusCode);   // the budget really is spent
     }
 
     // ---- push hand-off ----------------------------------------------------------------------

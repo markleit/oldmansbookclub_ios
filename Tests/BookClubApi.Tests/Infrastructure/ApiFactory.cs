@@ -116,14 +116,17 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             // ten auth calls and 429 everything after, in whatever order tests happen to run.
             //
             // Tests run with permissive limits instead. The limits themselves are asserted
-            // separately: HubRateLimiterTests covers the send limiter (the one with real
-            // per-user semantics), and the auth limiter is exercised end-to-end by the live lane.
+            // separately: HubRateLimiterTests covers the send limiter, RateLimitPolicyTests the
+            // HTTP partitions (per IP for auth, per user for upload links).
+            //
+            // The same RateLimitPolicies partition functions as production, only with the permit
+            // counts lifted — so the partitioning itself is still the real code (#204).
             services.RemoveAll<IConfigureOptions<RateLimiterOptions>>();
             services.AddRateLimiter(options =>
             {
                 options.RejectionStatusCode = 429;
-                options.AddFixedWindowLimiter("auth", o => { o.Window = TimeSpan.FromMinutes(1); o.PermitLimit = int.MaxValue; o.QueueLimit = 0; });
-                options.AddFixedWindowLimiter("media", o => { o.Window = TimeSpan.FromMinutes(1); o.PermitLimit = int.MaxValue; o.QueueLimit = 0; });
+                options.AddPolicy("auth", ctx => RateLimitPolicies.Auth(ctx, int.MaxValue));
+                options.AddPolicy("media", ctx => RateLimitPolicies.Media(ctx, int.MaxValue));
             });
 
             services.AddHttpClient("apns").ConfigurePrimaryHttpMessageHandler(() => Apns);
