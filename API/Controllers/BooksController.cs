@@ -12,7 +12,7 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class BooksController(AppDbContext db, BlobService blob, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger, IHubContext<ChatHub> hub) : ControllerBase
+public class BooksController(AppDbContext db, BlobService blob, IConfiguration config, IHttpClientFactory http, ILogger<BooksController> logger, IHubContext<ChatHub> hub, TimeProvider time) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -538,9 +538,45 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         return Ok();
     }
 
+    // The REST shape of a message, as one projection so the page and its late arrivals (#204) are
+    // built identically. Reactions are attached afterwards; media/avatar URLs get a fresh SAS.
+    private static readonly System.Linq.Expressions.Expression<Func<Message, MessageDto>> ToMessageDto =
+        m => new MessageDto(
+            m.Id, m.ClubId,
+            m.DeletedAt == null ? m.SenderId : Guid.Empty,
+            m.DeletedAt == null ? (m.Sender.Nickname ?? m.Sender.DisplayName) : "",
+            m.DeletedAt == null ? m.Sender.AvatarUrl : null,
+            m.Type,
+            m.DeletedAt == null ? m.Body : null,
+            m.DeletedAt == null ? m.MediaUrl : null,
+            m.DeletedAt == null ? m.DurationSeconds : null,
+            m.SentAt,
+            m.DeletedAt != null,
+            m.IsForwarded,
+            m.DeletedAt == null ? m.ClientId : null,
+            m.DeletedAt == null ? m.ParentMessageId : null,
+            m.DeletedAt != null || m.Parent == null ? null
+                : (m.Parent.DeletedAt != null ? null : (m.Parent.Sender.Nickname ?? m.Parent.Sender.DisplayName)),
+            m.DeletedAt != null || m.Parent == null ? null
+                : (m.Parent.DeletedAt != null ? "Deleted message"
+                    : m.Parent.Type == MessageType.Text ? (m.Parent.Body!.Length <= 120 ? m.Parent.Body : m.Parent.Body!.Substring(0, 120) + "…")
+                    : m.Parent.Type == MessageType.Voice ? (m.Parent.Transcript == null ? "🎤 Voice message" : "🎤 " + (m.Parent.Transcript.Length <= 120 ? m.Parent.Transcript : m.Parent.Transcript.Substring(0, 120) + "…"))
+                    : m.Parent.Type == MessageType.Photo ? "📷 Photo"
+                    : "🎬 Video"),
+            m.DeletedAt != null || m.Parent == null || m.Parent.DeletedAt != null ? (DateTime?)null : m.Parent.SentAt,
+            m.DeletedAt == null ? m.Transcript : null,
+            null,
+            m.ReceivedAt);
+
+    // #204 — a message whose SentAt (the sender's tap time) is more than this before its
+    // ReceivedAt was held up on the sender's phone, so it sits in the chat earlier than when it
+    // actually arrived. Two minutes is well clear of ordinary send latency.
+    private const int LateArrivalSeconds = 120;
+
     [HttpGet("{bookId}/messages")]
     public async Task<ActionResult<IEnumerable<MessageDto>>> GetMessages(
-        Guid bookId, [FromQuery] DateTime? before, [FromQuery] int limit = 50)
+        Guid bookId, [FromQuery] DateTime? before, [FromQuery] int limit = 50,
+        [FromQuery(Name = "include_late")] bool includeLate = false)
     {
         var access = await db.Books
             .Where(b => b.Id == bookId)
@@ -560,31 +596,28 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var messages = await query
             .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
             .Take(limit)
-            .Select(m => new MessageDto(
-                m.Id, m.ClubId,
-                m.DeletedAt == null ? m.SenderId : Guid.Empty,
-                m.DeletedAt == null ? (m.Sender.Nickname ?? m.Sender.DisplayName) : "",
-                m.DeletedAt == null ? m.Sender.AvatarUrl : null,
-                m.Type,
-                m.DeletedAt == null ? m.Body : null,
-                m.DeletedAt == null ? m.MediaUrl : null,
-                m.DeletedAt == null ? m.DurationSeconds : null,
-                m.SentAt,
-                m.DeletedAt != null,
-                m.IsForwarded,
-                m.DeletedAt == null ? m.ClientId : null,
-                m.DeletedAt == null ? m.ParentMessageId : null,
-                m.DeletedAt != null || m.Parent == null ? null
-                    : (m.Parent.DeletedAt != null ? null : (m.Parent.Sender.Nickname ?? m.Parent.Sender.DisplayName)),
-                m.DeletedAt != null || m.Parent == null ? null
-                    : (m.Parent.DeletedAt != null ? "Deleted message"
-                        : m.Parent.Type == MessageType.Text ? (m.Parent.Body!.Length <= 120 ? m.Parent.Body : m.Parent.Body!.Substring(0, 120) + "…")
-                        : m.Parent.Type == MessageType.Voice ? (m.Parent.Transcript == null ? "🎤 Voice message" : "🎤 " + (m.Parent.Transcript.Length <= 120 ? m.Parent.Transcript : m.Parent.Transcript.Substring(0, 120) + "…"))
-                        : m.Parent.Type == MessageType.Photo ? "📷 Photo"
-                        : "🎬 Video"),
-                m.DeletedAt != null || m.Parent == null || m.Parent.DeletedAt != null ? (DateTime?)null : m.Parent.SentAt,
-                m.DeletedAt == null ? m.Transcript : null))
+            .Select(ToMessageDto)
             .ToListAsync();
+
+        // #204 — late arrivals: messages that reached the server in the last 7 days but were sent
+        // (tapped) well before that, so they sort below this newest page and a reader who opens
+        // the chat would never scroll down to them. Only on request: a 2.1-or-older client pages
+        // backwards from the oldest message it holds, so handing it one far older than the page
+        // would make its next "older" page skip everything in between. Appended after the page,
+        // which keeps the whole response newest-first (every late arrival is older than the page).
+        if (includeLate && before is null && messages.Count == limit)
+        {
+            var boundary = messages[^1].SentAt;
+            var since = time.GetUtcNow().UtcDateTime - MessageSendService.MaxSentAtAge;
+            var late = await db.Messages
+                .Where(m => m.BookId == bookId && m.ReceivedAt >= since && m.SentAt < boundary
+                    && EF.Functions.DateDiffSecond(m.SentAt, m.ReceivedAt) > LateArrivalSeconds)
+                .OrderByDescending(m => m.SentAt).ThenByDescending(m => m.Id)
+                .Take(limit)
+                .Select(ToMessageDto)
+                .ToListAsync();
+            messages.AddRange(late);
+        }
 
         if (messages.Any(m => m.MediaUrl != null || m.SenderAvatarUrl != null))
         {
@@ -702,12 +735,14 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
 
         // The marker may only ever advance (#119). It's a pointer, not a timestamp, so a client
         // working from a stale cache — or a race between the chat-open call and a live-receive
-        // call — could otherwise rewind it and resurrect already-read messages.
-        var incomingSentAt = await db.Messages
+        // call — could otherwise rewind it and resurrect already-read messages. "Advance" means a
+        // later ARRIVAL (#204): unread counts compare ReceivedAt, so the marker must too — by
+        // SentAt, reading a late arrival (old SentAt) could never move it.
+        var incomingReceivedAt = await db.Messages
             .Where(m => m.Id == messageId && m.BookId == bookId)
-            .Select(m => (DateTime?)m.SentAt)
+            .Select(m => (DateTime?)m.ReceivedAt)
             .FirstOrDefaultAsync();
-        if (incomingSentAt is null) return await OkWithUnreadAsync(bookId);   // unknown message — ignore
+        if (incomingReceivedAt is null) return await OkWithUnreadAsync(bookId);   // unknown message — ignore
 
         var existing = await db.ChatReads
             .FirstOrDefaultAsync(cr => cr.UserId == UserId && cr.BookId == bookId);
@@ -718,13 +753,13 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         }
         else
         {
-            var currentSentAt = existing.LastSeenMessageId == null ? null
+            var currentReceivedAt = existing.LastSeenMessageId == null ? null
                 : await db.Messages
                     .Where(m => m.Id == existing.LastSeenMessageId)
-                    .Select(m => (DateTime?)m.SentAt)
+                    .Select(m => (DateTime?)m.ReceivedAt)
                     .FirstOrDefaultAsync();
             // Already read at or past this message — nothing changed, so don't re-broadcast either.
-            if (currentSentAt is not null && incomingSentAt <= currentSentAt) return await OkWithUnreadAsync(bookId);
+            if (currentReceivedAt is not null && incomingReceivedAt <= currentReceivedAt) return await OkWithUnreadAsync(bookId);
             existing.LastSeenMessageId = messageId;
             existing.UpdatedAt = DateTime.UtcNow;
         }

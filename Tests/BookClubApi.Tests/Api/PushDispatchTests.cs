@@ -56,6 +56,28 @@ public class PushDispatchTests(TestAppFixture fixture) : IntegrationTestBase(fix
     }
 
     [Fact]
+    public async Task A_late_arrival_is_counted_in_the_push_even_though_it_was_sent_before_what_was_read()
+    {
+        // #204 — the recipient has read up to a message sent 10 minutes ago; a message the sender
+        // TAPPED 30 minutes ago arrives now. By sent time it's "before" the read marker; by
+        // arrival it's new, and the push's counts must say so or the badge and the book's row
+        // would show nothing for it.
+        var (club, book, sender, recipient) = await ArrangeAsync();
+        var read = await InsertMessageAsync(book.Id, club.Id, sender.Id, sentAt: DateTime.UtcNow.AddMinutes(-10));
+        await recipient.Client.PostAsJsonAsync($"/books/{book.Id}/read", read.Id);
+
+        await sender.Client.PostAsJsonAsync($"/books/{book.Id}/messages", new
+        {
+            type = "Text", body = "written in the tunnel", client_id = Guid.NewGuid(),
+            sent_at = DateTime.UtcNow.AddMinutes(-30)
+        });
+
+        var payload = Assert.Single(await DispatchAndCollectAsync(1));
+        Assert.Equal(1, payload.GetProperty("aps").GetProperty("badge").GetInt32());
+        Assert.Equal(1, payload.GetProperty("bookUnread").GetInt32());
+    }
+
+    [Fact]
     public async Task A_text_message_pushes_the_other_members_with_sender_name_and_body()
     {
         var (_, book, sender, _) = await ArrangeAsync();

@@ -49,7 +49,8 @@ public record MessageDto(
     string? ParentPreview = null,
     DateTime? ParentSentAt = null,
     string? Transcript = null,
-    IReadOnlyList<MessageReactionDto>? Reactions = null
+    IReadOnlyList<MessageReactionDto>? Reactions = null,
+    DateTime? ReceivedAt = null   // #204 — when the server got it; see Message.ReceivedAt
 );
 
 // Client-required ClientId (unlike the hub's optional overloads) — every client build that
@@ -66,7 +67,8 @@ public record SendMessageRequest(
     Guid ClientId,
     Guid? ParentMessageId,
     string? DeviceId,
-    Guid? ForwardMessageId = null
+    Guid? ForwardMessageId = null,
+    DateTime? SentAt = null   // #204 — when the sender tapped Send; see Message.SentAt
 );
 
 // #47 — per-user reactions carried on each message; the client derives emoji counts + "mine"

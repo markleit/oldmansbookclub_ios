@@ -61,18 +61,20 @@ public class ContractFixtureTests(TestAppFixture fixture) : IntegrationTestBase(
             MessageType.Voice, null, "https://storage.example/club-media/voice.m4a?sig=x", 42,
             SentAt, false, false, ClientId, ParentId, "Dixie", "🎤 the first words of the reply",
             SentAt.AddMinutes(-5), "an on-device transcript",
-            [new MessageReactionDto(UserId, "👍")]);
+            [new MessageReactionDto(UserId, "👍")],
+            // #204 — a late arrival: tapped at SentAt, reached the server two hours later.
+            ReceivedAt: SentAt.AddHours(2));
 
         // The tombstone shape: every content field nulled, SentAt and the flags kept. Both Swift
         // mirrors have to survive this, and one of them types isDeleted as non-optional.
         var deleted = new MessageDto(
             MessageId, ClubId, Guid.Empty, "", null, MessageType.Text,
-            null, null, null, SentAt, true, false, null, null, null, null, null, null, null);
+            null, null, null, SentAt, true, false, null, null, null, null, null, null, null, ReceivedAt: SentAt);
 
         // The narrow shape ClubsController.GetMessages returns: same Swift type, far fewer fields.
         var minimal = new MessageDto(
             MessageId, ClubId, SenderId, "Mark", null, MessageType.Text, "hello", null, null,
-            SentAt, false, false);
+            SentAt, false, false, ReceivedAt: SentAt);
 
         var book = new BookDto(BookId, ClubId, "The Road", "Cormac McCarthy",
             "https://storage.example/covers/road.jpg", SentAt, null, "current",

@@ -10,7 +10,8 @@ namespace BookClubApi.Controllers;
 [Authorize]
 [ApiController]
 [Route("[controller]")]
-public class AdminController(AppDbContext db, IConfiguration config, NotificationService notifications, BlobService blob) : ControllerBase
+public class AdminController(AppDbContext db, IConfiguration config, NotificationService notifications, BlobService blob,
+    MessageSendService messageSend, TimeProvider time) : ControllerBase
 {
     private static readonly string[] SampleTexts =
     [
@@ -147,6 +148,46 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         return Ok(rows);
     }
 
+    // #204 (T5) — a late arrival on demand: another member's text, tapped `minutes_ago` minutes
+    // ago but arriving now, through the REAL send path (clamp, broadcast, push) — so a receiving
+    // simulator or device can be checked for the "↑ New message above" chip, unread counts and
+    // late-arrival loading without staging an actual outage. The sender is a seeded member,
+    // created and approved on first use. Development-only AND key-guarded, like reset-dev-db.
+    public record SeedLateMessageRequest(Guid BookId, string? Body, int MinutesAgo = 60, string? SenderName = null);
+
+    [AllowAnonymous]
+    [HttpPost("dev/seed-late-message")]
+    public async Task<IActionResult> DevSeedLateMessage([FromBody] SeedLateMessageRequest req)
+    {
+        if (!HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment())
+            return NotFound();
+
+        var seedKey = config["Seeding:Key"];
+        if (string.IsNullOrEmpty(seedKey) || Request.Headers["X-Seed-Key"].FirstOrDefault() != seedKey)
+            return Unauthorized();
+
+        var book = await db.Books.FindAsync(req.BookId);
+        if (book is null) return NotFound(new { error = "Book not found." });
+
+        var name = string.IsNullOrWhiteSpace(req.SenderName) ? "Late Larry" : req.SenderName.Trim();
+        var subject = "dev_seed_late_" + name.ToLowerInvariant().Replace(' ', '_');
+        var sender = await db.Users.FirstOrDefaultAsync(u => u.AppleSubject == subject);
+        if (sender is null)
+        {
+            sender = new User { AppleSubject = subject, DisplayName = name, IsApproved = true };
+            db.Users.Add(sender);
+        }
+        if (!await db.Memberships.AnyAsync(m => m.UserId == sender.Id && m.ClubId == book.ClubId))
+            db.Memberships.Add(new Membership { UserId = sender.Id, ClubId = book.ClubId });
+        await db.SaveChangesAsync();
+
+        var sentAt = time.GetUtcNow().UtcDateTime.AddMinutes(-Math.Max(0, req.MinutesAgo));
+        var dto = await messageSend.SendTextAsync(sender.Id, await messageSend.LoadSenderContextAsync(sender.Id),
+            book.Id, string.IsNullOrWhiteSpace(req.Body) ? $"Sent {req.MinutesAgo} min ago, arriving now." : req.Body,
+            Guid.NewGuid(), parentMessageId: null, senderDeviceToken: null, sentAt: sentAt);
+        return Ok(dto);
+    }
+
     [AllowAnonymous]
     [HttpPost("seed-baseline")]
     public async Task<IActionResult> SeedBaseline()
@@ -236,6 +277,7 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
                 Type = type,
                 SentAt = DateTime.UtcNow.AddSeconds(-(count - i))
             };
+            msg.ReceivedAt = msg.SentAt;   // seeded as on-time sends (#204)
 
             switch (type)
             {
@@ -272,7 +314,7 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
                 var dto = new MessageDto(msg.Id, msg.ClubId, msg.SenderId,
                     sender.EffectiveName, senderAvatarUrl, msg.Type,
                     msg.Body, msg.MediaUrl, msg.DurationSeconds, msg.SentAt,
-                    IsDeleted: false, IsForwarded: false);
+                    IsDeleted: false, IsForwarded: false, ReceivedAt: msg.ReceivedAt);
                 await notifications.SendNewMessageAsync(deviceTokens, dto, book.Title);
             }
         }

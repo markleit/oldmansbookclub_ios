@@ -33,17 +33,17 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
         {
             var sender = await messageSend.LoadSenderContextAsync(UserId);
             if (request.ForwardMessageId is Guid forwardId)
-                return Ok(await messageSend.ForwardAsync(UserId, sender, bookId, forwardId, request.DeviceId, request.ClientId));
+                return Ok(await messageSend.ForwardAsync(UserId, sender, bookId, forwardId, request.DeviceId, request.ClientId, request.SentAt));
             MessageDto dto = request.Type switch
             {
                 MessageType.Text => await messageSend.SendTextAsync(
-                    UserId, sender, bookId, request.Body ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                    UserId, sender, bookId, request.Body ?? "", request.ClientId, request.ParentMessageId, request.DeviceId, request.SentAt),
                 MessageType.Voice => await messageSend.SendVoiceAsync(
-                    UserId, sender, bookId, request.MediaUrl ?? "", request.DurationSeconds ?? 0, request.ClientId, request.ParentMessageId, request.DeviceId),
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.DurationSeconds ?? 0, request.ClientId, request.ParentMessageId, request.DeviceId, request.SentAt),
                 MessageType.Photo => await messageSend.SendPhotoAsync(
-                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId, request.SentAt),
                 MessageType.Video => await messageSend.SendVideoAsync(
-                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId),
+                    UserId, sender, bookId, request.MediaUrl ?? "", request.ClientId, request.ParentMessageId, request.DeviceId, request.SentAt),
                 _ => throw new MessageSendException("Unsupported message type.")
             };
             return Ok(dto);
@@ -55,7 +55,7 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
     }
 
     // #204 — the same send with the file as the body: `Content-Type: audio/mp4` (voice) or
-    // `image/jpeg` (photo), everything else in the query (snake_case, like the JSON fields). One
+    // `image/jpeg` (photo), everything else in the query (snake_case, like the JSON fields; `sent_at` is ISO 8601). One
     // request, so the app can hand it to iOS at tap time and iOS can finish it alone — see
     // MessageSendService.SendMediaFileAsync.
     [HttpPost("~/books/{bookId}/messages")]
@@ -65,7 +65,10 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
         [FromQuery(Name = "client_id")] Guid? clientId,
         [FromQuery(Name = "duration_seconds")] int? durationSeconds,
         [FromQuery(Name = "parent_message_id")] Guid? parentMessageId,
-        [FromQuery(Name = "device_id")] string? deviceId)
+        [FromQuery(Name = "device_id")] string? deviceId,
+        // DateTimeOffset, not DateTime: query binding of a DateTime converts "…Z" to server-local
+        // time; an offset type keeps the instant unambiguous.
+        [FromQuery(Name = "sent_at")] DateTimeOffset? sentAt)
     {
         try
         {
@@ -74,7 +77,7 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
             var sender = await messageSend.LoadSenderContextAsync(UserId);
             return Ok(await messageSend.SendMediaFileAsync(UserId, sender, bookId,
                 Request.ContentType, Request.ContentLength, Request.Body, durationSeconds,
-                cid, parentMessageId, deviceId, HttpContext.RequestAborted));
+                cid, parentMessageId, deviceId, HttpContext.RequestAborted, sentAt?.UtcDateTime));
         }
         catch (MessageSendException ex)
         {

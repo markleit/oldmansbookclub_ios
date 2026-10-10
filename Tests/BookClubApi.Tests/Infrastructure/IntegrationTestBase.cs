@@ -125,9 +125,10 @@ public abstract class IntegrationTestBase(TestAppFixture fixture) : IAsyncLifeti
     /// testing the send path itself, which must go through the real endpoint.
     protected async Task<Message> InsertMessageAsync(Guid bookId, Guid clubId, Guid senderId,
         MessageType type = MessageType.Text, string? body = "hello", DateTime? sentAt = null,
-        DateTime? deletedAt = null, Guid? clientId = null, string? mediaUrl = null)
+        DateTime? deletedAt = null, Guid? clientId = null, string? mediaUrl = null, DateTime? receivedAt = null)
     {
         await using var db = App.NewDbContext();
+        var sent = sentAt ?? DateTime.UtcNow;
         var message = new Message
         {
             BookId = bookId,
@@ -137,7 +138,9 @@ public abstract class IntegrationTestBase(TestAppFixture fixture) : IAsyncLifeti
             Body = type == MessageType.Text ? body : null,
             MediaUrl = mediaUrl ?? (type == MessageType.Text ? null : $"https://{FakeBlobService.Host}/club-media/{clubId}/{Guid.NewGuid()}.m4a"),
             DurationSeconds = type == MessageType.Voice ? 5 : null,
-            SentAt = sentAt ?? DateTime.UtcNow,
+            SentAt = sent,
+            // #204 — on time unless a test says otherwise; a late arrival passes a later receivedAt.
+            ReceivedAt = receivedAt ?? sent,
             DeletedAt = deletedAt,
             ClientId = clientId
         };

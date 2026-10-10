@@ -59,6 +59,7 @@ builder.Services.AddSingleton<BlobService>();
 builder.Services.AddSingleton<NotificationService>();
 builder.Services.AddSingleton<NotificationQueue>();               // #24
 builder.Services.AddHostedService<NotificationDispatchService>();  // #24
+builder.Services.AddSingleton(TimeProvider.System);   // #204 — injectable clock (send-time stamping, rate limiter)
 builder.Services.AddSingleton<HubRateLimiter>();
 builder.Services.AddScoped<MessageSendService>();  // shared by ChatHub and the REST send endpoint
 builder.Services.AddSingleton<GitHubService>();
