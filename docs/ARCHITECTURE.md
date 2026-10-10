@@ -88,7 +88,7 @@ preset list and the `.dev`-app isolation this enables.
 | `AppleTokenValidator` | Validates Sign in with Apple identity tokens; exchanges authorization code for refresh token; revokes token on account deletion |
 | `BlobService` | Generates upload/read SAS URLs for Azure Blob Storage; stores voice/photo files sent as a request body |
 | `MessageSendService` | Validation, persistence, and broadcast for a sent message — shared by `ChatHub` and `MessagesController` |
-| `UnreadCalculator` | Unread-count formula (voice tracked independently of the read marker until heard); shared by the books list and push badge counts |
+| `UnreadCalculator` | Unread-count formula: others' messages that *arrived* after the read marker's message arrived (#204: `ReceivedAt`, not `SentAt`), plus voice tracked independently until heard; shared by the books list and push badge counts |
 | `HubRateLimiter` | Per-user, in-memory, fixed-window send limit (30/min) for both the REST send and the legacy hub sends; reports how long until the window resets (→ `Retry-After`) |
 | `RateLimitPolicies` | HTTP rate-limit partitions: `auth` per IP (10/min), `media` upload links per user (30/min). Authentication runs before the limiter so the user is known |
 | `NotificationService` | Sends APNs push notifications (join requests, approvals, new messages) |
@@ -179,6 +179,16 @@ iOS sender                    API (MessagesController →          iOS receivers
 |---|---|---|
 | `application/json` | Text; video (`media_url` from `/media/upload-url` + a blob PUT); forwards (`forward_message_id`); every pre-2.2 client | `SendMessageRequest` |
 | `audio/mp4` / `image/jpeg` — the file itself | Voice and photo in **one request** (`client_id`, `duration_seconds`, `parent_message_id`, `device_id` in the query) | The server stores the blob and creates the message, so the app can hand the whole send to iOS's background transfer. Every refusal happens before the bytes are stored. Video isn't accepted this way: up to 100 MB is too much to proxy through App Service (~230 s request limit). |
+
+**Two times per message (#204).** `sent_at` is when the sender tapped Send: 2.2+ clients stamp it
+(JSON field or query param), and the server clamps it to `[received − 7 days, received]` (older
+clients send none, so it equals arrival). It orders the chat, so a message held up by an outage
+lands where it was said. `received_at` is when the server got it, and drives everything about "is
+this new to you": unread counts, the read marker ("only advances" means a later arrival), push
+counts. `GET /books/{id}/messages?include_late=true` also returns **late arrivals**: messages that
+arrived in the last 7 days more than 2 minutes after their `sent_at` and fall below the newest
+page. It's opt-in because a 2.1-or-older client pages backwards from the oldest message it holds;
+handed one far older than its page, its next page would skip the gap.
 
 A re-send with a `client_id` the server already has returns the existing message, stores nothing and
 is not counted against the rate limit. Over the limit, the answer is **429 + `Retry-After`** with the

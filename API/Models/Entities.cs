@@ -69,7 +69,14 @@ public class Message
     [MaxLength(4000)] public string? Body { get; set; }
     [MaxLength(2048)] public string? MediaUrl { get; set; }
     public int? DurationSeconds { get; set; }
+    // #204 — two times, two jobs. SentAt is WHEN THE SENDER TAPPED SEND (the client's stamp,
+    // clamped to [ReceivedAt − 7 days, ReceivedAt]; older clients send none, so it equals
+    // ReceivedAt) and orders the chat, so a message held up by an outage lands where it was said.
+    // ReceivedAt is when the server got it, and drives everything about "is this new to you":
+    // unread counts, the read marker, push, and finding late arrivals. Ordering by one and
+    // counting by the other is what keeps a late message from being silently counted as read.
     public DateTime SentAt { get; set; } = DateTime.UtcNow;
+    public DateTime ReceivedAt { get; set; } = DateTime.UtcNow;
     public DateTime? DeletedAt { get; set; }
     public bool IsForwarded { get; set; } = false;
     public Guid? ClientId { get; set; }

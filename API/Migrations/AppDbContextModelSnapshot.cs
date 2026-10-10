@@ -17,7 +17,7 @@ namespace BookClubApi.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
@@ -249,6 +249,11 @@ namespace BookClubApi.Migrations
                     b.Property<Guid?>("ParentMessageId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<DateTime>("ReceivedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
                     b.Property<Guid>("SenderId")
                         .HasColumnType("uniqueidentifier");
 
@@ -265,6 +270,8 @@ namespace BookClubApi.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ParentMessageId");
+
+                    b.HasIndex("BookId", "ReceivedAt");
 
                     b.HasIndex("BookId", "SentAt");
 

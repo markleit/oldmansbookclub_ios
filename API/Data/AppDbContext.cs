@@ -32,6 +32,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Message>()
             .HasIndex(m => new { m.BookId, m.SentAt });
 
+        // #204 — unread counts and late-arrival lookups filter a book's messages by arrival time.
+        // The SQL default covers a row inserted by an instance still running the previous build
+        // during a deploy (its model doesn't know the column); this build always sets it.
+        modelBuilder.Entity<Message>()
+            .HasIndex(m => new { m.BookId, m.ReceivedAt });
+        modelBuilder.Entity<Message>()
+            .Property(m => m.ReceivedAt)
+            .HasDefaultValueSql("SYSUTCDATETIME()");
+
         // Unique per sender so a re-send (suspend/resume, reconnect, manual retry) carrying
         // the same clientId can never create a second row — the DB is the idempotency backstop
         // for the check-then-insert in TryRebroadcastExistingAsync (which races under

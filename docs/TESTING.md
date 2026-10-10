@@ -276,6 +276,14 @@ it.
 | Drop the `CappedReadStream` wrapper in the file-body send | `A_body_with_no_declared_length_is_still_capped_while_it_streams` |
 | Validate sender/book after storing the file | the file-body `..._is_refused_and_nothing_is_stored` tests |
 | Answer a rate-limit refusal with 400 | `The_thirty_first_send_in_a_window_is_told_when_to_try_again` |
+| Count unread by `SentAt` instead of `ReceivedAt` | `A_late_arrival_is_unread_even_though_it_was_sent_before_what_you_read` + the late-arrival push test |
+| Compare the read marker by `SentAt` | `Reading_a_late_arrival_moves_the_marker_and_clears_it` |
+| Drop the `ReceivedAt = SentAt` backfill from the migration | `Existing_messages_get_their_sent_time_as_their_arrival_time` |
+| Return late arrivals without `include_late` | `Late_arrivals_outside_the_newest_page_come_back_only_when_asked_for` |
+
+When you break code to check a test, restore it with a **new** modification time (`touch` it) and do a
+`--no-incremental` build before trusting any later run: a restored file keeps its old mtime, so an
+incremental build keeps the broken binary and later tests or a local server silently run it.
 
 **Where a test belongs.** Prefer the fastest lane that can actually prove the thing. Server logic
 is an API integration test; client logic is a unit test; a flow that needs the real app on screen

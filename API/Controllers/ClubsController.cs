@@ -70,7 +70,9 @@ public class ClubsController(AppDbContext db, BlobService blob) : ControllerBase
                 m.SentAt,
                 m.DeletedAt != null,
                 m.IsForwarded,
-                m.DeletedAt == null ? m.ClientId : null))
+                m.DeletedAt == null ? m.ClientId : null,
+                null, null, null, null, null, null,
+                m.ReceivedAt))
             .ToListAsync();
 
         if (messages.Any(m => m.MediaUrl != null || m.SenderAvatarUrl != null))

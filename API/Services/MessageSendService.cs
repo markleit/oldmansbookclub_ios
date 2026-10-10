@@ -32,8 +32,24 @@ public record SenderContext(bool IsApproved, string EffectiveName, string? Avata
 // uses IHubContext<ChatHub> instead of the Hub's own Clients/Context, which is what makes this
 // callable from a plain controller.
 public class MessageSendService(AppDbContext db, BlobService blob, NotificationQueue notificationQueue,
-    HubRateLimiter rateLimiter, IHubContext<ChatHub> hub)
+    HubRateLimiter rateLimiter, IHubContext<ChatHub> hub, TimeProvider time)
 {
+    /// #204 — how far back a client's "tapped Send at" time is honoured. Long enough for any real
+    /// outage or a phone left off over a weekend; short enough that a phone with a badly wrong
+    /// clock can't bury a message months back in a chat.
+    public static readonly TimeSpan MaxSentAtAge = TimeSpan.FromDays(7);
+
+    /// The sender's tap time, clamped to [received − 7 days, received]: never in the future (a
+    /// fast phone clock), never older than the window. No time given (older clients) → received.
+    public static DateTime ClampSentAt(DateTime? clientSentAt, DateTime receivedAt)
+    {
+        if (clientSentAt is not DateTime sent) return receivedAt;
+        sent = sent.Kind == DateTimeKind.Local ? sent.ToUniversalTime() : DateTime.SpecifyKind(sent, DateTimeKind.Utc);
+        if (sent > receivedAt) return receivedAt;
+        var earliest = receivedAt - MaxSentAtAge;
+        return sent < earliest ? earliest : sent;
+    }
+
     // Per-type upload caps, enforced server-side so a misbehaving client can't bypass the
     // client-side checks. Generous headroom over the expected encoded sizes.
     private const long MaxVoiceBytes = 25L * 1024 * 1024;   // ~15 min voice is a few MB
@@ -81,7 +97,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     }
 
     public async Task<MessageDto> SendTextAsync(Guid userId, SenderContext sender, Guid bookId, string body,
-        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
+        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt = null)
     {
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
             throw new MessageSendException("Message must be 1–4000 characters.");
@@ -89,13 +105,13 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         EnforceRateLimit(userId);
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Text,
-            body: body, clientId: clientId, parentMessageId: parentMessageId);
+            body: body, clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
     }
 
     public async Task<MessageDto> SendVoiceAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
-        int durationSeconds, Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
+        int durationSeconds, Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt = null)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
@@ -103,13 +119,14 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Voice,
-            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId, parentMessageId: parentMessageId);
+            mediaUrl: mediaUrl, durationSeconds: durationSeconds, clientId: clientId, parentMessageId: parentMessageId,
+            clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
     }
 
     public async Task<MessageDto> SendPhotoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
-        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
+        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt = null)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
@@ -117,13 +134,13 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Photo,
-            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
+            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
     }
 
     public async Task<MessageDto> SendVideoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
-        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
+        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt = null)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
@@ -131,7 +148,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Video,
-            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId);
+            mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
     }
@@ -156,7 +173,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
 
     public async Task<MessageDto> SendMediaFileAsync(Guid userId, SenderContext sender, Guid bookId,
         string? contentType, long? contentLength, Stream content, int? durationSeconds,
-        Guid clientId, Guid? parentMessageId, string? senderDeviceToken, CancellationToken ct)
+        Guid clientId, Guid? parentMessageId, string? senderDeviceToken, CancellationToken ct, DateTime? sentAt = null)
     {
         var type = MediaFileTypeFor(contentType)
             ?? throw new MessageSendException("Only voice (audio/mp4) and photo (image/jpeg) files can be sent this way.");
@@ -185,7 +202,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, type,
             mediaUrl: mediaUrl, durationSeconds: type == MessageType.Voice ? durationSeconds ?? 0 : null,
-            clientId: clientId, parentMessageId: parentMessageId);
+            clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (alreadyBroadcast)
         {
             // Lost a same-clientId race to a concurrent copy of this send, which stored its own
@@ -201,7 +218,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     // exactly as before; the REST forward (2.2) passes one, so a retried forward is deduped like
     // any other send instead of posting the message twice.
     public async Task<MessageDto> ForwardAsync(Guid userId, SenderContext sender, Guid bookId, Guid messageId,
-        string? senderDeviceToken, Guid? clientId = null)
+        string? senderDeviceToken, Guid? clientId = null, DateTime? sentAt = null)
     {
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
         EnforceRateLimit(userId);
@@ -218,7 +235,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         var plainMediaUrl = original.MediaUrl?.Split('?')[0];
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, original.Type,
             body: original.Body, mediaUrl: plainMediaUrl, durationSeconds: original.DurationSeconds, isForwarded: true,
-            clientId: clientId);
+            clientId: clientId, clientSentAt: sentAt);
         // True only when a concurrent forward with the same clientId won the insert race.
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
@@ -271,9 +288,10 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     private async Task<(MessageDto dto, string bookTitle, bool alreadyBroadcast)> SaveMessageAsync(
         Guid userId, SenderContext sender, Guid bookId, MessageType type,
         string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false,
-        Guid? clientId = null, Guid? parentMessageId = null)
+        Guid? clientId = null, Guid? parentMessageId = null, DateTime? clientSentAt = null)
     {
         var book = await ValidateSenderAndBookAsync(sender, bookId);
+        var receivedAt = time.GetUtcNow().UtcDateTime;
 
         var message = new Message
         {
@@ -286,7 +304,9 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
             DurationSeconds = durationSeconds,
             IsForwarded = isForwarded,
             ClientId = clientId,
-            ParentMessageId = parentMessageId
+            ParentMessageId = parentMessageId,
+            ReceivedAt = receivedAt,
+            SentAt = ClampSentAt(clientSentAt, receivedAt)
         };
 
         db.Messages.Add(message);
@@ -377,6 +397,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
             deleted ? null : parentSenderName,
             deleted ? null : parentPreview,
             deleted ? null : parentSentAt,
-            deleted ? null : m.Transcript);
+            deleted ? null : m.Transcript,
+            ReceivedAt: m.ReceivedAt);
     }
 }
