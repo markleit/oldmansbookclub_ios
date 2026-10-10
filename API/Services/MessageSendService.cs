@@ -11,6 +11,16 @@ namespace BookClubApi.Services;
 // messages reach the user either way.
 public class MessageSendException(string message) : Exception(message);
 
+// #204 — the one refusal that is NOT final: the sender is over the per-minute limit and may send
+// again after `RetryAfter`. MessagesController answers 429 + Retry-After (with the same {error}
+// body, so 2.1-and-older clients still show the message), and a 2.2 client waits and resends
+// instead of giving up. Subclass of MessageSendException so the hub's catch is unchanged.
+public class MessageRateLimitedException(TimeSpan retryAfter)
+    : MessageSendException("Slow down — too many messages. Try again in a minute.")
+{
+    public TimeSpan RetryAfter { get; } = retryAfter;
+}
+
 // Per-sender info needed by every send — mirrors ChatHub's old per-connection ConnUser cache.
 // The hub still caches this in Context.Items (H10); a REST call just loads it fresh, which is
 // fine since it's one query per HTTP request, not per keystroke.
@@ -30,6 +40,12 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to ~<1 MB
     private const long MaxVideoBytes = 100L * 1024 * 1024;  // 100 MB cap (matches client)
 
+    /// #204 — the largest request body the file-body send accepts: the voice cap (the bigger of
+    /// the two kinds it takes) plus headroom. MessagesController's [RequestSizeLimit] uses it so
+    /// Kestrel refuses anything larger before a byte is read; the per-kind cap below is the
+    /// precise check. Video is deliberately not accepted this way (see SendMediaFileAsync).
+    public const long MaxMediaFileRequestBytes = MaxVoiceBytes + 1024 * 1024;
+
     public async Task<SenderContext> LoadSenderContextAsync(Guid userId)
     {
         var user = await db.Users.FindAsync(userId) ?? throw new MessageSendException("User not found.");
@@ -37,10 +53,14 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         return new SenderContext(user.IsApproved, user.EffectiveName, user.AvatarUrl, clubIds.ToHashSet());
     }
 
+    // #204 — called AFTER the clientId dedup check in every send, never before: a re-send of a
+    // message the server already has (a retry whose response was lost, or the direct and
+    // background copies of one send racing) creates nothing, so it must not spend the sender's
+    // budget — counted twice, a 10-photo batch could trip the limit on its own.
     private void EnforceRateLimit(Guid userId)
     {
-        if (!rateLimiter.TryAcquire(userId))
-            throw new MessageSendException("Slow down — too many messages. Try again in a minute.");
+        if (!rateLimiter.TryAcquire(userId, out var retryAfter))
+            throw new MessageRateLimitedException(retryAfter);
     }
 
     // Still a strict allow-list — a client can only hand us a URL on our own storage account —
@@ -63,10 +83,10 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     public async Task<MessageDto> SendTextAsync(Guid userId, SenderContext sender, Guid bookId, string body,
         Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
     {
-        EnforceRateLimit(userId);
         if (string.IsNullOrWhiteSpace(body) || body.Length > 4000)
             throw new MessageSendException("Message must be 1–4000 characters.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
+        EnforceRateLimit(userId);
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Text,
             body: body, clientId: clientId, parentMessageId: parentMessageId);
@@ -77,9 +97,9 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     public async Task<MessageDto> SendVoiceAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
         int durationSeconds, Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
     {
-        EnforceRateLimit(userId);
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
+        EnforceRateLimit(userId);
         await EnforceBlobSizeAsync(mediaUrl, MaxVoiceBytes, "Voice message");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Voice,
@@ -91,9 +111,9 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     public async Task<MessageDto> SendPhotoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
         Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
     {
-        EnforceRateLimit(userId);
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
+        EnforceRateLimit(userId);
         await EnforceBlobSizeAsync(mediaUrl, MaxPhotoBytes, "Photo");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Photo,
@@ -105,9 +125,9 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     public async Task<MessageDto> SendVideoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
         Guid? clientId, Guid? parentMessageId, string? senderDeviceToken)
     {
-        EnforceRateLimit(userId);
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
+        EnforceRateLimit(userId);
         await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Video,
@@ -116,9 +136,74 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         return dto;
     }
 
-    public async Task<MessageDto> ForwardAsync(Guid userId, SenderContext sender, Guid bookId, Guid messageId,
-        string? senderDeviceToken)
+    // #204 — one request per voice/photo message: the file's bytes ARE the request body, and the
+    // server stores them and creates the message. The 3-step path (upload link → blob PUT → post
+    // with media_url) needs the app awake to start steps 1 and 3, which is exactly when a locked
+    // or offline phone stalls; one request can be handed to iOS's background transfer at tap time
+    // and finished by iOS alone. Video stays on the 3-step path: up to 100 MB is too much to push
+    // through App Service, whose front end cuts requests off at ~230 s.
+    //
+    // Order matters, and every check is BEFORE the bytes are stored, so a refused send leaves
+    // nothing behind: dedup (a re-send returns the message without reading the body), then the
+    // rate limit, then who/where, then size.
+    public static MessageType? MediaFileTypeFor(string? contentType) =>
+        contentType?.Split(';')[0].Trim().ToLowerInvariant() switch
+        {
+            "audio/mp4" => MessageType.Voice,
+            "image/jpeg" => MessageType.Photo,
+            _ => null
+        };
+
+    public async Task<MessageDto> SendMediaFileAsync(Guid userId, SenderContext sender, Guid bookId,
+        string? contentType, long? contentLength, Stream content, int? durationSeconds,
+        Guid clientId, Guid? parentMessageId, string? senderDeviceToken, CancellationToken ct)
     {
+        var type = MediaFileTypeFor(contentType)
+            ?? throw new MessageSendException("Only voice (audio/mp4) and photo (image/jpeg) files can be sent this way.");
+        if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
+        EnforceRateLimit(userId);
+        var book = await ValidateSenderAndBookAsync(sender, bookId);
+
+        var (maxBytes, label, ext) = type == MessageType.Voice
+            ? (MaxVoiceBytes, "Voice message", "m4a")
+            : (MaxPhotoBytes, "Photo", "jpg");
+        var tooLarge = $"{label} is too large (max {maxBytes / (1024 * 1024)} MB).";
+        if (contentLength is > 0 && contentLength > maxBytes) throw new MessageSendException(tooLarge);
+        if (contentLength == 0) throw new MessageSendException($"{label} is empty.");
+
+        string mediaUrl;
+        try
+        {
+            // Capped as it streams, not only by Content-Length — a chunked body declares no length.
+            mediaUrl = await blob.UploadMediaAsync(book.ClubId, ext, new CappedReadStream(content, maxBytes),
+                contentType!.Split(';')[0].Trim(), ct);
+        }
+        catch (Exception ex) when (CappedReadStream.WasExceeded(ex))
+        {
+            throw new MessageSendException(tooLarge);
+        }
+
+        var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, type,
+            mediaUrl: mediaUrl, durationSeconds: type == MessageType.Voice ? durationSeconds ?? 0 : null,
+            clientId: clientId, parentMessageId: parentMessageId);
+        if (alreadyBroadcast)
+        {
+            // Lost a same-clientId race to a concurrent copy of this send, which stored its own
+            // file: this one is an orphan nothing will ever reference.
+            await blob.DeleteMediaAsync(mediaUrl);
+            return dto;
+        }
+        await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
+        return dto;
+    }
+
+    // #204 — `clientId` is new: the hub's ForwardMessage (2.1 and older) passes null and behaves
+    // exactly as before; the REST forward (2.2) passes one, so a retried forward is deduped like
+    // any other send instead of posting the message twice.
+    public async Task<MessageDto> ForwardAsync(Guid userId, SenderContext sender, Guid bookId, Guid messageId,
+        string? senderDeviceToken, Guid? clientId = null)
+    {
+        if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
         EnforceRateLimit(userId);
         var hasSaved = await db.SavedMessages.AnyAsync(s => s.UserId == userId && s.MessageId == messageId);
         if (!hasSaved) throw new MessageSendException("Message not in your saved list.");
@@ -132,8 +217,9 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         // Strip any stale SAS — SaveMessageAsync stores the plain URL and generates a fresh SAS for broadcast.
         var plainMediaUrl = original.MediaUrl?.Split('?')[0];
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, original.Type,
-            body: original.Body, mediaUrl: plainMediaUrl, durationSeconds: original.DurationSeconds, isForwarded: true);
-        // Forwards carry no clientId, so alreadyBroadcast should never trip here — defensive only.
+            body: original.Body, mediaUrl: plainMediaUrl, durationSeconds: original.DurationSeconds, isForwarded: true,
+            clientId: clientId);
+        // True only when a concurrent forward with the same clientId won the insert race.
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
         return dto;
     }
@@ -161,6 +247,17 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         return dto;
     }
 
+    // Who may send where. Runs inside SaveMessageAsync for every send, and also up front in the
+    // file-body send so a refused send never stores its bytes (FindAsync's second call for the
+    // same book is served from the change tracker, not the database).
+    private async Task<Book> ValidateSenderAndBookAsync(SenderContext sender, Guid bookId)
+    {
+        if (!sender.IsApproved) throw new MessageSendException("Account not approved.");
+        var book = await db.Books.FindAsync(bookId) ?? throw new MessageSendException("Book not found");
+        if (!sender.ClubIds.Contains(book.ClubId)) throw new MessageSendException("Not a member of this club.");
+        return book;
+    }
+
     // SQL Server: 2627 = unique constraint violation, 2601 = unique index violation. Either
     // means a row with this (SenderId, ClientId) already exists — i.e. a duplicate re-send.
     private static bool IsUniqueClientIdViolation(DbUpdateException ex)
@@ -176,10 +273,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         string? body = null, string? mediaUrl = null, int? durationSeconds = null, bool isForwarded = false,
         Guid? clientId = null, Guid? parentMessageId = null)
     {
-        if (!sender.IsApproved) throw new MessageSendException("Account not approved.");
-
-        var book = await db.Books.FindAsync(bookId) ?? throw new MessageSendException("Book not found");
-        if (!sender.ClubIds.Contains(book.ClubId)) throw new MessageSendException("Not a member of this club.");
+        var book = await ValidateSenderAndBookAsync(sender, bookId);
 
         var message = new Message
         {

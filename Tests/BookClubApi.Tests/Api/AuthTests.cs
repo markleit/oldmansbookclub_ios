@@ -174,6 +174,23 @@ public class AuthTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
     }
 
     [Fact]
+    public async Task An_access_token_lasts_an_hour_unless_configured_otherwise()
+    {
+        // #204 — Jwt:AccessTokenMinutes exists so a dev server can expire tokens in minutes and a
+        // device test can prove a queued send refreshes and resubmits. Unset — as in production —
+        // it must stay one hour: shorter would mean far more refreshes, longer a weaker token.
+        var (access, refresh) = await SignInAsync();
+        var refreshed = await ReadAsync<JsonElement>(
+            await App.CreateClient().PostAsync("/auth/refresh", JsonBody(new { refresh_token = refresh })));
+
+        foreach (var token in new[] { access, refreshed.GetProperty("access_token").GetString()! })
+        {
+            var lifetime = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().ReadJwtToken(token).ValidTo - DateTime.UtcNow;
+            Assert.InRange(lifetime.TotalMinutes, 58, 60);
+        }
+    }
+
+    [Fact]
     public async Task Refreshing_extends_the_expiry()
     {
         var (_, refresh) = await SignInAsync();

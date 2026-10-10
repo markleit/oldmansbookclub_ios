@@ -8,9 +8,15 @@ on:
 # Both jobs are BLOCKING (#126). Neither touches the network or a real backend, so flake should be
 # near zero; if it isn't, the fix is the test, not continue-on-error. This is deliberately unlike
 # lint.yml, which is advisory by design (#99).
+#
+# Superseded runs are cancelled on PRs only (#204). On main every push's run must finish: the API
+# deploy waits for its commit's "API integration" job (deploy-api.yml), so a cancelled run — a
+# merge followed by a build-number bump, say — would silently skip deploying the merge. A group per
+# commit SHA on main, not per branch: a per-branch group still keeps only ONE pending run, so a
+# third push while the slow iOS lane runs would cancel the second.
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   api:

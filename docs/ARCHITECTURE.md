@@ -86,10 +86,11 @@ preset list and the `.dev`-app isolation this enables.
 | Service | Purpose |
 |---------|---------|
 | `AppleTokenValidator` | Validates Sign in with Apple identity tokens; exchanges authorization code for refresh token; revokes token on account deletion |
-| `BlobService` | Generates upload/read SAS URLs for Azure Blob Storage |
+| `BlobService` | Generates upload/read SAS URLs for Azure Blob Storage; stores voice/photo files sent as a request body |
 | `MessageSendService` | Validation, persistence, and broadcast for a sent message — shared by `ChatHub` and `MessagesController` |
 | `UnreadCalculator` | Unread-count formula (voice tracked independently of the read marker until heard); shared by the books list and push badge counts |
-| `HubRateLimiter` | Per-user, in-memory, fixed-window rate limit on SignalR hub sends |
+| `HubRateLimiter` | Per-user, in-memory, fixed-window send limit (30/min) for both the REST send and the legacy hub sends; reports how long until the window resets (→ `Retry-After`) |
+| `RateLimitPolicies` | HTTP rate-limit partitions: `auth` per IP (10/min), `media` upload links per user (30/min). Authentication runs before the limiter so the user is known |
 | `NotificationService` | Sends APNs push notifications (join requests, approvals, new messages) |
 | `NotificationDispatch` | Hands new-message push fan-out off to a background worker so a sender's hub call returns immediately |
 | `GitHubService` | Thin wrapper over the GitHub Issues REST API — backs Feedback and Diagnostics reporting |
@@ -123,7 +124,8 @@ iOS                          API                        Apple
 
 On account deletion, the stored refresh token is revoked via `https://appleid.apple.com/auth/revoke` so the app no longer appears under the user's Apple ID settings.
 
-The API JWT is short-lived (1 hour); the opaque refresh token (`/auth/refresh`) is what's actually
+The API JWT is short-lived (1 hour; `Jwt:AccessTokenMinutes` overrides it, for testing token
+expiry on a dev server); the opaque refresh token (`/auth/refresh`) is what's actually
 long-lived (90 days, sliding — refreshing extends it). Refresh tokens are **not** rotated on use:
 the same token stays valid indefinitely as long as it's used within its window. This is
 deliberate — rotating (revoke-and-reissue on every refresh) means a refresh whose response never
@@ -152,21 +154,36 @@ New user → needs_club_setup
 
 ## Real-time Chat
 
-In production, chat messages are sent and received via Azure SignalR Service (Managed Identity
-connection). In local Development, `ChatHub` runs in-process (`AddSignalR()` with no Azure
-backplane) — see [`docs/TESTING.md`](TESTING.md) for what that does and doesn't change about test
-coverage.
+Messages are **sent** over REST and **received** over SignalR. In production SignalR goes through
+Azure SignalR Service (Managed Identity connection); in local Development `ChatHub` runs in-process
+(`AddSignalR()` with no Azure backplane) — see [`docs/TESTING.md`](TESTING.md) for what that does
+and doesn't change about test coverage.
 
 ```
-iOS sender                API (ChatHub)              iOS receivers
-    │                          │                           │
-    ├─ SendMessage ────────────►│                           │
-    │                          ├─ Validate (approved,      │
-    │                          │   member, not blocked)    │
-    │                          ├─ Save to SQL              │
-    │                          ├─ Broadcast ───────────────►│
-    │◄─ Echo (own message) ────│                           │
+iOS sender                    API (MessagesController →          iOS receivers
+                                   MessageSendService)
+    │                                   │                               │
+    ├─ POST /books/{id}/messages ──────►│                               │
+    │                                   ├─ Dedup by (sender, client_id)  │
+    │                                   ├─ Rate limit (30/min/user)     │
+    │                                   ├─ Validate (approved, member)  │
+    │                                   ├─ Save to SQL                  │
+    │                                   ├─ Broadcast (SignalR) ─────────►│
+    │                                   ├─ Queue push (APNs)            │
+    │◄─ 200 MessageDto (= confirmation) │                               │
 ```
+
+`POST /books/{id}/messages` takes two body formats, chosen by `Content-Type` (#204):
+
+| Body | Used for | Notes |
+|---|---|---|
+| `application/json` | Text; video (`media_url` from `/media/upload-url` + a blob PUT); forwards (`forward_message_id`); every pre-2.2 client | `SendMessageRequest` |
+| `audio/mp4` / `image/jpeg` — the file itself | Voice and photo in **one request** (`client_id`, `duration_seconds`, `parent_message_id`, `device_id` in the query) | The server stores the blob and creates the message, so the app can hand the whole send to iOS's background transfer. Every refusal happens before the bytes are stored. Video isn't accepted this way: up to 100 MB is too much to proxy through App Service (~230 s request limit). |
+
+A re-send with a `client_id` the server already has returns the existing message, stores nothing and
+is not counted against the rate limit. Over the limit, the answer is **429 + `Retry-After`** with the
+usual `{error}` body (older clients just show the message). The legacy hub send methods, including
+`ForwardMessage`, remain for 2.1-and-older clients.
 
 SignalR connections authenticate via `?access_token=<JWT>` query parameter (WebSocket upgrade can't carry Authorization headers).
 
@@ -227,7 +244,7 @@ Read access for `club-media` uses time-limited user delegation SAS URLs (10 min 
 | Workflow | Trigger | Action |
 |----------|---------|--------|
 | `test.yml` | Push to `main` / PR — **blocking** | API integration tests (real SQL Server via Testcontainers) + iOS unit tests + hermetic UI tests. See [`docs/TESTING.md`](TESTING.md) for what each lane covers |
-| `deploy-api.yml` | Push to `main` with changes in `API/**` | Dotnet publish → zip → Azure Web App deploy (~2 min) |
+| `deploy-api.yml` | Push to `main` with changes in `API/**` | Waits for that commit's "API integration" job to pass (#204), then dotnet publish → zip → Azure Web App deploy (~2 min) → waits for `/health/ready`. A manual run skips the wait |
 | `ci.yml` | Push to `main` / PR | XcodeGen → build for iOS simulator |
 | `backup.yml` | Daily 3 AM UTC | Export Azure SQL to BACPAC in blob storage (30-day retention) |
 

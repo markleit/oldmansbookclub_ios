@@ -24,19 +24,29 @@ public class HubRateLimiter(TimeProvider? timeProvider = null)
         public int Count;
     }
 
-    public bool TryAcquire(Guid userId)
+    public bool TryAcquire(Guid userId) => TryAcquire(userId, out _);
+
+    /// #204 — `retryAfter` is how long until this user's window rolls over (zero when allowed), so
+    /// a refusal can tell the client exactly when to try again (429 + Retry-After) instead of the
+    /// client guessing — a queued send then waits that long and goes, rather than being dropped.
+    public bool TryAcquire(Guid userId, out TimeSpan retryAfter)
     {
         var bucket = _buckets.GetOrAdd(userId, _ => new Bucket { WindowStart = _time.GetUtcNow().UtcDateTime, Count = 0 });
         lock (bucket)
         {
             var now = _time.GetUtcNow().UtcDateTime;
+            retryAfter = TimeSpan.Zero;
             if (now - bucket.WindowStart >= Window)
             {
                 bucket.WindowStart = now;
                 bucket.Count = 1;
                 return true;
             }
-            if (bucket.Count >= MaxSendsPerWindow) return false;
+            if (bucket.Count >= MaxSendsPerWindow)
+            {
+                retryAfter = bucket.WindowStart + Window - now;
+                return false;
+            }
             bucket.Count++;
             return true;
         }

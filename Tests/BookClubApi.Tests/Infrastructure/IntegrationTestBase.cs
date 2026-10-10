@@ -45,6 +45,7 @@ public abstract class IntegrationTestBase(TestAppFixture fixture) : IAsyncLifeti
         Apns.Clear();
         App.GitHub.Clear();
         Blob.NextBlobSize = null;
+        Blob.ClearRecorded();
         RateLimiter.Reset();
         DrainPushes();
     }

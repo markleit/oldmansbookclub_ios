@@ -55,6 +55,40 @@ public sealed class FakeBlobService() : BlobService(TestEnvironment)
 
     public override Task<long?> GetBlobSizeAsync(string storedUrl) => Task.FromResult(NextBlobSize);
 
+    /// A file stored by the one-request voice/photo send (#204), as the server handed it over.
+    public sealed record StoredUpload(string Url, byte[] Bytes, string ContentType);
+
+    private readonly List<StoredUpload> _uploads = [];
+    private readonly List<string> _deleted = [];
+
+    public IReadOnlyList<StoredUpload> Uploads { get { lock (_uploads) return [.. _uploads]; } }
+    public IReadOnlyList<string> Deleted { get { lock (_deleted) return [.. _deleted]; } }
+
+    public void ClearRecorded()
+    {
+        lock (_uploads) _uploads.Clear();
+        lock (_deleted) _deleted.Clear();
+    }
+
+    /// Reads the stream to the end exactly as the real SDK would, so the server's size cap
+    /// (CappedReadStream) is exercised for real — a cap that only worked against Azure's client
+    /// would pass here while proving nothing.
+    public override async Task<string> UploadMediaAsync(Guid clubId, string extension, Stream content,
+        string contentType, CancellationToken ct)
+    {
+        using var buffer = new MemoryStream();
+        await content.CopyToAsync(buffer, ct);
+        var url = $"https://{Host}/club-media/{clubId}/{Guid.NewGuid()}.{extension}";
+        lock (_uploads) _uploads.Add(new StoredUpload(url, buffer.ToArray(), contentType));
+        return url;
+    }
+
+    public override Task DeleteMediaAsync(string storedUrl)
+    {
+        lock (_deleted) _deleted.Add(storedUrl.Split('?')[0]);
+        return Task.CompletedTask;
+    }
+
     /// Mirrors production's contract: a stored (plain) URL comes back with a signature appended,
     /// null stays null. Tests assert the "?sig=" suffix to prove a fresh SAS was attached on
     /// broadcast rather than a stale one being reused.

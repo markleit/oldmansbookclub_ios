@@ -21,12 +21,19 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
     // clientId dedup, same broadcast to the book group — so behavior is identical either way.
     // ClientId is required here (unlike the hub's optional overloads) since every client build
     // that can reach this endpoint already generates one for every send.
+    //
+    // #204 — one endpoint, two body formats, picked by Content-Type: JSON (this action — text,
+    // video by media_url, forwards, and every pre-2.2 client) or the file itself (SendMediaFile
+    // below — voice and photo in a single request).
     [HttpPost("~/books/{bookId}/messages")]
+    [Consumes("application/json")]
     public async Task<ActionResult<MessageDto>> SendMessage(Guid bookId, [FromBody] SendMessageRequest request)
     {
         try
         {
             var sender = await messageSend.LoadSenderContextAsync(UserId);
+            if (request.ForwardMessageId is Guid forwardId)
+                return Ok(await messageSend.ForwardAsync(UserId, sender, bookId, forwardId, request.DeviceId, request.ClientId));
             MessageDto dto = request.Type switch
             {
                 MessageType.Text => await messageSend.SendTextAsync(
@@ -43,8 +50,49 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
         }
         catch (MessageSendException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            return Refused(ex);
         }
+    }
+
+    // #204 — the same send with the file as the body: `Content-Type: audio/mp4` (voice) or
+    // `image/jpeg` (photo), everything else in the query (snake_case, like the JSON fields). One
+    // request, so the app can hand it to iOS at tap time and iOS can finish it alone — see
+    // MessageSendService.SendMediaFileAsync.
+    [HttpPost("~/books/{bookId}/messages")]
+    [Consumes("audio/mp4", "image/jpeg")]
+    [RequestSizeLimit(MessageSendService.MaxMediaFileRequestBytes)]
+    public async Task<ActionResult<MessageDto>> SendMediaFile(Guid bookId,
+        [FromQuery(Name = "client_id")] Guid? clientId,
+        [FromQuery(Name = "duration_seconds")] int? durationSeconds,
+        [FromQuery(Name = "parent_message_id")] Guid? parentMessageId,
+        [FromQuery(Name = "device_id")] string? deviceId)
+    {
+        try
+        {
+            if (clientId is not Guid cid || cid == Guid.Empty)
+                throw new MessageSendException("client_id is required.");
+            var sender = await messageSend.LoadSenderContextAsync(UserId);
+            return Ok(await messageSend.SendMediaFileAsync(UserId, sender, bookId,
+                Request.ContentType, Request.ContentLength, Request.Body, durationSeconds,
+                cid, parentMessageId, deviceId, HttpContext.RequestAborted));
+        }
+        catch (MessageSendException ex)
+        {
+            return Refused(ex);
+        }
+    }
+
+    // A refusal's {error} reaches the user verbatim. Rate limiting is the one refusal that isn't
+    // final (#204): 429 + Retry-After tells a 2.2 client when to send again, and the same {error}
+    // body keeps 2.1-and-older clients — which treat any 4xx as a refusal — showing the message.
+    private ActionResult Refused(MessageSendException ex)
+    {
+        if (ex is MessageRateLimitedException limited)
+        {
+            Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(limited.RetryAfter.TotalSeconds)).ToString();
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = ex.Message });
+        }
+        return BadRequest(new { error = ex.Message });
     }
 
     [HttpGet("saved")]

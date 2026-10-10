@@ -18,7 +18,48 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # #204 (C5) — this used to deploy the moment a push touched API/**, in parallel with the Tests
+  # workflow, so a commit whose API integration tests failed could already be live in prod. Now a
+  # push waits for that commit's "API integration" job and deploys only if it passed. It gates on
+  # that job alone, not the whole Tests run: the iOS lane takes 20–65 min and doesn't exercise the
+  # server, and the PR's own required checks have already run everything.
+  # A manual run (workflow_dispatch) skips the wait — it's the deliberate override.
+  wait-for-api-tests:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+    steps:
+      - name: Wait for this commit's API integration tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 150); do   # 10 s apart, up to 25 min
+            run_id=$(gh run list -R "$REPO" --workflow test.yml --commit "$SHA" --event push \
+                       --json databaseId -q '.[0].databaseId // empty')
+            if [ -n "$run_id" ]; then
+              conclusion=$(gh run view -R "$REPO" "$run_id" --json jobs \
+                             -q '.jobs[] | select(.name == "API integration") | .conclusion')
+              case "$conclusion" in
+                success) echo "API integration passed (run $run_id)."; exit 0 ;;
+                failure|cancelled|timed_out|skipped|action_required)
+                  echo "::error::API integration $conclusion for $SHA (run $run_id) — not deploying."; exit 1 ;;
+              esac
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for the API integration tests on $SHA."
+          exit 1
+
   build-and-deploy:
+    needs: wait-for-api-tests
+    # `always()` so a manual run (where the wait job is skipped) still deploys; a push deploys
+    # only when the wait job succeeded.
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-api-tests.result == 'success')
     runs-on: ubuntu-latest
 
     steps:
