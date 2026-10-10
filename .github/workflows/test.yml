@@ -34,9 +34,34 @@ jobs:
       - name: Run the API lane
         run: ./scripts/regression.sh --only api
 
-  ios:
-    name: iOS unit + hermetic UI
+  # #204 (C1) — build once, then run the unit tests and the two halves of the hermetic UI tests
+  # on separate runners at the same time. This was one job that built and then ran everything in
+  # sequence: 20–65 min, and a single flaky UI test re-ran the whole UI suite. Each job here calls
+  # the same scripts/regression.sh a local run uses, so CI and "green on my machine" still mean the
+  # same thing.
+  ios-build:
+    name: iOS build
     # Xcode 27 (GitHub preview image) so CI tests on iOS 27 like our users' phones (#185).
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install xcodegen
+        run: brew install xcodegen
+      - name: Build the app and test bundles
+        run: ./scripts/regression.sh --build-for-testing build/ci
+      # tar, not the artifact action's own file walk: it keeps the .app's symlinks and modes, which
+      # the simulator needs to install it.
+      - name: Package the test bundles
+        run: tar -C build/ci -czf ios-test-products.tgz Build/Products
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-test-products
+          path: ios-test-products.tgz
+          retention-days: 3
+
+  ios-unit:
+    name: iOS unit
+    needs: ios-build
     runs-on: xcode-27
     env:
       # An iOS 27-only device name, so a co-installed older runtime is never picked by name;
@@ -44,16 +69,34 @@ jobs:
       OMBC_SIMULATOR: iPhone 18 Pro
     steps:
       - uses: actions/checkout@v7
-      - name: Install xcodegen
-        run: brew install xcodegen
-      # The script resolves an installed simulator itself, so this does not pin a device name
-      # that a future Xcode image will drop.
-      # Hermetic UI re-added 2026-09-12: the "app makes no request to the stub" failure (both the
-      # long-standing local flake AND this job's own prior CI failure) was HermeticUITests.launch()
-      # passing the wrong EULA-skip launch-argument key (`hasAcceptedEULA` instead of the app's
-      # real `hasAcceptedEULA_v2`). A GitHub runner is always a fresh VM, so it hit this
-      # deterministically every time; locally it only showed up once an earlier test run's
-      # persisted UserDefaults (a real write, unlike the broken launch-arg override) stopped
-      # masking it. Fixed in HermeticUITests.swift — see its `launch()` doc comment.
-      - name: Run the iOS lane
-        run: ./scripts/regression.sh --only ios
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-test-products
+      - name: Unpack the test bundles
+        run: mkdir -p build/ci && tar -C build/ci -xzf ios-test-products.tgz
+      - name: Run the iOS unit tests
+        run: ./scripts/regression.sh --only ios-unit --products build/ci
+
+  ios-ui:
+    name: iOS UI (${{ matrix.shard }}/2)
+    needs: ios-build
+    runs-on: xcode-27
+    strategy:
+      # Both halves always finish, so one red run shows every failing test, not half of them.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      OMBC_SIMULATOR: iPhone 18 Pro
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-test-products
+      - name: Unpack the test bundles
+        run: mkdir -p build/ci && tar -C build/ci -xzf ios-test-products.tgz
+      # The EULA-skip launch argument in HermeticTestCase.launch() must match the app's real
+      # @AppStorage key (hasAcceptedEULA_v2) — when it didn't, a fresh CI VM failed every hermetic
+      # test with "the app made no request to the stub" (fixed 2026-09-12).
+      - name: Run hermetic UI tests, half ${{ matrix.shard }}
+        run: ./scripts/regression.sh --only hermetic-${{ matrix.shard }} --products build/ci

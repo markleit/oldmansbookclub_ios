@@ -1,8 +1,11 @@
 import XCTest
 
 /// UI tests with no backend at all — the app is pointed at a stub HTTP server that runs as a
-/// genuine macOS process, started by an Xcode scheme pre-action (`project.yml`,
-/// `scripts/hermetic_stub.py`) before any test runs and stopped by a post-action after.
+/// genuine macOS process (`scripts/hermetic_stub.py`), started by `scripts/start_hermetic_stub.sh`
+/// from the UI-test target's pre-build phase and from `scripts/regression.sh`.
+///
+/// `HermeticTestCase` holds the shared setup and helpers; the tests live in subclasses that CI runs
+/// as parallel halves (#204) — `HermeticChatUITests` and `HermeticMediaUITests` below.
 ///
 /// It used to be a Swift `NWListener` created directly inside this test class instead. That
 /// version was reachable instantly from ITS OWN process (proven directly, with a raw `URLSession`
@@ -30,11 +33,11 @@ import XCTest
 /// screen that doesn't read `userId` rendered fine regardless, while `sendMessage()`'s
 /// `guard let userId = TokenStore.shared.userId` failed with "Session error" — nothing wrong with
 /// the app, purely a gap in ad hoc local iteration.
-final class HermeticUITests: XCTestCase {
-    private var app: XCUIApplication!
+class HermeticTestCase: XCTestCase {
+    var app: XCUIApplication!
 
     /// Fixed by the pre-action script — see `scripts/hermetic_stub.py`'s `PORT`.
-    private let stubBaseURL = "http://127.0.0.1:51235"
+    let stubBaseURL = "http://127.0.0.1:51235"
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -58,7 +61,7 @@ final class HermeticUITests: XCTestCase {
     /// real cause of #126's "stub sometimes unreachable" flake (see `openCurrentBook()`'s doc
     /// comment). A launch-argument override that never matches anything the app reads is silently
     /// a no-op, not an error, which is exactly what made it invisible for so long.
-    private func launch() {
+    func launch() {
         app = XCUIApplication()
         app.launchArguments += [
             "-debugServerBaseURL", stubBaseURL,
@@ -77,7 +80,7 @@ final class HermeticUITests: XCTestCase {
 
     /// Distinguishes "the app never reached the stub" from "the stub answered wrong" — the two
     /// have identical symptoms on screen (an empty library) and completely different causes.
-    private func assertStubWasReached(_ context: String) throws {
+    func assertStubWasReached(_ context: String) throws {
         let requests = try requestedPaths()
         XCTAssertFalse(requests.isEmpty, """
             \(context): the app made NO request to the stub at \(stubBaseURL). It could not \
@@ -101,7 +104,7 @@ final class HermeticUITests: XCTestCase {
     /// install. Confirmed via the app's own console log
     /// (`log stream --predicate 'process == "OldMansBookClub"'`): zero URLSession tasks were ever
     /// created on a failing run. See `launch()`'s fixed launch argument.
-    private func openCurrentBook() {
+    func openCurrentBook() {
         let discussionText = app.staticTexts["Discussion"].firstMatch
         XCTAssertTrue(discussionText.waitForExistence(timeout: 15), "Library never rendered from the stub")
 
@@ -111,8 +114,119 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(app.textViews["messageTextField"].waitForExistence(timeout: 10), "Chat never loaded")
     }
 
-    // ---- the library renders from the server's data ------------------------------------------
+    // #173 — iOS-keyboard model: a quick tap sends the emoji (the hold gesture must not eat taps);
+    // press-and-hold opens the six tone variants; the chosen tone is remembered for THAT emoji only
+    // and shows in the grid and on the quick reaction bar. Grid cells and quick-bar buttons are
+    // looked up by identifier because a sent reaction adds a same-emoji pill to the chat behind.
+    // Ends by restoring the default tone — the choice persists in UserDefaults across tests.
+    /// Waits for an element to GO AWAY. `XCTAssertFalse(x.waitForExistence(...))` is not this: it
+    /// returns true the instant the element is still on screen — e.g. a sheet mid-dismiss on a slow
+    /// CI runner — so it failed a correct dismissal in CI while passing locally.
 
+    func openPhotoViewer() -> XCUIElement {
+        let bubble = app.buttons["photoMessage"].firstMatch
+        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "photo bubble never rendered")
+        bubble.tap()
+        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "full-screen photo never opened")
+        XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"), "viewer didn't lay out at 1×")
+        return viewer
+    }
+
+    func waitForValue(of element: XCUIElement, containing text: String, timeout: TimeInterval = 5) -> Bool {
+        let predicate = NSPredicate(format: "value CONTAINS %@", text)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    func setSaved(_ saved: [Any]) throws {
+        try controlRequest(path: "/_stub/saved", method: "POST", jsonBody: saved)
+    }
+
+    func openSavedMessages() {
+        let menu = app.buttons["attachmentMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let item = app.buttons["Saved Messages"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "+ menu has no Saved Messages")
+        item.tap()
+        XCTAssertTrue(app.navigationBars["Saved Messages"].waitForExistence(timeout: 10), "Saved Messages never opened")
+    }
+
+    /// The viewer's "k of N" as (k, N). The app's chat cache can hold photos from earlier tests
+    /// (same stub message ids), so tests reason about movement relative to where they start.
+    func counterPosition() -> (Int, Int)? {
+        let parts = app.staticTexts["photoCounter"].label.components(separatedBy: " of ")
+        guard parts.count == 2, let k = Int(parts[0]), let n = Int(parts[1]) else { return nil }
+        return (k, n)
+    }
+
+    /// One page step: swipe, then wait for the counter. A synthetic swipe that lands while the
+    /// previous page is still settling can be dropped on a loaded machine (seen once locally
+    /// while a release build ran), so retry the swipe once — a wrong page still fails.
+    func page(_ swipe: () -> Void, to expected: String) -> Bool {
+        for _ in 0..<2 {
+            swipe()
+            if waitForCounter(expected) { return true }
+        }
+        return false
+    }
+
+    func waitForCounter(_ text: String, timeout: TimeInterval = 5) -> Bool {
+        let counter = app.staticTexts["photoCounter"]
+        let match = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: counter)
+        return XCTWaiter().wait(for: [match], timeout: timeout) == .completed
+    }
+
+    func sentMessages() throws -> [[String: Any]] {
+        let data = try controlRequest(path: "/_stub/sent", method: "GET")
+        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+    }
+
+    func bookPatches() throws -> [[String: Any]] {
+        let data = try controlRequest(path: "/_stub/book-patches", method: "GET")
+        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
+    }
+
+    func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
+        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
+    }
+
+    /// Each item is a text body, or e.g. `["type": "Photo"]` for a photo the stub serves itself.
+    func setMessages(_ messages: [Any]) throws {
+        try controlRequest(path: "/_stub/messages", method: "POST", jsonBody: messages)
+    }
+
+    func requestedPaths() throws -> [String] {
+        let data = try controlRequest(path: "/_stub/requests", method: "GET")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String]) ?? []
+    }
+
+    @discardableResult
+    func controlRequest(path: String, method: String, jsonBody: Any? = nil) throws -> Data {
+        var request = URLRequest(url: URL(string: stubBaseURL + path)!)
+        request.httpMethod = method
+        if let jsonBody {
+            request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
+        }
+        var result: Result<Data, Error>?
+        let done = XCTestExpectation(description: path)
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error { result = .failure(error) } else { result = .success(data ?? Data()) }
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 10)
+        guard let result else { throw URLError(.timedOut) }
+        switch result {
+        case .success(let data): return data
+        case .failure(let error): throw error
+        }
+    }
+}
+
+/// CI shard 1 (#204 C1): library, chat rendering, a text send, emoji, Saved Messages, speed, Edit Book.
+final class HermeticChatUITests: HermeticTestCase {
     func testTheLibraryRendersBothStatusGroups() throws {
         launch()
 
@@ -131,8 +245,6 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["First seeded message"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Second seeded message"].exists)
     }
-
-    // ---- send, with the echo reconciled ------------------------------------------------------
 
     func testASentMessageAppearsOnceNotTwice() throws {
         launch()
@@ -157,8 +269,6 @@ final class HermeticUITests: XCTestCase {
         XCTAssertEqual(bubbles.count, 1, "the optimistic bubble and its confirmation both rendered and neither went away")
     }
 
-    // ---- pure client UI ----------------------------------------------------------------------
-
     func testTheEmojiPickerRendersItsGridAndSwitchesCategory() throws {
         launch()
         openCurrentBook()
@@ -175,11 +285,6 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(app.buttons["🍕"]), "the picker never dismissed")
     }
 
-    // #173 — iOS-keyboard model: a quick tap sends the emoji (the hold gesture must not eat taps);
-    // press-and-hold opens the six tone variants; the chosen tone is remembered for THAT emoji only
-    // and shows in the grid and on the quick reaction bar. Grid cells and quick-bar buttons are
-    // looked up by identifier because a sent reaction adds a same-emoji pill to the chat behind.
-    // Ends by restoring the default tone — the choice persists in UserDefaults across tests.
     func testSkinTonesArePressAndHoldAndRememberedPerEmoji() throws {
         launch()
         openCurrentBook()
@@ -236,27 +341,175 @@ final class HermeticUITests: XCTestCase {
         app.buttons["skinTone.0"].tap()
     }
 
-    /// Waits for an element to GO AWAY. `XCTAssertFalse(x.waitForExistence(...))` is not this: it
-    /// returns true the instant the element is still on screen — e.g. a sheet mid-dismiss on a slow
-    /// CI runner — so it failed a correct dismissal in CI while passing locally.
-    // ---- photo viewer (#191) and Save to Photos (#193) ------------------------------------------
+    /// The bug (#192): tapping a saved message forwarded it into the current chat and closed the
+    /// sheet. Now it opens the photo, and Saved Messages is still there afterwards.
+    func testTappingASavedPhotoOpensItInsteadOfForwarding() throws {
+        try setSaved([["type": "Photo"]])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
 
-    private func openPhotoViewer() -> XCUIElement {
-        let bubble = app.buttons["photoMessage"].firstMatch
-        XCTAssertTrue(bubble.waitForExistence(timeout: 10), "photo bubble never rendered")
-        bubble.tap()
+        let open = app.buttons["savedOpen"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 10), "saved photo row never rendered")
+        open.tap()
         let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
-        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "full-screen photo never opened")
-        XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"), "viewer didn't lay out at 1×")
-        return viewer
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "tapping a saved photo didn't open it")
+        app.buttons["viewerClose"].tap()
+        XCTAssertTrue(waitForDisappearance(viewer))
+        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "Saved Messages closed — the tap forwarded instead of opening")
     }
 
-    private func waitForValue(of element: XCUIElement, containing text: String, timeout: TimeInterval = 5) -> Bool {
-        let predicate = NSPredicate(format: "value CONTAINS %@", text)
-        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
-        return XCTWaiter().wait(for: [expectation], timeout: timeout) == .completed
+    func testTappingSavedTextShowsItInFull() throws {
+        let long = "A saved thought that is long enough to be cut off in the list row, so the detail screen has to show all of it — every last word."
+        try setSaved([long])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let row = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'A saved thought'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(app.navigationBars["Saved Message"].waitForExistence(timeout: 5), "text detail never opened")
+        XCTAssertTrue(app.staticTexts[long].exists, "detail doesn't show the full text")
+        XCTAssertTrue(app.buttons["Copy"].exists)
     }
 
+    /// Forward is separate: ↗ → pick any chat (this one pinned first) → confirm. The stub has no
+    /// SignalR hub, so the send itself fails here — which also proves a failure is reported in
+    /// Saved Messages instead of silently closing it. (A real forward is covered on device.)
+    func testForwardAsksWhichChatThenConfirms() throws {
+        try setSaved(["Forward me"])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let forward = app.buttons["savedForward"].firstMatch
+        XCTAssertTrue(forward.waitForExistence(timeout: 10), "no Forward button on the saved row")
+        forward.tap()
+        XCTAssertTrue(app.navigationBars["Forward to…"].waitForExistence(timeout: 5), "chat picker never opened")
+        XCTAssertTrue(app.buttons["forwardTo-Seed: Current Read"].waitForExistence(timeout: 10), "current chat not offered")
+        let other = app.buttons["forwardTo-Seed: Future Read"]
+        XCTAssertTrue(other.waitForExistence(timeout: 10), "other chats in the club not offered")
+
+        other.tap()
+        XCTAssertTrue(app.staticTexts["Forward to Seed: Future Read?"].waitForExistence(timeout: 5), "no confirmation before forwarding")
+        let confirm = app.buttons["Forward"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
+        confirm.tap()
+        XCTAssertTrue(app.alerts["Couldn't Forward"].waitForExistence(timeout: 30), "a failed forward wasn't reported")
+        app.alerts["Couldn't Forward"].buttons["OK"].tap()
+        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "forwarding should leave you in Saved Messages")
+    }
+
+    /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved
+    /// Messages, whose voice row shows the speed control without playing: the chat bubble's only
+    /// appears DURING playback, and a CI simulator may stop playback (no audio device) and close
+    /// the popover mid-test. Same VerticalSpeedSlider either way.
+    func testSpeedButtonsStepAQuarterAndStopAtTheEnds() throws {
+        try setSaved([["type": "Voice"]])
+        launch()
+        openCurrentBook()
+        openSavedMessages()
+
+        let bunny = app.buttons["Playback speed"].firstMatch
+        XCTAssertTrue(bunny.waitForExistence(timeout: 10), "saved voice row has no speed control")
+        bunny.tap()
+
+        let value = app.staticTexts["speedValue"]
+        let up = app.buttons["speedUp"], down = app.buttons["speedDown"]
+        XCTAssertTrue(value.waitForExistence(timeout: 5), "speed popover never opened")
+
+        // Start from a known place: down to the 1× floor (persisted rate may be anything).
+        for _ in 0..<12 where down.isEnabled { down.tap() }
+        XCTAssertEqual(value.label, "1×")
+        XCTAssertFalse(down.isEnabled, "− should be disabled at 1×")
+
+        up.tap()
+        XCTAssertEqual(value.label, "1.25×")
+        up.tap()
+        XCTAssertEqual(value.label, "1.5×")
+        down.tap()
+        XCTAssertEqual(value.label, "1.25×")
+
+        for _ in 0..<12 where up.isEnabled { up.tap() }
+        XCTAssertEqual(value.label, "4×")
+        XCTAssertFalse(up.isEnabled, "+ should be disabled at 4×")
+
+        // Leave the persisted rate at 1× for whatever runs next.
+        for _ in 0..<12 where down.isEnabled { down.tap() }
+    }
+
+    /// A club admin picks a photo as the book's cover: it previews on the Edit screen, and Save
+    /// uploads it (club media) and sends its URL with the edit — and only then.
+    func testEditBookChangesTheCoverToAChosenPhoto() throws {
+        launch()
+        openCurrentBook()
+
+        let menu = app.buttons["bookMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let edit = app.buttons["Edit Book"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "book menu has no Edit Book")
+        edit.tap()
+
+        let change = app.buttons["changeCoverMenu"]
+        XCTAssertTrue(change.waitForExistence(timeout: 10), "Edit Book has no Change Cover")
+        change.tap()
+        XCTAssertFalse(app.buttons["Take Photo"].exists, "camera was deliberately left out")
+        XCTAssertTrue(app.buttons["Search Google Books"].exists)
+        app.buttons["Choose Photo"].tap()
+
+        // Single-selection picker: tapping a photo picks it and closes the picker.
+        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
+        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
+        thumbs.element(boundBy: 0).tap()
+        XCTAssertTrue(app.descendants(matching: .any)["chosenCoverImage"].waitForExistence(timeout: 15),
+                      "the chosen photo didn't preview as the cover")
+        XCTAssertTrue(try bookPatches().isEmpty, "nothing should be sent before Save")
+
+        app.buttons["saveBookButton"].tap()
+
+        var patches: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            patches = try bookPatches()
+            if !patches.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(patches.count, 1, "Save should send exactly one edit")
+        let cover = patches.first?["cover_url"] as? String ?? ""
+        XCTAssertTrue(cover.contains("/_stub/media/photo.png?u="),
+                      "the edit should carry the uploaded photo's URL, got '\(cover)'")
+        XCTAssertEqual(patches.first?["title"] as? String, "Seed: Current Read", "title must be untouched")
+    }
+
+    /// Editing only the title must not send a cover at all — the server keeps the existing one.
+    func testEditBookWithoutTouchingTheCoverSendsNoCover() throws {
+        launch()
+        openCurrentBook()
+        app.buttons["bookMenuButton"].tap()
+        app.buttons["Edit Book"].tap()
+
+        let titleField = app.textFields["bookTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 10))
+        titleField.tap()
+        titleField.typeText(" 2")
+        app.buttons["saveBookButton"].tap()
+
+        var patches: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            patches = try bookPatches()
+            if !patches.isEmpty { break }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        XCTAssertEqual(patches.count, 1)
+        XCTAssertNil(patches.first?["cover_url"], "an untouched cover must be left out of the edit")
+    }
+}
+
+/// CI shard 2 (#204 C1): the photo viewer, Save to Photos, sharing, swiping, multi-photo sends.
+final class HermeticMediaUITests: HermeticTestCase {
     /// The bug (#191): once zoomed, the photo couldn't be dragged, so its sides were unreachable.
     /// The viewer reports the visible horizontal slice of the photo ("visible=0.00-1.00" is the
     /// whole width), so this proves a zoomed photo pans all the way to each edge.
@@ -363,149 +616,6 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(sheetAppeared, "share sheet never appeared")
     }
 
-    // ---- Saved Messages: open vs forward (#192) ------------------------------------------------
-
-    private func setSaved(_ saved: [Any]) throws {
-        try controlRequest(path: "/_stub/saved", method: "POST", jsonBody: saved)
-    }
-
-    private func openSavedMessages() {
-        let menu = app.buttons["attachmentMenuButton"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
-        let item = app.buttons["Saved Messages"]
-        XCTAssertTrue(item.waitForExistence(timeout: 5), "+ menu has no Saved Messages")
-        item.tap()
-        XCTAssertTrue(app.navigationBars["Saved Messages"].waitForExistence(timeout: 10), "Saved Messages never opened")
-    }
-
-    /// The bug (#192): tapping a saved message forwarded it into the current chat and closed the
-    /// sheet. Now it opens the photo, and Saved Messages is still there afterwards.
-    func testTappingASavedPhotoOpensItInsteadOfForwarding() throws {
-        try setSaved([["type": "Photo"]])
-        launch()
-        openCurrentBook()
-        openSavedMessages()
-
-        let open = app.buttons["savedOpen"].firstMatch
-        XCTAssertTrue(open.waitForExistence(timeout: 10), "saved photo row never rendered")
-        open.tap()
-        let viewer = app.descendants(matching: .any)["fullScreenImage"].firstMatch
-        XCTAssertTrue(viewer.waitForExistence(timeout: 10), "tapping a saved photo didn't open it")
-        app.buttons["viewerClose"].tap()
-        XCTAssertTrue(waitForDisappearance(viewer))
-        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "Saved Messages closed — the tap forwarded instead of opening")
-    }
-
-    func testTappingSavedTextShowsItInFull() throws {
-        let long = "A saved thought that is long enough to be cut off in the list row, so the detail screen has to show all of it — every last word."
-        try setSaved([long])
-        launch()
-        openCurrentBook()
-        openSavedMessages()
-
-        let row = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH 'A saved thought'")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
-        row.tap()
-        XCTAssertTrue(app.navigationBars["Saved Message"].waitForExistence(timeout: 5), "text detail never opened")
-        XCTAssertTrue(app.staticTexts[long].exists, "detail doesn't show the full text")
-        XCTAssertTrue(app.buttons["Copy"].exists)
-    }
-
-    /// Forward is separate: ↗ → pick any chat (this one pinned first) → confirm. The stub has no
-    /// SignalR hub, so the send itself fails here — which also proves a failure is reported in
-    /// Saved Messages instead of silently closing it. (A real forward is covered on device.)
-    func testForwardAsksWhichChatThenConfirms() throws {
-        try setSaved(["Forward me"])
-        launch()
-        openCurrentBook()
-        openSavedMessages()
-
-        let forward = app.buttons["savedForward"].firstMatch
-        XCTAssertTrue(forward.waitForExistence(timeout: 10), "no Forward button on the saved row")
-        forward.tap()
-        XCTAssertTrue(app.navigationBars["Forward to…"].waitForExistence(timeout: 5), "chat picker never opened")
-        XCTAssertTrue(app.buttons["forwardTo-Seed: Current Read"].waitForExistence(timeout: 10), "current chat not offered")
-        let other = app.buttons["forwardTo-Seed: Future Read"]
-        XCTAssertTrue(other.waitForExistence(timeout: 10), "other chats in the club not offered")
-
-        other.tap()
-        XCTAssertTrue(app.staticTexts["Forward to Seed: Future Read?"].waitForExistence(timeout: 5), "no confirmation before forwarding")
-        let confirm = app.buttons["Forward"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-        confirm.tap()
-        XCTAssertTrue(app.alerts["Couldn't Forward"].waitForExistence(timeout: 30), "a failed forward wasn't reported")
-        app.alerts["Couldn't Forward"].buttons["OK"].tap()
-        XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "forwarding should leave you in Saved Messages")
-    }
-
-    // ---- playback speed −/+ (#190) --------------------------------------------------------------
-
-    /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved
-    /// Messages, whose voice row shows the speed control without playing: the chat bubble's only
-    /// appears DURING playback, and a CI simulator may stop playback (no audio device) and close
-    /// the popover mid-test. Same VerticalSpeedSlider either way.
-    func testSpeedButtonsStepAQuarterAndStopAtTheEnds() throws {
-        try setSaved([["type": "Voice"]])
-        launch()
-        openCurrentBook()
-        openSavedMessages()
-
-        let bunny = app.buttons["Playback speed"].firstMatch
-        XCTAssertTrue(bunny.waitForExistence(timeout: 10), "saved voice row has no speed control")
-        bunny.tap()
-
-        let value = app.staticTexts["speedValue"]
-        let up = app.buttons["speedUp"], down = app.buttons["speedDown"]
-        XCTAssertTrue(value.waitForExistence(timeout: 5), "speed popover never opened")
-
-        // Start from a known place: down to the 1× floor (persisted rate may be anything).
-        for _ in 0..<12 where down.isEnabled { down.tap() }
-        XCTAssertEqual(value.label, "1×")
-        XCTAssertFalse(down.isEnabled, "− should be disabled at 1×")
-
-        up.tap()
-        XCTAssertEqual(value.label, "1.25×")
-        up.tap()
-        XCTAssertEqual(value.label, "1.5×")
-        down.tap()
-        XCTAssertEqual(value.label, "1.25×")
-
-        for _ in 0..<12 where up.isEnabled { up.tap() }
-        XCTAssertEqual(value.label, "4×")
-        XCTAssertFalse(up.isEnabled, "+ should be disabled at 4×")
-
-        // Leave the persisted rate at 1× for whatever runs next.
-        for _ in 0..<12 where down.isEnabled { down.tap() }
-    }
-
-    // ---- swipe between photos + multi-photo send (#201) -----------------------------------------
-
-    /// The viewer's "k of N" as (k, N). The app's chat cache can hold photos from earlier tests
-    /// (same stub message ids), so tests reason about movement relative to where they start.
-    private func counterPosition() -> (Int, Int)? {
-        let parts = app.staticTexts["photoCounter"].label.components(separatedBy: " of ")
-        guard parts.count == 2, let k = Int(parts[0]), let n = Int(parts[1]) else { return nil }
-        return (k, n)
-    }
-
-    /// One page step: swipe, then wait for the counter. A synthetic swipe that lands while the
-    /// previous page is still settling can be dropped on a loaded machine (seen once locally
-    /// while a release build ran), so retry the swipe once — a wrong page still fails.
-    private func page(_ swipe: () -> Void, to expected: String) -> Bool {
-        for _ in 0..<2 {
-            swipe()
-            if waitForCounter(expected) { return true }
-        }
-        return false
-    }
-
-    private func waitForCounter(_ text: String, timeout: TimeInterval = 5) -> Bool {
-        let counter = app.staticTexts["photoCounter"]
-        let match = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: counter)
-        return XCTWaiter().wait(for: [match], timeout: timeout) == .completed
-    }
-
     /// Tapping a photo opens the viewer on THAT photo; swiping pages through every photo in the
     /// chat, oldest → newest, stopping at the ends.
     func testSwipingPagesThroughTheChatsPhotos() throws {
@@ -558,11 +668,6 @@ final class HermeticUITests: XCTestCase {
         XCTAssertTrue(waitForValue(of: viewer, containing: "zoom=1.00"))
         viewer.swipeLeft()
         XCTAssertTrue(waitForCounter("\(start + 1) of \(total)"), "at 1× a swipe should page: \(counter.label)")
-    }
-
-    private func sentMessages() throws -> [[String: Any]] {
-        let data = try controlRequest(path: "/_stub/sent", method: "GET")
-        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
     }
 
     /// + → Photos picks several photos in the real system picker; one can be removed; Send posts
@@ -621,8 +726,6 @@ final class HermeticUITests: XCTestCase {
                        .completed, "expected \(toSend) photo bubbles, found \(bubbles.count)")
     }
 
-    // ---- batch sends start together (#203) ---------------------------------------------------------
-
     /// A photo batch must start every photo's send at once. Started one after another, each
     /// upload-link wait stacked behind the previous one — on a bad network N photos took N
     /// timeouts to resolve. The stub holds each upload-link request for 2 s and records when it
@@ -665,118 +768,5 @@ final class HermeticUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.5)
         }
         XCTAssertEqual(sent.map { $0["type"] as? String }, Array(repeating: "Photo", count: picked))
-    }
-
-    // ---- Edit Book → Change Cover (2.1) ---------------------------------------------------------
-
-    /// A club admin picks a photo as the book's cover: it previews on the Edit screen, and Save
-    /// uploads it (club media) and sends its URL with the edit — and only then.
-    func testEditBookChangesTheCoverToAChosenPhoto() throws {
-        launch()
-        openCurrentBook()
-
-        let menu = app.buttons["bookMenuButton"]
-        XCTAssertTrue(menu.waitForExistence(timeout: 10))
-        menu.tap()
-        let edit = app.buttons["Edit Book"]
-        XCTAssertTrue(edit.waitForExistence(timeout: 5), "book menu has no Edit Book")
-        edit.tap()
-
-        let change = app.buttons["changeCoverMenu"]
-        XCTAssertTrue(change.waitForExistence(timeout: 10), "Edit Book has no Change Cover")
-        change.tap()
-        XCTAssertFalse(app.buttons["Take Photo"].exists, "camera was deliberately left out")
-        XCTAssertTrue(app.buttons["Search Google Books"].exists)
-        app.buttons["Choose Photo"].tap()
-
-        // Single-selection picker: tapping a photo picks it and closes the picker.
-        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
-        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
-        thumbs.element(boundBy: 0).tap()
-        XCTAssertTrue(app.descendants(matching: .any)["chosenCoverImage"].waitForExistence(timeout: 15),
-                      "the chosen photo didn't preview as the cover")
-        XCTAssertTrue(try bookPatches().isEmpty, "nothing should be sent before Save")
-
-        app.buttons["saveBookButton"].tap()
-
-        var patches: [[String: Any]] = []
-        let deadline = Date().addingTimeInterval(20)
-        while Date() < deadline {
-            patches = try bookPatches()
-            if !patches.isEmpty { break }
-            Thread.sleep(forTimeInterval: 0.5)
-        }
-        XCTAssertEqual(patches.count, 1, "Save should send exactly one edit")
-        let cover = patches.first?["cover_url"] as? String ?? ""
-        XCTAssertTrue(cover.contains("/_stub/media/photo.png?u="),
-                      "the edit should carry the uploaded photo's URL, got '\(cover)'")
-        XCTAssertEqual(patches.first?["title"] as? String, "Seed: Current Read", "title must be untouched")
-    }
-
-    /// Editing only the title must not send a cover at all — the server keeps the existing one.
-    func testEditBookWithoutTouchingTheCoverSendsNoCover() throws {
-        launch()
-        openCurrentBook()
-        app.buttons["bookMenuButton"].tap()
-        app.buttons["Edit Book"].tap()
-
-        let titleField = app.textFields["bookTitleField"]
-        XCTAssertTrue(titleField.waitForExistence(timeout: 10))
-        titleField.tap()
-        titleField.typeText(" 2")
-        app.buttons["saveBookButton"].tap()
-
-        var patches: [[String: Any]] = []
-        let deadline = Date().addingTimeInterval(20)
-        while Date() < deadline {
-            patches = try bookPatches()
-            if !patches.isEmpty { break }
-            Thread.sleep(forTimeInterval: 0.5)
-        }
-        XCTAssertEqual(patches.count, 1)
-        XCTAssertNil(patches.first?["cover_url"], "an untouched cover must be left out of the edit")
-    }
-
-    private func bookPatches() throws -> [[String: Any]] {
-        let data = try controlRequest(path: "/_stub/book-patches", method: "GET")
-        return (try JSONSerialization.jsonObject(with: data) as? [[String: Any]]) ?? []
-    }
-
-    private func waitForDisappearance(_ element: XCUIElement, timeout: TimeInterval = 5) -> Bool {
-        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element)
-        return XCTWaiter().wait(for: [gone], timeout: timeout) == .completed
-    }
-
-    // ---- control API (talks to the host-level stub, not an in-process object) ----------------
-
-    /// Each item is a text body, or e.g. `["type": "Photo"]` for a photo the stub serves itself.
-    private func setMessages(_ messages: [Any]) throws {
-        try controlRequest(path: "/_stub/messages", method: "POST", jsonBody: messages)
-    }
-
-    private func requestedPaths() throws -> [String] {
-        let data = try controlRequest(path: "/_stub/requests", method: "GET")
-        return (try? JSONSerialization.jsonObject(with: data) as? [String]) ?? []
-    }
-
-    @discardableResult
-    private func controlRequest(path: String, method: String, jsonBody: Any? = nil) throws -> Data {
-        var request = URLRequest(url: URL(string: stubBaseURL + path)!)
-        request.httpMethod = method
-        if let jsonBody {
-            request.httpBody = try JSONSerialization.data(withJSONObject: jsonBody)
-        }
-        var result: Result<Data, Error>?
-        let done = XCTestExpectation(description: path)
-        URLSession.shared.dataTask(with: request) { data, _, error in
-            if let error { result = .failure(error) } else { result = .success(data ?? Data()) }
-            done.fulfill()
-        }.resume()
-        wait(for: [done], timeout: 10)
-        guard let result else { throw URLError(.timedOut) }
-        switch result {
-        case .success(let data): return data
-        case .failure(let error): throw error
-        }
     }
 }

@@ -666,7 +666,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "#!/bin/bash\nset -e\ncd \"$SRCROOT\"\n# Idempotent: a stub left over from an interrupted previous run (a crash, Xcode's Stop\n# button) must not be mistaken for a healthy one — always replace it.\nif [ -f /tmp/ombc-hermetic-stub.pid ]; then\n  kill \"$(cat /tmp/ombc-hermetic-stub.pid)\" 2>/dev/null || true\n  rm -f /tmp/ombc-hermetic-stub.pid\nfi\nnohup python3 scripts/hermetic_stub.py > /tmp/ombc-hermetic-stub.log 2>&1 &\necho $! > /tmp/ombc-hermetic-stub.pid\n# Real readiness, not a fixed sleep — the script prints one line once its socket is\n# bound and accepting connections.\nfor i in $(seq 1 50); do\n  grep -q \"listening on\" /tmp/ombc-hermetic-stub.log 2>/dev/null && exit 0\n  sleep 0.1\ndone\necho \"hermetic stub did not start in time\" >&2\ncat /tmp/ombc-hermetic-stub.log >&2\nexit 1\n";
+			shellScript = "#!/bin/bash\nset -e\n# Shared with scripts/regression.sh, which also starts it for prebuilt CI runs (#204).\n\"$SRCROOT/scripts/start_hermetic_stub.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
