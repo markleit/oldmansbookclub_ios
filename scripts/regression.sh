@@ -24,6 +24,17 @@ LANE_LIVE=0
 LANE_DEVICE=0
 RESET_DEV_DB=1
 SIMULATOR="${OMBC_SIMULATOR:-iPhone 17 Pro}"
+SKIP_UNIT=0
+HERMETIC_SHARDS_TO_RUN="1 2"
+BUILD_FOR_TESTING_DIR=""
+PRODUCTS_DIR=""
+
+# #204 (C1) — the hermetic UI tests run as two halves, one CI job each, in parallel. A half is a
+# list of test CLASSES, so a new test lands in a half by being written in one of these classes.
+# check_hermetic_shards() fails the run if a Hermetic*UITests class is in neither half — a test
+# that silently runs nowhere is the failure mode this guards against.
+HERMETIC_SHARD_1="OldMansBookClubUITests/HermeticChatUITests"
+HERMETIC_SHARD_2="OldMansBookClubUITests/HermeticMediaUITests"
 
 usage() {
     sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -34,6 +45,10 @@ Options:
   --device             --live, plus the device-only tests on OMBC_DEVICE_UDID
   --only api|ios|ui    run just one part
   --only ios-unit      iOS unit tests only, skipping the hermetic UI tests
+  --only hermetic-1    one half of the hermetic UI tests (hermetic-2 for the other) — what each
+                       parallel CI job runs (#204)
+  --build-for-testing DIR   build the app + test bundles into DIR and stop (CI's build job)
+  --products DIR       run tests from bundles already built into DIR (test-without-building)
   --no-reset           for --live: do not wipe bookclubdb-dev first (leaves your dev state alone,
                        at the cost of determinism)
   --simulator NAME     simulator to use (default: iPhone 17 Pro, or $OMBC_SIMULATOR)
@@ -52,6 +67,8 @@ while [[ $# -gt 0 ]]; do
         --device)    LANE_LIVE=1; LANE_DEVICE=1 ;;
         --no-reset)  RESET_DEV_DB=0 ;;
         --simulator) SIMULATOR="$2"; shift ;;
+        --build-for-testing) BUILD_FOR_TESTING_DIR="$2"; LANE_API=0; LANE_IOS_UNIT=0; LANE_LIVE=0; shift ;;
+        --products)  PRODUCTS_DIR="$2"; shift ;;
         --only)
             LANE_API=0; LANE_IOS_UNIT=0; LANE_LIVE=0
             case "$2" in
@@ -60,8 +77,9 @@ while [[ $# -gt 0 ]]; do
                 # Unit tests without the hermetic UI tests — a faster subset for quick local
                 # iteration. CI itself gates on the full `--only ios` (both).
                 ios-unit) LANE_IOS_UNIT=1; SKIP_HERMETIC_UI=1 ;;
+                hermetic-1|hermetic-2) LANE_IOS_UNIT=1; SKIP_UNIT=1; HERMETIC_SHARDS_TO_RUN="${2#hermetic-}" ;;
                 ui)  LANE_LIVE=1 ;;
-                *)   echo "--only takes api, ios or ui" >&2; exit 2 ;;
+                *)   echo "--only takes api, ios, ios-unit, hermetic-1, hermetic-2 or ui" >&2; exit 2 ;;
             esac
             shift ;;
         -h|--help)   usage; exit 0 ;;
@@ -110,12 +128,22 @@ if [[ $LANE_API -eq 1 ]]; then
         record "API integration" $?
         set -e
     fi
+
+    # #204 (C4) — the hermetic UI tests' stub has to behave like the server it stands in for
+    # (dedup, 429 + Retry-After, the file-body send, dropped connections), or a UI test can pass
+    # while proving nothing. Stdlib Python, a couple of seconds; lives here because the API lane
+    # is the cheap CI job and the stub's shape comes from the API's contract fixtures.
+    step "Hermetic stub self-test"
+    set +e
+    python3 scripts/test_hermetic_stub.py
+    record "hermetic stub" $?
+    set -e
 fi
 
 # ---- lane A: iOS unit ------------------------------------------------------------------------
 
-run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <only-testing...>
-    local label="$1" destination="$2"; shift 2
+run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <retry:0|1> <only-testing...>
+    local label="$1" destination="$2" retry="$3"; shift 3
     local args=()
     for target in "$@"; do args+=("-only-testing:$target"); done
 
@@ -135,55 +163,59 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <only-tes
     # OldMansBookClub.xcodeproj` + Run already uses. project.yml's CODE_SIGN_STYLE: Automatic
     # picks it up with no flag needed here at all.
     #
-    # ONE automatic retry, and ONLY here — not silently swallowed, always logged when it fires.
-    # This is not muting a real failure: the specific thing it papers over is a crash INSIDE
-    # APPLE'S OWN TOOLING, not this app or this suite. Confirmed by crash report
-    # (~/Library/Logs/DiagnosticReports/SpringBoard-*.ips): the Simulator's SpringBoard process
-    # takes EXC_BAD_ACCESS / SIGSEGV at address 0x20 on a background dispatch queue, with
-    # XCTAutomationSupport (Apple's private XCUITest-automation framework, injected into
-    # SpringBoard to broker app launch/element queries for UI tests) as the top frame — a
-    # use-after-free-shaped bug in Apple's code, not ours. It reproduces identically across
-    # multiple crash logs going back days, on both fresh and long-running simulators, and its
-    # symptom from a test's point of view is indistinguishable from a hang or a networking
-    # failure: the app-under-test simply never reaches the foreground, because the thing meant to
-    # bring it there just died. A plain `xcrun simctl launch` (which does not go through
-    # XCTAutomationSupport at all) opens the exact same app instantly on the exact same device
-    # when this happens, which is what proves the app itself is not the problem.
-    #
-    # A second attempt succeeds because the crash is non-deterministic (classic for a
-    # use-after-free) and the retry gets a clean SpringBoard/XCTAutomationSupport instance. A
-    # REAL app or test regression fails the same assertion both times and this changes nothing
-    # about that — retrying twice a test that is actually broken just makes it fail twice, loudly.
-    local attempt status
-    local xcodebuild_log
+    # #204 (C2) — UI tests retry a FAILING TEST once (`-retry-tests-on-failure`), not the whole
+    # suite. This used to re-run every UI test after any failure, which doubled a 30-minute CI job
+    # whenever one known-flaky test tripped. Two things still get a second chance, now per test:
+    # a crash inside Apple's own tooling (SpringBoard taking EXC_BAD_ACCESS in
+    # XCTAutomationSupport, so the app under test never reaches the foreground — confirmed by
+    # ~/Library/Logs/DiagnosticReports/SpringBoard-*.ips; a plain `simctl launch` opens the same
+    # app instantly when it happens), and a genuinely flaky test. A real regression fails both
+    # attempts. Either way a test that needed the retry is listed as FLAKY by xcresult_summary.py
+    # (and in the GitHub job summary), so it gets an issue instead of quietly costing a retry.
+    # Unit tests never retry: they don't touch a simulator UI, so a flaky one is always a bug.
+    if [[ "$retry" -eq 1 ]]; then args+=(-retry-tests-on-failure -test-iterations 2); fi
+
+    local mode=(test -project OldMansBookClub.xcodeproj -scheme OldMansBookClub)
+    if [[ -n "$PRODUCTS_DIR" ]]; then
+        local xctestrun
+        xctestrun=$(ls "$PRODUCTS_DIR"/Build/Products/*.xctestrun 2>/dev/null | head -1)
+        if [[ -z "$xctestrun" ]]; then
+            fail "no .xctestrun under $PRODUCTS_DIR/Build/Products — run --build-for-testing first"
+            record "$label" 1
+            return
+        fi
+        mode=(test-without-building -xctestrun "$xctestrun")
+    fi
+
+    local status xcodebuild_log result_bundle
     xcodebuild_log=$(mktemp -t ombc-xcodebuild)
-    for attempt in 1 2; do
-        set +e
-        set -o pipefail
-        xcodebuild test \
-            -project OldMansBookClub.xcodeproj \
-            -scheme OldMansBookClub \
-            -destination "$destination" \
-            "${args[@]}" \
-            | tee "$xcodebuild_log" | tail -40
-        status=$?
-        # tail -40 alone dropped the assertion messages, so a CI failure named the test but
-        # not why. Surface every failure line from the full log.
-        grep -E "error: -\[|: error: " "$xcodebuild_log" | head -20 || true
-        set +o pipefail
-        set -e
-        if [[ $status -eq 0 ]]; then break; fi
-        if [[ $attempt -eq 1 ]]; then
-            note "first attempt failed — checking whether it was a Simulator/XCTAutomationSupport crash, not a real failure"
-            if ls "$HOME/Library/Logs/DiagnosticReports/SpringBoard-"*.ips >/dev/null 2>&1 \
-                && [[ -n "$(find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -iname 'SpringBoard-*.ips' -newermt '-2 minutes' 2>/dev/null)" ]]; then
-                note "confirmed: a SpringBoard crash landed in the last 2 minutes — retrying once"
-            else
-                note "no recent SpringBoard crash found — retrying once anyway, but this may be a real failure"
-            fi
+    result_bundle="$(mktemp -d -t ombc-results)/$(echo "$label" | tr -c 'A-Za-z0-9' '-').xcresult"
+    set +e
+    set -o pipefail
+    xcodebuild "${mode[@]}" \
+        -destination "$destination" \
+        -resultBundlePath "$result_bundle" \
+        "${args[@]}" \
+        | tee "$xcodebuild_log" | tail -40
+    status=$?
+    # tail -40 alone dropped the assertion messages, so a CI failure named the test but
+    # not why. Surface every failure line from the full log.
+    grep -E "error: -\[|: error: " "$xcodebuild_log" | head -20 || true
+    set +o pipefail
+    set -e
+    python3 scripts/xcresult_summary.py "$result_bundle" "$label" || true
+    record "$label" $status
+}
+
+check_hermetic_shards() {
+    local cls missing=0
+    for cls in $(grep -hoE "class Hermetic[A-Za-z]*UITests" UITests/*.swift | awk '{print $2}'); do
+        if [[ " $HERMETIC_SHARD_1 $HERMETIC_SHARD_2 " != *"/$cls "* ]]; then
+            fail "$cls is in neither hermetic half — add it to HERMETIC_SHARD_1 or _2 in regression.sh"
+            missing=1
         fi
     done
-    record "$label" $status
+    return $missing
 }
 
 resolve_simulator() {
@@ -232,27 +264,57 @@ reset_simulator_state() {
     xcrun simctl keychain "$udid" reset >/dev/null 2>&1 || true
 }
 
-if [[ $LANE_IOS_UNIT -eq 1 || $LANE_LIVE -eq 1 ]]; then
+if [[ $LANE_IOS_UNIT -eq 1 || $LANE_LIVE -eq 1 || -n "$BUILD_FOR_TESTING_DIR" ]]; then
     resolve_simulator
+fi
 
+# Prebuilt bundles (--products) need no project at all — they were built from it already.
+if [[ ( $LANE_IOS_UNIT -eq 1 || $LANE_LIVE -eq 1 || -n "$BUILD_FOR_TESTING_DIR" ) && -z "$PRODUCTS_DIR" ]]; then
     step "Regenerating the Xcode project"
     # project.yml is the source of truth and .xcodeproj is generated, so a test file added since
     # the last generate would otherwise be silently absent from the run — passing by not existing.
     xcodegen generate >/dev/null
 fi
 
+# #204 (C1) — CI builds once and runs the unit tests and each hermetic half on separate runners
+# from those same bundles (`--products`), instead of one job building and then running everything
+# in sequence.
+if [[ -n "$BUILD_FOR_TESTING_DIR" ]]; then
+    step "Building the app and test bundles into $BUILD_FOR_TESTING_DIR"
+    set +e
+    set -o pipefail
+    xcodebuild build-for-testing \
+        -project OldMansBookClub.xcodeproj -scheme OldMansBookClub \
+        -destination "generic/platform=iOS Simulator" \
+        -derivedDataPath "$BUILD_FOR_TESTING_DIR" | tail -20
+    record "build for testing" $?
+    set +o pipefail
+    set -e
+fi
+
 if [[ $LANE_IOS_UNIT -eq 1 ]]; then
-    step "iOS unit tests (no network, no backend)"
-    reset_simulator_state
-    run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" OldMansBookClubTests
+    if [[ $SKIP_UNIT -eq 0 ]]; then
+        step "iOS unit tests (no network, no backend)"
+        reset_simulator_state
+        run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" 0 OldMansBookClubTests
+    fi
 
     if [[ "${SKIP_HERMETIC_UI:-0}" != "1" ]]; then
-    step "Hermetic UI tests (stub server, still no backend)"
-    # The app is pointed at a stub HTTP server run by the test process itself, using the
-    # debugServerBaseURL override that already exists for #120 — so these are as deterministic as
-    # the unit tests, just slower because a simulator has to boot and draw.
-    run_xcodebuild_tests "hermetic UI" "platform=iOS Simulator,name=$SIMULATOR" \
-        OldMansBookClubUITests/HermeticUITests
+        if check_hermetic_shards; then
+            # The app is pointed at a stub HTTP server (a host process — see start_hermetic_stub.sh),
+            # using the debugServerBaseURL override that already exists for #120 — so these are as
+            # deterministic as the unit tests, just slower because a simulator has to boot and draw.
+            scripts/start_hermetic_stub.sh
+            for shard in $HERMETIC_SHARDS_TO_RUN; do
+                step "Hermetic UI tests, half $shard of 2 (stub server, still no backend)"
+                reset_simulator_state
+                classes_var="HERMETIC_SHARD_$shard"
+                # shellcheck disable=SC2086
+                run_xcodebuild_tests "hermetic UI $shard/2" "platform=iOS Simulator,name=$SIMULATOR" 1 ${!classes_var}
+            done
+        else
+            record "hermetic UI (shard check)" 1
+        fi
     fi
 fi
 
@@ -338,9 +400,9 @@ if [[ $LANE_LIVE -eq 1 ]]; then
     # Clean app + keychain: the hermetic lane just signed in against its stub, and that token is
     # not valid here.
     reset_simulator_state
-    # HermeticUITests is excluded here: it brings its own stub server, so running it again against
-    # the live API would prove nothing new and cost another minute.
-    run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,name=$SIMULATOR" \
+    # The Hermetic* classes are excluded here: they bring their own stub server, so running them
+    # again against the live API would prove nothing new and cost another minute.
+    run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,name=$SIMULATOR" 1 \
         OldMansBookClubUITests/OldMansBookClubUITests OldMansBookClubUITests/LibraryUITests
 fi
 

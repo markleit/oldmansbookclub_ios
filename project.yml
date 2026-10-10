@@ -153,24 +153,8 @@ targets:
         script: |
           #!/bin/bash
           set -e
-          cd "$SRCROOT"
-          # Idempotent: a stub left over from an interrupted previous run (a crash, Xcode's Stop
-          # button) must not be mistaken for a healthy one — always replace it.
-          if [ -f /tmp/ombc-hermetic-stub.pid ]; then
-            kill "$(cat /tmp/ombc-hermetic-stub.pid)" 2>/dev/null || true
-            rm -f /tmp/ombc-hermetic-stub.pid
-          fi
-          nohup python3 scripts/hermetic_stub.py > /tmp/ombc-hermetic-stub.log 2>&1 &
-          echo $! > /tmp/ombc-hermetic-stub.pid
-          # Real readiness, not a fixed sleep — the script prints one line once its socket is
-          # bound and accepting connections.
-          for i in $(seq 1 50); do
-            grep -q "listening on" /tmp/ombc-hermetic-stub.log 2>/dev/null && exit 0
-            sleep 0.1
-          done
-          echo "hermetic stub did not start in time" >&2
-          cat /tmp/ombc-hermetic-stub.log >&2
-          exit 1
+          # Shared with scripts/regression.sh, which also starts it for prebuilt CI runs (#204).
+          "$SRCROOT/scripts/start_hermetic_stub.sh"
         # No output declared, so Xcode reruns this on every build rather than caching it —
         # correct here, since "is the stub already running" isn't expressible as a file timestamp.
         basedOnDependencyAnalysis: false

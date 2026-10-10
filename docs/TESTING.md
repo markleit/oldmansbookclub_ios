@@ -19,9 +19,21 @@ commands.
 ./scripts/regression.sh --device   # + lane C — device-only tests, iPhone attached. ~20 min
 ```
 
-CI calls this same script (`.github/workflows/test.yml` runs `--only api` and `--only ios`), so
-"green in CI" and "green on my machine" mean the same thing rather than being two implementations
-that drift.
+CI calls this same script, so "green in CI" and "green on my machine" mean the same thing rather
+than being two implementations that drift. `.github/workflows/test.yml` (#204) runs `--only api`,
+then builds the app once (`--build-for-testing`) and runs `--only ios-unit`, `--only hermetic-1`
+and `--only hermetic-2` on three runners at the same time from those bundles (`--products`):
+
+| CI job | Runs | Typical time |
+|---|---|---|
+| API integration | `--only api` — API suite + the hermetic stub's self-test | ~1 min |
+| iOS build | `--build-for-testing build/ci`, uploaded as an artifact | ~8 min |
+| iOS unit | `--only ios-unit --products build/ci` | ~4 min after the build |
+| iOS UI (1/2), (2/2) | `--only hermetic-N --products build/ci` | ~10–15 min after the build |
+
+UI tests retry a **failing test** once (`-retry-tests-on-failure`), never the whole suite. A test
+that only passed on its retry is listed as **flaky** in the run output and the GitHub job summary
+(`scripts/xcresult_summary.py`) — file an issue for it the same day. Unit tests never retry.
 
 | Lane | Command | Where | Time | Proves |
 |---|---|---|---|---|
@@ -145,11 +157,30 @@ would pass while enforcing nothing.
 Runs in well under a second, which is what makes it viable as a merge gate.
 
 **Hermetic UI** (`UITests/HermeticUITests.swift`) drives the real app against a stub HTTP server —
-`scripts/hermetic_stub.py`, a genuine macOS process started by a build-phase script on the
-`OldMansBookClubUITests` target (`project.yml`) before it builds, answering requests by shape
-(unrecognized GET → `[]`, unrecognized POST → `{}`) plus a small control API
-(`/_stub/reset`, `/_stub/messages`, `/_stub/requests`) so a test can seed state and read back what
-the app requested. It runs as a real host process rather than in-process, because the iOS
+`scripts/hermetic_stub.py`, a genuine macOS process started by `scripts/start_hermetic_stub.sh`
+(from the `OldMansBookClubUITests` target's pre-build phase for an Xcode run, and from
+`regression.sh` before every hermetic run, since CI's prebuilt bundles skip the build). It answers
+requests by shape (unrecognized GET → `[]`, unrecognized POST → `{}`) plus a control API so a test
+can seed state and read back what the app did:
+
+| Control | Does |
+|---|---|
+| `POST /_stub/reset` | fresh state (every test's `setUp`) |
+| `POST /_stub/messages[?book_id=]` | seed a chat; items may carry `sent_at`/`received_at` for a late arrival |
+| `POST /_stub/saved` | seed Saved Messages |
+| `POST /_stub/script` | `{"route": "POST /books/*/messages", "responses": [{"status": 503}, {"status": 429, "retry_after": 2}, {"drop": true}, {"delay": 3}]}` — the next matching requests get these, in order |
+| `POST /_stub/down` | `{"down": true}`: every non-control request is dropped (server unreachable) |
+| `GET /_stub/sent` | every send that landed: type, `client_id`, `sent_at`, `via` (json/file), book |
+| `GET /_stub/requests` | every request path, in order (counts refreshes, retries) |
+
+The stub mirrors the server where the send tests depend on it: `client_id` dedup, the one-request
+voice/photo send (file body), forwards, 429 + `Retry-After`. Every message it returns is built from
+the API's contract fixture (`Tests/contract`), so its shape can't drift from the real server's, and
+`scripts/test_hermetic_stub.py` (run in the API lane) checks all of it.
+
+The tests are split into two classes that CI runs in parallel — `HermeticChatUITests` and
+`HermeticMediaUITests`, sharing `HermeticTestCase`. A new test goes in one of them (or a new
+`Hermetic*UITests` class added to a half in `regression.sh`); a class in neither half fails the run. It runs as a real host process rather than in-process, because the iOS
 Simulator does not reliably bridge loopback connections *between two* Simulator-hosted app
 processes — only from a Simulator app to a genuine macOS host process, which is also why the live
 lane's real API (also a host process) never has this problem. `/hubs/*` returns a hard 404 rather
@@ -322,7 +353,7 @@ machine's resource headroom matters — check `uptime`/`vm_stat` before and betw
 Simulator/xcodebuild work, especially several invocations in a row. A red result under heavy
 resource contention is inconclusive; rerun on its own before treating it as a regression.
 
-**A single `-only-testing:` run behaves differently from the full lane.** Each `HermeticUITests`
+**A single `-only-testing:` run behaves differently from the full lane.** Each `Hermetic*UITests`
 test resets the stub server's own state in `setUp`, but the app's install and Keychain/UserDefaults
 state on the simulator carries across every test in the same `xcodebuild test` invocation — it's
 only reset once, up front, by `regression.sh` itself. A bare `xcodebuild test -only-testing:...`
