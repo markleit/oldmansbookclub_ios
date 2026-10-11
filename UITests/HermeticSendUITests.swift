@@ -39,7 +39,8 @@ final class HermeticSendUITests: HermeticTestCase {
 
     /// What the stub saw — attached to a failure so a flaky run explains itself.
     private func trail() -> String {
-        ((try? requestedPaths()) ?? []).suffix(25).joined(separator: "\n")
+        // One line: the CI log keeps only the first line of a failure message.
+        ((try? requestedPaths()) ?? []).suffix(25).joined(separator: " | ")
     }
 
     private func script(_ route: String, _ responses: [[String: Any]]) throws {
@@ -252,7 +253,7 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertTrue(reasonRow.waitForExistence(timeout: 5), "the reason isn't shown")
         app.buttons["Delete"].tap()
         XCTAssertTrue(waitForDisappearance(app.staticTexts["not allowed"], timeout: 5), "Delete didn't remove it")
-        XCTAssertTrue(try sentMessages().isEmpty, "a refused message reached the server. Stub saw:\n\(trail())")
+        XCTAssertTrue(try sentMessages().isEmpty, "a refused message reached the server. Stub saw: \(trail())")
     }
 
     func testSendNowTriesImmediatelyInsteadOfWaitingForTheNextRetry() throws {
@@ -268,7 +269,7 @@ final class HermeticSendUITests: HermeticTestCase {
         app.buttons["Send now"].tap()
 
         XCTAssertEqual(try waitForSent(1, timeout: 8).first?["body"] as? String, "now please",
-                       "Send now didn't deliver it. Stub saw:\n\(trail())")
+                       "Send now didn't deliver it. Stub saw: \(trail())")
     }
 
     // MARK: - H13: a batch keeps the order it was sent in
@@ -288,7 +289,7 @@ final class HermeticSendUITests: HermeticTestCase {
         app.buttons["sendButton"].tap()
 
         let sent = try waitForSent(4, timeout: 45)
-        XCTAssertEqual(sent.count, 4, "the caption and three photos, each once: \(sent)\nStub saw:\n\(trail())")
+        XCTAssertEqual(sent.count, 4, "the caption and three photos, each once: \(sent) — Stub saw: \(trail())")
         let byTapTime = sent.sorted { ($0["sent_at"] as? String ?? "") < ($1["sent_at"] as? String ?? "") }
         XCTAssertEqual(byTapTime.map { $0["type"] as? String }, ["Text", "Photo", "Photo", "Photo"])
         XCTAssertEqual(byTapTime.first?["body"] as? String, "a caption")

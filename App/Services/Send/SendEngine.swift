@@ -392,7 +392,14 @@ final class SendEngine: ObservableObject {
             refreshedAfter401.insert(id)
             SendLog.note("token refused, refreshing", id)
             Task {
-                switch await env.tokenAfterRejection() {
+                let result = await env.tokenAfterRejection()
+                // While the token was being refreshed the message may have moved on — the retry
+                // clock already sent a newer attempt, or it was delivered or deleted. Resubmitting
+                // regardless sent a second, overlapping attempt (found by a flaky CI run: one
+                // attempt hit a refusal, the other got through).
+                guard let current = outbox.item(id), current.attempts == attempt,
+                      current.status != .refused else { return }
+                switch result {
                 case .token:
                     transport.cancelBackground(itemId: id)
                     outbox.update(id) { $0.status = .queued }

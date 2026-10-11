@@ -59,6 +59,8 @@ final class SendEngineTests: XCTestCase {
     private var tokenCalls: [TimeInterval] = []
     private var rejections = 0
     private var tokenAfterRejectionResult: APIClient.SendToken = .token("fresh-token")
+    /// When set, a token refresh waits here until the test resumes it.
+    private var refreshGate: (() async -> Void)?
     private var wakes: [(delay: TimeInterval, action: @MainActor () -> Void, cancelled: Bool)] = []
     private var cached: [(UUID, Message)] = []
     private var confirmations: [SendConfirmation] = []
@@ -90,7 +92,11 @@ final class SendEngineTests: XCTestCase {
             deviceId: { "device-1" },
             myUserId: { [unowned self] in self.me },
             token: { [unowned self] validFor in self.tokenCalls.append(validFor); return .token("tok") },
-            tokenAfterRejection: { [unowned self] in self.rejections += 1; return self.tokenAfterRejectionResult },
+            tokenAfterRejection: { [unowned self] in
+                self.rejections += 1
+                if let gate = self.refreshGate { await gate() }
+                return self.tokenAfterRejectionResult
+            },
             uploadLink: { _, _ in (URL(string: "https://blob.test/v.mp4?sig=w")!, "https://blob.test/v.mp4") },
             schedule: { [unowned self] delay, action in
                 let index = self.wakes.count
@@ -258,6 +264,35 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.background.count, 2, "resent at once with the new token")
         XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).key.attempt, 2)
         XCTAssertEqual(engine.items.first?.id, item.id)
+    }
+
+    func testARetryDuringTheTokenRefreshIsNotFollowedByASecondOverlappingAttempt() async throws {
+        // Both copies get 401: the first starts a refresh, the second puts the message on the
+        // clock, and the clock fires before the refresh returns. The refresh must not then send
+        // another attempt on top of the one the clock already sent (found by a flaky CI run: one
+        // overlapping attempt hit a refusal while the other got through).
+        var release: CheckedContinuation<Void, Never>?
+        refreshGate = { await withCheckedContinuation { release = $0 } }
+        transport.directResponse = { _ in SendResponse(status: 401) }
+        let engine = await started(makeEngine())
+
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        transport.finish(0, status(401))   // the background copy; the direct copy's 401 is back too
+        await settle()
+        XCTAssertEqual(rejections, 1, "one refresh in progress")
+
+        transport.directResponse = { _ in try? await Task.sleep(for: .seconds(3600)); return SendResponse(status: 503) }
+        now = now.addingTimeInterval(5)
+        engine.pump("retry clock")         // attempt 2, while the refresh is still out
+        await settle()
+        let afterClock = transport.background.count
+        XCTAssertEqual(transport.background.last?.key.attempt, 2)
+
+        release?.resume()
+        await settle()
+
+        XCTAssertEqual(transport.background.count, afterClock, "the refresh added a third, overlapping attempt")
     }
 
     func testASecondRefusedTokenWaitsOnTheClock() async throws {
