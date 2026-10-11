@@ -192,6 +192,20 @@ final class SendEngine: ObservableObject {
         publish()
     }
 
+    /// The app is about to leave the foreground (Home, lock, another app). Anything not with iOS
+    /// right now — waiting on the clock, or not yet sent — is handed over, so it goes without the app
+    /// being reopened. Started now, while the app is still in the foreground, so iOS treats it as
+    /// user-initiated. `done` runs once every hand-over has reached iOS (or failed) — a token refresh
+    /// can come first, so the caller keeps the app awake until then.
+    func appWillResignActive(done: @escaping () -> Void = {}) {
+        let handovers = outbox.items.filter { $0.status == .queued || $0.status == .waiting }
+            .compactMap { handToIOS($0.id, "leaving foreground: handing to iOS") }
+        Task {
+            for handover in handovers { await handover.value }
+            done()
+        }
+    }
+
     func appBecameActive() {
         clock.reset()
         pump("foreground")
@@ -229,9 +243,13 @@ final class SendEngine: ObservableObject {
         let now = env.now()
         clock.clearRateLimit(now: now)
         if !env.hasNetwork() {
+            // No network: hand everything not yet with iOS to it anyway. iOS's background transfer
+            // waits for the network itself and sends the moment it's back — with the app suspended
+            // and the phone locked. (Holding it here instead meant nothing went until the app was
+            // opened again: found on the 2.2 (1) device pass, airplane mode turned off while locked.)
             isOffline = true
-            for item in outbox.items where item.status == .queued {
-                markWaiting(item.id, because: "offline", now: now)
+            for item in outbox.items where item.status == .queued || item.status == .waiting {
+                handToIOS(item.id, "offline: handing to iOS")
             }
         } else {
             isOffline = false
@@ -249,30 +267,45 @@ final class SendEngine: ObservableObject {
         publish()
     }
 
-    private func submit(_ id: UUID) {
-        guard let item = outbox.item(id), item.status == .queued || item.status == .waiting else { return }
+    /// `notBefore`: iOS holds the background copy until then (see `handToIOS`). Returns the work of
+    /// building and handing over the request, nil if there was nothing to submit.
+    @discardableResult
+    private func submit(_ id: UUID, notBefore: Date? = nil) -> Task<Void, Never>? {
+        guard let item = outbox.item(id), item.status == .queued || item.status == .waiting else { return nil }
         let attempt = item.attempts + 1
         outbox.update(id) { $0.status = .inFlight; $0.attempts = attempt }
         copies[id] = 0
-        Task { await send(id, attempt: attempt) }
+        return Task { await send(id, attempt: attempt, notBefore: notBefore) }
     }
 
-    private func send(_ id: UUID, attempt: Int) async {
+    /// Give a message to iOS's background transfer when the app can't send it itself: no network
+    /// (iOS waits for it), or the app is leaving the foreground or suspended (its timers don't run).
+    /// iOS then sends it with the app suspended and the phone locked. The retry clock goes with it,
+    /// so a server that's down isn't hit again sooner than the backoff allows.
+    @discardableResult
+    private func handToIOS(_ id: UUID, _ why: String) -> Task<Void, Never>? {
+        SendLog.note(why, id)
+        return submit(id, notBefore: clock.nextDue(after: env.now()))
+    }
+
+    private func send(_ id: UUID, attempt: Int, notBefore: Date?) async {
         let token: String
+        // No token means nothing to hand to iOS: these wait (no hand-back, which would only fail
+        // again at once) for sign-in, the network, or the app being opened.
         switch await env.token(timing.tokenFreshness) {
         case .token(let t): token = t
-        case .signedOut: return fail(id, attempt: attempt, .transient("signed out"))
-        case .unavailable: return fail(id, attempt: attempt, .transient("token refresh unavailable"))
+        case .signedOut: return fail(id, attempt: attempt, .transient("signed out"), handBack: false)
+        case .unavailable: return fail(id, attempt: attempt, .transient("token refresh unavailable"), handBack: false)
         }
         guard let item = outbox.item(id), item.attempts == attempt else { return }
         if item.kind == .video && item.mediaUrl == nil {
-            await uploadVideo(item, attempt: attempt)
+            await uploadVideo(item, attempt: attempt, notBefore: notBefore)
         } else {
-            post(item, attempt: attempt, token: token)
+            post(item, attempt: attempt, token: token, notBefore: notBefore)
         }
     }
 
-    private func post(_ item: SendItem, attempt: Int, token: String) {
+    private func post(_ item: SendItem, attempt: Int, token: String, notBefore: Date? = nil) {
         let fileURL = item.fileName.map(outbox.fileURL)
         if item.mediaUrl == nil, let fileName = item.fileName, !outbox.fileExists(fileName) {
             return refuse(item.id, "This message's file is missing from your phone, so it can't be sent.")   // D4
@@ -285,14 +318,16 @@ final class SendEngine: ObservableObject {
             bodyFile = file
         } else {
             do { bodyFile = try outbox.writeRequestBody(built.jsonBody ?? Data(), for: item.id, attempt: attempt) }
-            catch { return fail(item.id, attempt: attempt, .transient("couldn't write the request")) }
+            catch { return fail(item.id, attempt: attempt, .transient("couldn't write the request"), handBack: false) }
         }
         builtPosts[item.id] = (key, built)
-        transport.submitBackground(key, request: built.request, bodyFile: bodyFile)
+        transport.submitBackground(key, request: built.request, bodyFile: bodyFile, notBefore: notBefore)
         copies[item.id, default: 0] += 1
-        SendLog.note("submit bg", item.id, "attempt=\(attempt) kind=\(item.kind.rawValue)")
+        SendLog.note("submit bg", item.id, "attempt=\(attempt) kind=\(item.kind.rawValue)"
+                     + (notBefore.map { " notBefore=+\(Int($0.timeIntervalSince(env.now())))s" } ?? ""))
 
-        guard env.isAppActive() else { return }
+        // A hand-over that waits out the retry clock (see `handToIOS`) goes only via iOS, then.
+        guard notBefore == nil, env.isAppActive() else { return }
         if built.bodyFile == nil {
             // Small JSON: also straight away, directly — never slower than before this engine.
             sendDirectIfPossible(item.id)
@@ -343,7 +378,7 @@ final class SendEngine: ObservableObject {
         }
     }
 
-    private func uploadVideo(_ item: SendItem, attempt: Int) async {
+    private func uploadVideo(_ item: SendItem, attempt: Int, notBefore: Date?) async {
         guard let fileName = item.fileName, outbox.fileExists(fileName) else {
             return refuse(item.id, "This message's file is missing from your phone, so it can't be sent.")
         }
@@ -362,7 +397,7 @@ final class SendEngine: ObservableObject {
         let built = SendRequestBuilder.blobUpload(uploadUrl: link.0, fileURL: outbox.fileURL(fileName),
                                                   contentType: item.contentType ?? "video/mp4")
         let key = SendTaskKey(itemId: item.id, attempt: attempt, step: .blobUpload(mediaUrl: link.1))
-        transport.submitBackground(key, request: built.request, bodyFile: outbox.fileURL(fileName))
+        transport.submitBackground(key, request: built.request, bodyFile: outbox.fileURL(fileName), notBefore: notBefore)
         copies[item.id, default: 0] += 1
         SendLog.note("submit bg", item.id, "attempt=\(attempt) step=blob")
     }
@@ -406,7 +441,9 @@ final class SendEngine: ObservableObject {
         }
     }
 
-    private func fail(_ id: UUID, attempt: Int, _ verdict: SendVerdict, direct: Bool = false) {
+    /// `handBack`: in the background, give a passing failure straight back to iOS (false when there's
+    /// no request to give it — no token, or the request couldn't be written).
+    private func fail(_ id: UUID, attempt: Int, _ verdict: SendVerdict, direct: Bool = false, handBack: Bool = true) {
         guard let item = outbox.item(id) else { return }
         // A newer attempt is already out: an older one failing changes nothing.
         guard item.attempts == attempt else { return }
@@ -446,6 +483,7 @@ final class SendEngine: ObservableObject {
             clock.recordRateLimit(now: now, retryAfter: retryAfter, timing: timing)
             transport.cancelBackground(itemId: id)
             markWaiting(id, because: "rate limited", now: now)
+            handBackIfSuspended(id)   // with Retry-After as its start time
         case .offline:
             isOffline = true
             if (copies[id] ?? 0) > 0 {
@@ -453,12 +491,13 @@ final class SendEngine: ObservableObject {
                 noteCopyFailure(id, "offline", now: now)
             } else {
                 markWaiting(id, because: "offline", now: now)
+                handBackIfSuspended(id)
             }
         case .refreshAuth:
             // A second 401 straight after refreshing: treat like any passing failure.
-            if !transientFailure(id, "token refused again", now: now) { return }
+            if !transientFailure(id, "token refused again", now: now, handBack: handBack) { return }
         case .transient(let why):
-            if !transientFailure(id, why, now: now) { return }
+            if !transientFailure(id, why, now: now, handBack: handBack) { return }
         }
         scheduleWake()
         publish()
@@ -477,7 +516,7 @@ final class SendEngine: ObservableObject {
         if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
     }
 
-    private func transientFailure(_ id: UUID, _ why: String, now: Date) -> Bool {
+    private func transientFailure(_ id: UUID, _ why: String, now: Date, handBack: Bool = true) -> Bool {
         if (copies[id] ?? 0) > 0 {
             noteCopyFailure(id, why, now: now)
             return true
@@ -486,7 +525,16 @@ final class SendEngine: ObservableObject {
         // is down) mustn't escalate the backoff for each of them.
         if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
         markWaiting(id, because: why, now: now)
+        if handBack { handBackIfSuspended(id) }
         return true
+    }
+
+    /// In the background the retry clock can't run (the app is suspended between wakes), so a
+    /// passing failure goes straight back to iOS — starting when the clock says — rather than
+    /// waiting for the app to be opened.
+    private func handBackIfSuspended(_ id: UUID) {
+        guard !env.isAppActive() else { return }
+        handToIOS(id, "background: handing back to iOS")
     }
 
     private func delivered(_ item: SendItem, _ message: Message, via: String) {

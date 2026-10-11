@@ -67,7 +67,9 @@ enum SendDisplayState: Equatable {
 extension SendItem {
     func displayState(now: Date, waitingAfter: TimeInterval, isOffline: Bool) -> SendDisplayState {
         if status == .refused { return .refused(refusedReason ?? "Couldn't send this message.") }
-        if status == .waiting && isOffline { return .waiting }
+        // No network: whether it's waiting on the clock or handed to iOS (which waits for the
+        // network), the honest state is "waiting", not a spinner.
+        if isOffline && (status == .waiting || status == .inFlight) { return .waiting }
         if let since = firstFailureAt, now.timeIntervalSince(since) >= waitingAfter { return .waiting }
         return .sending
     }

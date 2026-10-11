@@ -49,7 +49,15 @@ no signal, server down, the app killed by iOS (a force-quit is the one case only
 | `SendPolicy`, `RetryClock` | The rules, as pure functions: classify a response (delivered, refresh token, 429 wait, offline, transient, refused); ONE retry clock for the whole queue — 1, 2, 4, 8, 15, 30 s then every 60 s, ±20%, no limit; while backing off only the oldest goes as a probe |
 | `SendRequestBuilder` | The request per step: the file itself as the body for voice/photo (one request), JSON for text/forwards/media-by-URL, a blob PUT for video |
 | `SendTransport` | `URLSessionSendTransport`: one background URLSession (iOS carries it while the app sleeps, relaunches the app with the result) + a direct path. Text also goes directly at once; voice/photo directly if iOS's copy hasn't landed after 3 s. Server dedups by `client_id` |
-| `SendEngine` | Applies all of it; triggers: launch, foreground, network back/lost, any API success, chat open, Send now; confirmations to the chat (and the chat cache when no chat is open) |
+| `SendEngine` | Applies all of it; triggers: launch, foreground, leaving the foreground, network back/lost, any API success, chat open, Send now; confirmations to the chat (and the chat cache when no chat is open) |
+
+**When the app isn't in the foreground, every unsent message is with iOS.** A suspended app hears
+no "network back" and runs no timers, so only iOS's background transfer can send then — and only
+what it's been given. So the engine hands a message to iOS when there's no network (iOS waits for
+it), as the app leaves the foreground (anything waiting on the retry clock), and straight back
+after any failure while suspended. The retry clock goes with it as the task's `earliestBeginDate`,
+so a server that's down isn't hit early. The exception is no token at all (signed out): there's
+no request to hand over, so it waits for the app.
 
 The chat (`BookViewModel`) draws `SendEngine.items` for its book as pending bubbles and inserts
 confirmed messages; its own `messages` are server-confirmed only. Bubbles show **sending**

@@ -18,7 +18,7 @@ final class SendEngineTests: XCTestCase {
 
     final class FakeTransport: SendTransport {
         var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)?
-        var background: [(key: SendTaskKey, request: URLRequest, bodyFile: URL)] = []
+        var background: [(key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)] = []
         var direct: [URLRequest] = []
         var cancelled: [UUID] = []
         var held: [SendTaskKey] = []
@@ -29,8 +29,8 @@ final class SendEngineTests: XCTestCase {
         }
         var onSubmit: ((SendTaskKey) -> Void)?
 
-        func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL) {
-            background.append((key, request, bodyFile))
+        func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?) {
+            background.append((key, request, bodyFile, notBefore))
             onSubmit?(key)
         }
         func sendDirect(_ request: URLRequest, body: Data?, bodyFile: URL?) async -> SendResponse {
@@ -57,6 +57,7 @@ final class SendEngineTests: XCTestCase {
     private var appActive = true
     private var network = true
     private var tokenCalls: [TimeInterval] = []
+    private var tokenResult: APIClient.SendToken = .token("tok")
     private var rejections = 0
     private var tokenAfterRejectionResult: APIClient.SendToken = .token("fresh-token")
     /// When set, a token refresh waits here until the test resumes it.
@@ -91,7 +92,7 @@ final class SendEngineTests: XCTestCase {
             baseURL: { URL(string: "https://api.test")! },
             deviceId: { "device-1" },
             myUserId: { [unowned self] in self.me },
-            token: { [unowned self] validFor in self.tokenCalls.append(validFor); return .token("tok") },
+            token: { [unowned self] validFor in self.tokenCalls.append(validFor); return self.tokenResult },
             tokenAfterRejection: { [unowned self] in
                 self.rejections += 1
                 if let gate = self.refreshGate { await gate() }
@@ -420,19 +421,31 @@ final class SendEngineTests: XCTestCase {
         XCTAssertTrue(transport.cancelled.contains(item.id), "iOS's copy is dropped once it's delivered")
     }
 
-    func testOfflineAtTapShowsWaitingAndGoesTheMomentTheNetworkIsBack() async throws {
+    func testOfflineAtTapIsHandedToIOSAndShowsWaiting() async throws {
         network = false
         let engine = await started(makeEngine())
 
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
-        XCTAssertEqual(transport.background.count, 0)
+
+        XCTAssertEqual(transport.background.count, 1, "iOS waits for the network itself — the app needn't be running")
+        XCTAssertEqual(transport.direct.count, 0, "nothing to send directly with no network")
+        XCTAssertNil(try XCTUnwrap(transport.background[safe: 0]).notBefore)
         XCTAssertEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .waiting)
+    }
+
+    func testOfflineAtTapAlsoGoesDirectlyTheMomentTheNetworkIsBackWithTheAppOpen() async throws {
+        network = false
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
 
         network = true
         engine.networkBecameReachable()
         await settle()
-        XCTAssertEqual(transport.background.count, 1)
+
+        XCTAssertEqual(transport.direct.count, 1, "iOS can sit on its copy after the network returns (#207)")
+        XCTAssertEqual(transport.background.count, 1, "iOS already has it — not handed over twice")
     }
 
     func testSendingTurnsIntoWaitingAfterThirtySecondsOfFailures() async throws {
@@ -461,6 +474,104 @@ final class SendEngineTests: XCTestCase {
         await settle()
 
         XCTAssertEqual(transport.background.count, before + 1)
+    }
+
+    // MARK: - Suspended: everything unsent is with iOS
+    //
+    // M5 on the 2.2 (1) device pass: airplane mode on, send, lock, airplane mode off — nothing went
+    // until the app was opened. A suspended app hears no "network back" and runs no timers, so the
+    // only thing that can send then is iOS's background transfer, and only if it has the message.
+    // These run with the app not in the foreground and no network-back event — the cases the
+    // earlier tests (all with the app open, and a hand-fed network-back) couldn't see.
+
+    func testAMessageHandedOverOfflineIsSentByIOSWithNoHelpFromTheApp() async throws {
+        network = false
+        let engine = await started(makeEngine())
+        let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        // Locked; airplane mode off; iOS sends and wakes the app with the result.
+        appActive = false
+        transport.finish(0, delivered(item.id))
+        await settle()
+
+        XCTAssertTrue(engine.items.isEmpty)
+        XCTAssertEqual(confirmations.map(\.clientId), [item.id])
+    }
+
+    func testLeavingTheAppHandsIOSWhatsWaitingOnTheClock() async throws {
+        // The server's down: the message fails and waits on the retry clock — which stops when the
+        // app is suspended, so it has to go to iOS as the app leaves.
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        transport.finish(0, status(503))
+        await settle()
+        XCTAssertEqual(engine.items.first?.status, .waiting)
+        let directBefore = transport.direct.count
+
+        var handedOver = false
+        engine.appWillResignActive { handedOver = true }
+        await settle()
+
+        XCTAssertTrue(handedOver, "the app is kept awake until this reports done")
+        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1),
+                       "iOS keeps to the backoff — the server isn't hit again early")
+        XCTAssertEqual(transport.direct.count, directBefore, "no direct copy skipping the backoff")
+    }
+
+    func testLeavingTheAppWithNothingWaitingReportsDoneAtOnce() async throws {
+        let engine = await started(makeEngine())
+        var handedOver = false
+        engine.appWillResignActive { handedOver = true }
+        await settle()
+        XCTAssertTrue(handedOver)
+        XCTAssertEqual(transport.background.count, 0)
+    }
+
+    func testAFailureWhileSuspendedGoesStraightBackToIOSOnTheBackoff() async throws {
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        appActive = false
+        transport.finish(0, status(503))   // iOS's copy fails while the app is suspended
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 2, "not left waiting for the app to be opened")
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1))
+        transport.finish(1, delivered(item.id))
+        await settle()
+        XCTAssertTrue(engine.items.isEmpty)
+    }
+
+    func testRateLimitedWhileSuspendedGoesBackToIOSAfterRetryAfter() async throws {
+        appActive = false
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        transport.finish(0, status(429, retryAfter: "17"))
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(17))
+    }
+
+    func testWithNoTokenASuspendedAppWaitsRatherThanRetryingInALoop() async throws {
+        // No token means no request to hand iOS; handing back would only fail again at once.
+        appActive = false
+        tokenResult = .signedOut
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        XCTAssertEqual(tokenCalls.count, 1)
+        XCTAssertEqual(transport.background.count, 0)
+        XCTAssertEqual(engine.items.first?.status, .waiting)
     }
 
     // MARK: - U6: across launches, and other channels

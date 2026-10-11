@@ -126,7 +126,8 @@ final class SendPolicyTests: XCTestCase {
         XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0.addingTimeInterval(5), isOffline: false), [])
     }
 
-    func testNothingIsSentWithNoNetwork() {
+    func testTheClockSubmitsNothingWithNoNetwork() {
+        // The engine hands these to iOS instead, which waits for the network (SendEngineTests).
         XCTAssertEqual(SendPolicy.itemsToSubmit([item(1)], clock: RetryClock(), now: t0, isOffline: true), [])
     }
 
@@ -143,6 +144,11 @@ final class SendPolicyTests: XCTestCase {
         var it = item(1, .waiting)
         it.firstFailureAt = t0
         XCTAssertEqual(it.displayState(now: t0, waitingAfter: 30, isOffline: true), .waiting)
+    }
+
+    func testHandedToIOSWithNoNetworkShowsWaiting() {
+        // iOS has it and is waiting for the network: a spinner would say it's going now.
+        XCTAssertEqual(item(1, .inFlight).displayState(now: t0, waitingAfter: 30, isOffline: true), .waiting)
     }
 
     func testAFreshSendShowsSendingEvenOffline() {

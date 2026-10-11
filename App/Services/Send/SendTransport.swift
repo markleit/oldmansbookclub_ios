@@ -60,7 +60,9 @@ struct SendResponse {
 protocol SendTransport: AnyObject {
     /// Results of background tasks — including ones started by a previous run of the app.
     var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)? { get set }
-    func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL)
+    /// `notBefore`: iOS holds the transfer until then — the retry clock, kept while the app is
+    /// suspended and can't run it.
+    func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)
     func sendDirect(_ request: URLRequest, body: Data?, bodyFile: URL?) async -> SendResponse
     func cancelBackground(itemId: UUID)
     /// Background tasks iOS still holds (running or waiting for a network).
@@ -125,9 +127,10 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         activate()
     }
 
-    func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL) {
+    func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?) {
         let task = background.uploadTask(with: request, fromFile: bodyFile)
         task.taskDescription = key.taskDescription
+        if let notBefore { task.earliestBeginDate = notBefore }
         task.resume()
     }
 
