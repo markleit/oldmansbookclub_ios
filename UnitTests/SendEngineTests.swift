@@ -477,10 +477,47 @@ final class SendEngineTests: XCTestCase {
         let engine = await started(makeEngine(outbox: box))
         await settle()
 
-        XCTAssertEqual(transport.background.map(\.key.itemId), [lost.id], "no second copy of what iOS still holds")
+        XCTAssertEqual(transport.background.map(\.key.itemId), [lost.id], "no second background copy of what iOS still holds")
         transport.onBackgroundResult?(transport.held[0], delivered(held.id))
         XCTAssertEqual(confirmations.map(\.clientId), [held.id], "the previous run's transfer still confirms it")
         _ = engine
+    }
+
+    func testOnRelaunchAMessageIOSStillHoldsAlsoGoesDirectlyWhileTheAppIsOpen() async throws {
+        // The app was killed while the server was unreachable; iOS kept the background copy and is
+        // retrying it on its own schedule. Reopened, the app must not just wait for iOS.
+        let box = outbox()
+        var held = SendItem(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now, body: "held",
+                            status: .inFlight, attempts: 1)
+        held.firstFailureAt = now.addingTimeInterval(-60)
+        box.add(held)
+        transport.held = [SendTaskKey(itemId: held.id, attempt: 1, step: .post)]
+        transport.directResponse = { [unowned self] _ in self.delivered(held.id) }
+
+        let engine = await started(makeEngine(outbox: box))
+        await settle()
+
+        XCTAssertEqual(transport.direct.count, 1, "sent directly at once, rebuilt from the outbox")
+        XCTAssertTrue(engine.items.isEmpty)
+        XCTAssertTrue(transport.cancelled.contains(held.id), "iOS's copy is dropped once it's delivered")
+        XCTAssertTrue(transport.background.isEmpty, "and no second background copy")
+    }
+
+    func testOnRelaunchAMessageIOSWasStillCarryingAlsoGoesDirectly() async throws {
+        // Not failing yet — just in flight with iOS when the app was killed. Reopened with the
+        // app in front, it goes directly too rather than waiting on iOS's schedule.
+        let box = outbox()
+        let held = SendItem(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now, body: "held",
+                            status: .inFlight, attempts: 1)
+        box.add(held)
+        transport.held = [SendTaskKey(itemId: held.id, attempt: 1, step: .post)]
+        transport.directResponse = { [unowned self] _ in self.delivered(held.id) }
+
+        let engine = await started(makeEngine(outbox: box))
+        await settle()
+
+        XCTAssertEqual(transport.direct.count, 1)
+        XCTAssertTrue(engine.items.isEmpty)
     }
 
     func testAConfirmationUpdatesTheSavedChatEvenWithNoChatOpen() async throws {

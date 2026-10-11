@@ -429,6 +429,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         route = self.path.split("?")[0]
         body = self._body()
+        # #204 — the test this request belongs to. A request can arrive during one test and finish
+        # during the next (a scripted delay outlasting the test): it's then answered but not
+        # recorded into the next test's state.
+        with _lock:
+            arrival_epoch = _state["epoch"]
 
         if route == "/_stub/reset":
             with _lock:
@@ -545,6 +550,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # returns the message already created, and isn't a second message — media can reach the
             # server twice (direct + background copies of one send).
             with _lock:
+                if _state["epoch"] != arrival_epoch:
+                    return self._send_json(echoed)
                 _state["post_attempts"] += 1
                 cid = echoed.get("client_id")
                 if cid and cid in _state["by_client_id"]:

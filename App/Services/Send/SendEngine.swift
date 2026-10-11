@@ -99,6 +99,11 @@ final class SendEngine: ObservableObject {
             let count = held.filter { $0.itemId == item.id }.count
             if count > 0 {
                 copies[item.id] = count
+                // iOS still has it, but on its own schedule — with the app open, also send it
+                // directly (rebuilt: the request from the previous run died with it). Without this
+                // a message stranded by an outage just before the app was killed waited on iOS
+                // alone after relaunch (found by HermeticSendUITests' kill test on CI).
+                sendDirectIfPossible(item.id)
             } else {
                 outbox.update(item.id) { $0.status = .queued }
             }
@@ -302,8 +307,32 @@ final class SendEngine: ObservableObject {
     }
 
     private func sendDirectIfPossible(_ id: UUID) {
-        guard env.isAppActive(), env.hasNetwork(), !directInFlight.contains(id),
-              let (key, built) = builtPosts[id] else { return }
+        guard env.isAppActive(), env.hasNetwork(), !directInFlight.contains(id) else { return }
+        if let (key, built) = builtPosts[id] { return sendDirect(id, key, built) }
+
+        // No request in hand: after a relaunch iOS can still hold a message's background copy while
+        // this run holds nothing. Rebuild the post (same attempt) so it can go directly too. A
+        // video whose blob isn't up yet is left to iOS — re-uploading it directly isn't worth it.
+        guard let item = outbox.item(id), item.status == .inFlight,
+              !(item.kind == .video && item.mediaUrl == nil) else { return }
+        directInFlight.insert(id)
+        Task {
+            defer { directInFlight.remove(id) }
+            guard case .token(let token) = await env.token(timing.tokenFreshness),
+                  let current = outbox.item(id), current.status == .inFlight else { return }
+            if current.mediaUrl == nil, let name = current.fileName, !outbox.fileExists(name) { return }
+            let built = SendRequestBuilder.post(current, baseURL: env.baseURL(), token: token,
+                                                deviceId: env.deviceId(),
+                                                fileURL: current.fileName.map(outbox.fileURL))
+            let key = SendTaskKey(itemId: id, attempt: current.attempts, step: .post)
+            builtPosts[id] = (key, built)
+            directInFlight.remove(id)
+            sendDirect(id, key, built)
+        }
+    }
+
+    private func sendDirect(_ id: UUID, _ key: SendTaskKey, _ built: SendRequestBuilder.Built) {
+        guard !directInFlight.contains(id) else { return }
         directInFlight.insert(id)
         copies[id, default: 0] += 1
         SendLog.note("submit direct", id, "attempt=\(key.attempt)")

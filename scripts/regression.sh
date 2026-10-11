@@ -215,6 +215,19 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <retry:0|
     record "$label" $status
 }
 
+# #222 — on a freshly booted simulator the photo library isn't indexed yet, and the first
+# PhotosPicker presented by a test can take longer than its wait to show any photos ("photo picker
+# never showed the library" on the first picker test of a part). Opening Photos once lets iOS
+# index the sample library before any test needs it.
+warm_photo_library() {
+    local udid
+    udid=$(xcrun simctl list devices available | sed -n "s/^ *$SIMULATOR (\([0-9A-F-]*\)).*/\1/p" | head -1)
+    [[ -z "$udid" ]] && return 0
+    xcrun simctl launch "$udid" com.apple.mobileslideshow >/dev/null 2>&1 || return 0
+    sleep 8
+    xcrun simctl terminate "$udid" com.apple.mobileslideshow >/dev/null 2>&1 || true
+}
+
 check_hermetic_shards() {
     local cls missing=0
     for cls in $(grep -hoE "class Hermetic[A-Za-z]*UITests" UITests/*.swift | awk '{print $2}'); do
@@ -316,6 +329,7 @@ if [[ $LANE_IOS_UNIT -eq 1 ]]; then
             for shard in $HERMETIC_SHARDS_TO_RUN; do
                 step "Hermetic UI tests, part $shard of 3 (stub server, still no backend)"
                 reset_simulator_state
+                warm_photo_library
                 classes_var="HERMETIC_SHARD_$shard"
                 # shellcheck disable=SC2086
                 run_xcodebuild_tests "hermetic UI $shard/3" "platform=iOS Simulator,name=$SIMULATOR" 1 ${!classes_var}

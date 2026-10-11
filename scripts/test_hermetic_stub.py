@@ -170,6 +170,19 @@ class StubTests(unittest.TestCase):
         self.assertEqual(conn.getresponse().status, 200)
         conn.close()
 
+    def test_a_send_still_in_progress_when_the_next_test_starts_is_not_recorded_there(self):
+        # A scripted delay outlasts the test that set it; the next test's reset happens meanwhile.
+        import threading
+        self.request("POST", "/_stub/script", {"route": "POST /books/*/messages", "responses": [{"delay": 1.0}]})
+        result = {}
+        thread = threading.Thread(target=lambda: result.setdefault("r", self.send_text()))
+        thread.start()
+        time.sleep(0.3)
+        self.request("POST", "/_stub/reset")
+        thread.join(5)
+        self.assertEqual(result["r"][0], 200, "still answered")
+        self.assertEqual(self.sent(), [], "but not recorded into the next test")
+
     def test_a_late_arrival_can_be_seeded(self):
         self.request("POST", "/_stub/messages", [{"body": "late", "sent_at": "2026-09-01T09:00:00.000Z",
                                                   "received_at": "2026-09-01T12:00:00.000Z"}])
