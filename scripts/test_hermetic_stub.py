@@ -149,6 +149,27 @@ class StubTests(unittest.TestCase):
         self.request("POST", "/_stub/down", {"down": False})
         self.assertEqual(self.request("GET", "/books")[0], 200)
 
+    def test_a_send_left_over_from_an_earlier_test_is_ignored(self):
+        # A background transfer from the previous test arrives after this test's reset.
+        _, _, login = self.request("POST", "/auth/dev-login", {})
+        old_token = login["access_token"]
+        self.request("POST", "/_stub/reset")
+        self.request("POST", "/_stub/script", {"route": "POST /books/*/messages", "responses": [{"status": 503}]})
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("POST", "/books/66666666-6666-6666-6666-666666666666/messages",
+                     body=json.dumps({"type": "Text", "body": "stray", "client_id": str(uuid.uuid4())}),
+                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {old_token}"})
+        self.assertEqual(conn.getresponse().status, 401)
+        conn.close()
+        self.assertEqual(self.sent(), [], "not recorded")
+        self.assertEqual(self.send_text()[0], 503, "and the scripted response is still there for this test")
+        # This test's own sign-in works.
+        _, _, fresh = self.request("POST", "/auth/refresh", {})
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/books", headers={"Authorization": f"Bearer {fresh['access_token']}"})
+        self.assertEqual(conn.getresponse().status, 200)
+        conn.close()
+
     def test_a_late_arrival_can_be_seeded(self):
         self.request("POST", "/_stub/messages", [{"body": "late", "sent_at": "2026-09-01T09:00:00.000Z",
                                                   "received_at": "2026-09-01T12:00:00.000Z"}])
