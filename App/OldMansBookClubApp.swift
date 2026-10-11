@@ -23,6 +23,8 @@ struct OldMansBookClubApp: App {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             try? FileManager.default.removeItem(at: support.appendingPathComponent("media_queue.json"))
             try? FileManager.default.removeItem(at: support.appendingPathComponent("PendingMedia"))
+            // #204 (T3) — and the SendEngine's outbox + any transfer a previous test left with iOS.
+            SendEngine.resetForUITests()
         }
         #endif
     }
@@ -73,10 +75,8 @@ struct RootView: View {
                             // re-check whether notifications were turned off in Settings (#25).
                             Task { await ensurePushRegistration() }
                             Task { await refreshMyProfile() }
-                            // Get pending blob uploads moving on every foreground (and first
-                            // launch), regardless of which screen is open — the bytes upload
-                            // in the background; the send completes when the chat connects.
-                            Task { await BackgroundUploadService.shared.resumePendingUploads(trigger: "foreground") }
+                            // #204 — anything unsent goes now, from whatever screen is open.
+                            SendEngine.shared.appBecameActive()
                             // Retry any read/heard receipt that never reached the server (#119) —
                             // until it does, this device's unread count and the server's disagree.
                             Task { await ReceiptQueue.shared.flush() }

@@ -73,7 +73,17 @@ protocol SendTransport: AnyObject {
 final class URLSessionSendTransport: NSObject, SendTransport {
     static let sessionIdentifier = "com.markleit.oldmansbookclub.send"
 
-    var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)?
+    var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)? {
+        didSet {
+            // Results that arrived before anyone was listening (iOS can relaunch the app straight
+            // into its background events, ahead of the engine starting).
+            guard let onBackgroundResult else { return }
+            let early = earlyResults
+            earlyResults = []
+            early.forEach { onBackgroundResult($0.0, $0.1) }
+        }
+    }
+    private var earlyResults: [(SendTaskKey, SendResponse)] = []
     private var systemCompletionHandler: (() -> Void)?
     private let delegate = Delegate()
 
@@ -84,7 +94,10 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         config.allowsCellularAccess = true
         config.timeoutIntervalForRequest = 60
         delegate.deliver = { [weak self] key, response in
-            Task { @MainActor in self?.onBackgroundResult?(key, response) }
+            Task { @MainActor in
+                guard let self else { return }
+                if let handler = self.onBackgroundResult { handler(key, response) } else { self.earlyResults.append((key, response)) }
+            }
         }
         delegate.finishedEvents = { [weak self] in
             Task { @MainActor in
@@ -119,6 +132,10 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func sendDirect(_ request: URLRequest, body: Data?, bodyFile: URL?) async -> SendResponse {
+        // If the app is backgrounded mid-request, finish it in iOS's grace period rather than
+        // abandoning it (the background copy carries it either way).
+        let grace = BackgroundTaskBox(name: "send-direct")
+        defer { grace.end() }
         do {
             let (data, response): (Data, URLResponse)
             if let bodyFile {

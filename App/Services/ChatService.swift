@@ -258,9 +258,9 @@ actor ChatService {
         return conn
     }
 
-    // NOTE: sending no longer goes through the hub from this client (#131) — see
-    // APIClient.sendMessage / BackgroundUploadService.sendMessage, which POST over REST
-    // instead, so a send doesn't need a live WebSocket and isn't stranded by backgrounding.
+    // NOTE: sending no longer goes through the hub from this client (#131) — messages are sent
+    // by SendEngine (#204) over REST and iOS's background transfer, so a send doesn't need a live
+    // WebSocket and isn't stranded by backgrounding.
     // The server's hub SendTextMessage/SendPhotoMessage/SendVideoMessage/SendVoiceMessage (and
     // their *Reply variants) stay in place for older installed clients — this actor just
     // doesn't invoke them anymore.

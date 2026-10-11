@@ -210,6 +210,14 @@ final class SendEngine: ObservableObject {
         delivered(item, message, via: "echo")
     }
 
+    /// A 2.1 background upload (started before the update) finished: its blob is up, so this
+    /// message only needs posting — not uploading again. One-time bridge; see BackgroundUploadService.
+    func legacyBlobUploaded(_ id: UUID, mediaUrl: String) {
+        guard let item = outbox.item(id), item.mediaUrl == nil else { return }
+        SendLog.note("legacy upload finished", id)
+        outbox.update(id) { $0.mediaUrl = mediaUrl }
+    }
+
     // MARK: - Deciding what to send
 
     func pump(_ reason: String) {
@@ -493,7 +501,7 @@ final class SendEngine: ObservableObject {
         item.displayState(now: env.now(), waitingAfter: timing.waitingAfter, isOffline: isOffline)
     }
 
-    static func decode(_ body: Data?) -> Message? {
+    nonisolated static func decode(_ body: Data?) -> Message? {
         body.flatMap { try? APIClient.decoder.decode(Message.self, from: $0) }
     }
 

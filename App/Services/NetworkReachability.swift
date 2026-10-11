@@ -25,6 +25,7 @@ final class NetworkReachability: @unchecked Sendable {
     // launch is never falsely failed before the monitor has reported anything.
     private var status: NWPath.Status = .satisfied
     private var reachableHandlers: [@Sendable () -> Void] = []
+    private var unreachableHandlers: [@Sendable () -> Void] = []
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
@@ -33,7 +34,8 @@ final class NetworkReachability: @unchecked Sendable {
             let previous = status
             status = path.status
             let cameBack = Self.cameBack(from: previous, to: path.status)
-            let handlers = cameBack ? reachableHandlers : []
+            let lost = previous != .unsatisfied && path.status == .unsatisfied
+            let handlers = cameBack ? reachableHandlers : (lost ? unreachableHandlers : [])
             lock.unlock()
             if previous == .satisfied && path.status != .satisfied {
                 SendLog.note("network lost", nil, "status=\(path.status)")
@@ -50,6 +52,13 @@ final class NetworkReachability: @unchecked Sendable {
     func onBecameReachable(_ handler: @escaping @Sendable () -> Void) {
         lock.lock()
         reachableHandlers.append(handler)
+        lock.unlock()
+    }
+
+    /// #204 — called (on the monitor's queue) when there's no network path at all any more.
+    func onBecameUnreachable(_ handler: @escaping @Sendable () -> Void) {
+        lock.lock()
+        unreachableHandlers.append(handler)
         lock.unlock()
     }
 

@@ -74,10 +74,8 @@ final class APIClient {
     // #146 — text sends fail fast instead of waiting out a dead network. The shared `session`
     // sets waitsForConnectivity on device, which parks a request for up to
     // timeoutIntervalForResource (~30s) rather than erroring — so a send in airplane mode sat
-    // there for half a minute before the bubble could go .failed. That trade made sense when a
-    // failed text send was lost for good; now TextSendQueue persists it and retries on
-    // foreground/reconnect, so failing immediately is strictly better: the user gets the ⚠️ and
-    // a Retry straight away, and the outbox still delivers it once there's a network.
+    // there for half a minute. Since #204 messages are sent by SendEngine (its own transport), so
+    // this session now only serves APIClient.sendMessage, kept as a direct fallback.
     private let sendSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
@@ -410,9 +408,8 @@ final class APIClient {
 
     // MARK: - Messages
 
-    // Shared with BackgroundUploadService, which builds the identical JSON body itself for its
-    // background-URLSession-driven send (it can't call through APIClient's async methods since
-    // that path runs from a URLSessionDelegate callback, not a normal Task).
+    // The JSON send body. Since #204 SendEngine builds its requests itself (SendRequestBuilder —
+    // a background transfer needs the body as a file); this mirrors that wire shape.
     struct SendMessagePayload: Encodable {
         let type: String
         let body: String?
@@ -425,12 +422,9 @@ final class APIClient {
 
     private struct SendMessageErrorBody: Decodable { let error: String }
 
-    // Posts a message over REST instead of invoking the SignalR hub. This is the send path for
-    // everything now (text here directly; media via BackgroundUploadService's background-session
-    // variant of the same call) — a live socket is no longer required to post a message, only to
-    // receive the broadcast, so a send survives being backgrounded regardless of how long the
-    // upload/round-trip takes (#131). The response IS the confirmation: no more racing a
-    // SignalR self-echo against a timeout.
+    // Posts a message over REST (#131). Since #204 the app's sends go through SendEngine instead
+    // (durable outbox, background transfer, shared retry clock); this direct call is kept as a
+    // working fallback, not used by the chat.
     func sendMessage(bookId: UUID, type: MessageType, body: String? = nil, mediaUrl: String? = nil,
                       durationSeconds: Int? = nil, clientId: UUID, parentMessageId: UUID? = nil) async throws -> Message {
         var request = URLRequest(url: URL(string: baseURL.absoluteString + "/books/\(bookId)/messages")!)
