@@ -93,6 +93,22 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(tapped), 2.5, "a text must go at once while the app is open")
     }
 
+    func testS3APhotoReachesTheServerWithinSecondsWithTheAppOpen() throws {
+        // Voice/photo go via iOS first, and directly too if iOS hasn't delivered within 3 s — so
+        // with the app open a photo never waits on iOS's schedule (#207 saw 86 s).
+        try setMessages([])
+        launch()
+        openCurrentBook()
+
+        pickPhotos(1)
+        app.buttons["sendButton"].tap()
+        let tapped = Date()
+        let sent = try waitForSent(1, timeout: 20)
+
+        XCTAssertEqual(sent.first?["type"] as? String, "Photo")
+        XCTAssertLessThan(Date().timeIntervalSince(tapped), 5, "a photo must go within seconds while the app is open")
+    }
+
     // MARK: - H2–H5: walking away
 
     func testATextSentThenLeftImmediatelyStillArrives() throws {
@@ -251,6 +267,7 @@ final class HermeticSendUITests: HermeticTestCase {
         // A menu's text row may be exposed as a button or as text — match the label either way.
         let reasonRow = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", reason)).firstMatch
         XCTAssertTrue(reasonRow.waitForExistence(timeout: 5), "the reason isn't shown")
+        XCTAssertTrue(app.buttons["Copy"].exists, "a refused text offers Copy, so what was written isn't lost (B4)")
         app.buttons["Delete"].tap()
         XCTAssertTrue(waitForDisappearance(app.staticTexts["not allowed"], timeout: 5), "Delete didn't remove it")
         XCTAssertTrue(try sentMessages().isEmpty, "a refused message reached the server. Stub saw: \(trail())")
@@ -266,10 +283,31 @@ final class HermeticSendUITests: HermeticTestCase {
         let waiting = app.buttons.matching(identifier: "waitingSendIndicator").firstMatch
         XCTAssertTrue(waiting.waitForExistence(timeout: 15))
         waiting.tap()
+        // B3: the menu says it'll go by itself, and offers Send now and Delete.
+        let note = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Will send automatically'")).firstMatch
+        XCTAssertTrue(note.waitForExistence(timeout: 5), "the waiting menu doesn't say it'll send by itself")
+        XCTAssertTrue(app.buttons["Delete"].exists, "the waiting menu has no Delete")
         app.buttons["Send now"].tap()
 
         XCTAssertEqual(try waitForSent(1, timeout: 8).first?["body"] as? String, "now please",
                        "Send now didn't deliver it. Stub saw: \(trail())")
+    }
+
+    func testB3AWaitingMessageDeletedFromItsMenuNeverArrives() throws {
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+        try setServerDown(true)
+
+        send("changed my mind")
+        let waiting = app.buttons.matching(identifier: "waitingSendIndicator").firstMatch
+        XCTAssertTrue(waiting.waitForExistence(timeout: 15))
+        waiting.tap()
+        app.buttons["Delete"].tap()
+        XCTAssertTrue(waitForDisappearance(app.staticTexts["changed my mind"], timeout: 5), "Delete didn't remove it")
+
+        try setServerDown(false)
+        Thread.sleep(forTimeInterval: 5)   // several retry ticks at the fast timings
+        XCTAssertTrue(try sentMessages().isEmpty, "a deleted message was sent anyway. Stub saw: \(trail())")
     }
 
     // MARK: - H13: a batch keeps the order it was sent in

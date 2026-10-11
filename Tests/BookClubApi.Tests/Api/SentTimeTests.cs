@@ -266,4 +266,29 @@ public class SentTimeTests(TestAppFixture fixture) : IntegrationTestBase(fixture
         Assert.Single(Hub.OfMethod("NewMessage"));        // broadcast like any send
         Assert.Equal(1, await UnreadAsync(me, book.Id));   // and new to everyone else
     }
+
+    // ---- equal tap times (A19) ----------------------------------------------------------------
+
+    [Fact]
+    public async Task Messages_with_the_same_tap_time_always_come_back_in_the_same_order()
+    {
+        // Two members tapping Send in the same millisecond: the chat mustn't swap them between reads.
+        var (club, book, me, other) = await ArrangeAsync();
+        var tapped = DateTime.UtcNow.AddMinutes(-5);
+        // Six, not two: with the tie-break removed, six rows landing in this exact order by chance
+        // is 1 in 720 — so breaking it fails this test, rather than one run in two.
+        var ids = new List<Guid>();
+        for (var i = 0; i < 6; i++)
+            ids.Add((await InsertMessageAsync(book.Id, club.Id, i % 2 == 0 ? me.Id : other.Id, sentAt: tapped)).Id);
+
+        async Task<List<Guid>> ReadOrder() =>
+            (await ReadAsync<JsonElement>(await me.Client.GetAsync($"/books/{book.Id}/messages")))
+                .EnumerateArray().Select(m => m.GetProperty("id").GetGuid()).ToList();
+
+        var first = await ReadOrder();
+        Assert.Equal(6, first.Count);
+        for (var i = 0; i < 5; i++) Assert.Equal(first, await ReadOrder());
+        // The tie-break is the id, so every client and every page agrees.
+        Assert.Equal(ids.OrderByDescending(id => (System.Data.SqlTypes.SqlGuid)id).ToList(), first);
+    }
 }
