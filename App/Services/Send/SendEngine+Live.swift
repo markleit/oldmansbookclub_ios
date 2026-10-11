@@ -51,6 +51,17 @@ extension SendEngine {
         NotificationCenter.default.addObserver(forName: .apiServerReachable, object: nil, queue: .main) { _ in
             Task { @MainActor in SendEngine.shared.serverReachable() }
         }
+        // Leaving the foreground: hand iOS whatever it doesn't have yet, so it goes with the app
+        // suspended. Started while the app is still in the foreground (a transfer handed over from
+        // the background is scheduled at iOS's discretion), and kept awake until it's handed over —
+        // a token refresh can come first.
+        NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil,
+                                               queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let grace = BackgroundTaskBox(name: "send-hand-over")
+                SendEngine.shared.appWillResignActive { grace.end() }
+            }
+        }
         Task { @MainActor in await SendEngine.shared.start() }
     }
 

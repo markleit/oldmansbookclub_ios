@@ -850,7 +850,10 @@ final class APIClient {
     func sendToken(validFor minRemaining: TimeInterval) async -> SendToken {
         guard let token = TokenStore.shared.token else { return .signedOut }
         if let expiry = JWTExpiry.expiresAt(token), expiry.timeIntervalSinceNow > minRemaining { return .token(token) }
-        return await refreshedSendToken()
+        // Couldn't refresh right now (typically: no network)? Hand over the token we have rather than
+        // nothing: a send queued offline must still go to iOS's background transfer. If it has
+        // expired by the time iOS sends it, the 401 wakes the app, which refreshes and resends.
+        return await refreshedSendToken(orElse: token)
     }
 
     /// The server refused `rejected` (401). Use a newer stored token if one exists; else refresh.
@@ -859,14 +862,16 @@ final class APIClient {
            let expiry = JWTExpiry.expiresAt(current), expiry.timeIntervalSinceNow > 60 {
             return .token(current)
         }
-        return await refreshedSendToken()
+        // No fallback here: the token we have is the one just refused.
+        return await refreshedSendToken(orElse: nil)
     }
 
-    private func refreshedSendToken() async -> SendToken {
+    /// `fallback`: returned when the refresh fails only for now (no network, server trouble).
+    private func refreshedSendToken(orElse fallback: String?) async -> SendToken {
         guard TokenStore.shared.refreshToken != nil else { return .signedOut }
         switch await attemptRefresh() {
         case .refreshed: return TokenStore.shared.token.map { .token($0) } ?? .signedOut
-        case .transient: return .unavailable
+        case .transient: return fallback.map { .token($0) } ?? .unavailable
         case .rejected: handleAuthFailure(); return .signedOut
         }
     }
