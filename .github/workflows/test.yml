@@ -34,7 +34,7 @@ jobs:
       - name: Run the API lane
         run: ./scripts/regression.sh --only api
 
-  # #204 (C1) — build once, then run the unit tests and the two halves of the hermetic UI tests
+  # #204 (C1) — build once, then run the unit tests and the three parts of the hermetic UI tests
   # on separate runners at the same time. This was one job that built and then ran everything in
   # sequence: 20–65 min, and a single flaky UI test re-ran the whole UI suite. Each job here calls
   # the same scripts/regression.sh a local run uses, so CI and "green on my machine" still mean the
@@ -78,14 +78,17 @@ jobs:
         run: ./scripts/regression.sh --only ios-unit --products build/ci
 
   ios-ui:
-    name: iOS UI (${{ matrix.shard }}/2)
+    # Named by part number only ("iOS UI (1)") so adding a part adds a check without renaming
+    # the existing ones — they're required checks on main (#204 C7).
+    name: iOS UI (${{ matrix.shard }})
     needs: ios-build
     runs-on: xcode-27
     strategy:
       # Both halves always finish, so one red run shows every failing test, not half of them.
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        # 1: chat, 2: media, 3: sending (#204) — see HERMETIC_SHARD_N in regression.sh.
+        shard: [1, 2, 3]
     env:
       OMBC_SIMULATOR: iPhone 18 Pro
     steps:
@@ -98,5 +101,5 @@ jobs:
       # The EULA-skip launch argument in HermeticTestCase.launch() must match the app's real
       # @AppStorage key (hasAcceptedEULA_v2) — when it didn't, a fresh CI VM failed every hermetic
       # test with "the app made no request to the stub" (fixed 2026-09-12).
-      - name: Run hermetic UI tests, half ${{ matrix.shard }}
+      - name: Run hermetic UI tests, part ${{ matrix.shard }}
         run: ./scripts/regression.sh --only hermetic-${{ matrix.shard }} --products build/ci

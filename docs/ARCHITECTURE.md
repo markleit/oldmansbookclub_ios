@@ -29,10 +29,35 @@ iPhone (SwiftUI)
 | ViewModels | `App/ViewModels/` | Business logic, API calls, published state |
 | Models | `App/Models/Models.swift` | `Codable` + `Identifiable` structs |
 | API client | `App/Services/APIClient.swift` | Singleton HTTP client, snake_case ↔ camelCase |
-| Chat | `App/Services/ChatService.swift` | SignalR real-time connection |
+| Chat | `App/Services/ChatService.swift` | SignalR real-time connection (receive only — sending is the SendEngine's) |
+| Sending | `App/Services/Send/` | `SendEngine` — app-wide, fire-and-forget sending (#204); see **Sending (iOS)** below |
 | Auth state | `App/Services/TokenStore.swift` | JWT in Keychain; display name/role in UserDefaults |
 | Share extension | `ShareExtension/` (target `OldMansBookClubShare`) | "Share to OMBC" from any app's share sheet — photos (up to 10), one link, or text → a chosen book chat (#178). Own small REST client (`ShareAPI.swift`); no video yet |
 | Shared with the extension | `Shared/` | Compiled into both targets. `SharedContainer` (App Group `group.com.markleit.oldmansbookclub[.dev]` for the DEBUG host + APNs token; the JWT is read in place via the app's own keychain group), `SharePlan` (pure send-order / chat-grouping logic, unit-tested), `SignInSession` (#204: refreshes the one-hour access token for the extension and writes it back to the shared keychain item; refresh tokens aren't rotated, so the app and extension can both refresh safely) |
+
+### Sending (iOS)
+
+Every message the user sends goes through `SendEngine` (#204), never through a screen. Tapping
+Send saves it to the `Outbox` on disk (the App Group container) and returns; from there the
+engine sends it as soon as possible whatever happens next — leaving the chat, background, lock,
+no signal, server down, the app killed by iOS (a force-quit is the one case only reopening fixes).
+
+| Piece | Does |
+|---|---|
+| `Outbox` | Every unsent message + its media file; strictly increasing tap times (`sent_at`); takes over 2.1's queues once (`migrateLegacy`) |
+| `SendItem` | One message: kind, content, status (queued / inFlight / waiting / refused), attempts, first-failure time, refusal reason |
+| `SendPolicy`, `RetryClock` | The rules, as pure functions: classify a response (delivered, refresh token, 429 wait, offline, transient, refused); ONE retry clock for the whole queue — 1, 2, 4, 8, 15, 30 s then every 60 s, ±20%, no limit; while backing off only the oldest goes as a probe |
+| `SendRequestBuilder` | The request per step: the file itself as the body for voice/photo (one request), JSON for text/forwards/media-by-URL, a blob PUT for video |
+| `SendTransport` | `URLSessionSendTransport`: one background URLSession (iOS carries it while the app sleeps, relaunches the app with the result) + a direct path. Text also goes directly at once; voice/photo directly if iOS's copy hasn't landed after 3 s. Server dedups by `client_id` |
+| `SendEngine` | Applies all of it; triggers: launch, foreground, network back/lost, any API success, chat open, Send now; confirmations to the chat (and the chat cache when no chat is open) |
+
+The chat (`BookViewModel`) draws `SendEngine.items` for its book as pending bubbles and inserts
+confirmed messages; its own `messages` are server-confirmed only. Bubbles show **sending**
+(spinner), **waiting** (clock — it'll go by itself; Send now / Delete) or **refused** (red, the
+server's reason; Copy / Delete). Every step is in the send log (`SendLog`, attached to Feedback).
+
+DEBUG-only launch arguments shorten the timings for tests: `-sendWaitingAfter`, `-sendTimingScale`,
+`-sendDirectNudge`.
 
 ### Navigation structure
 

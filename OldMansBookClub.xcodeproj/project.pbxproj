@@ -59,6 +59,7 @@
 		5AE9BF242BB8E55E90C168C2 /* AccountScope.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DBF0F42D59478B1E09CB57 /* AccountScope.swift */; };
 		5C4A497ACED3A69996FE4EA9 /* SendEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93C53A6AC73351BCC64ABD5F /* SendEngineTests.swift */; };
 		5F0B93F477BD663166846DFD /* ChatCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA2187C8C45E7B61C1FB33DC /* ChatCache.swift */; };
+		5F47F226A1CCAF55B68041BF /* HermeticSendUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED77A4C76896D7AA356AE28 /* HermeticSendUITests.swift */; };
 		669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */; };
 		66F0FE46F6968057C4C60F50 /* SharedSignIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BD6A363600BAB5C66B526D0 /* SharedSignIn.swift */; };
 		6C0DFF89351327DED10A20FD /* SendRequestBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E6668CAA39F95F09DE9EE5 /* SendRequestBuilder.swift */; };
@@ -236,6 +237,7 @@
 		B9C82C378329429BA6EBD9D9 /* user_rest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = user_rest.json; sourceTree = "<group>"; };
 		BAF4681A225CA579A8A238A9 /* MemberProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemberProfileView.swift; sourceTree = "<group>"; };
 		BB329E2F5F6D46B4CACCF2CA /* OldMansBookClub.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OldMansBookClub.entitlements; sourceTree = "<group>"; };
+		BED77A4C76896D7AA356AE28 /* HermeticSendUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermeticSendUITests.swift; sourceTree = "<group>"; };
 		C05DE224CB1318D203D6469B /* TranscriptStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptStore.swift; sourceTree = "<group>"; };
 		C1E6668CAA39F95F09DE9EE5 /* SendRequestBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendRequestBuilder.swift; sourceTree = "<group>"; };
 		C2CB308339BC0FE60AC349ED /* ContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractTests.swift; sourceTree = "<group>"; };
@@ -418,6 +420,7 @@
 			children = (
 				9BC51C4C84ECB54C1E797EB1 /* AdminUITests.swift */,
 				E6D56FA74C00E534B957B96F /* DeviceOnlyUITests.swift */,
+				BED77A4C76896D7AA356AE28 /* HermeticSendUITests.swift */,
 				37CA8BF844CD7700A1676779 /* HermeticUITests.swift */,
 				1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */,
 				F312CA9C67A953BFD84AD3F1 /* OldMansBookClubUITests.swift */,
@@ -814,6 +817,7 @@
 			files = (
 				41D9C0749859E667E2CAE02F /* AdminUITests.swift in Sources */,
 				98951A0C68CF1E7E963539CC /* DeviceOnlyUITests.swift in Sources */,
+				5F47F226A1CCAF55B68041BF /* HermeticSendUITests.swift in Sources */,
 				EB458273C856BF515652D230 /* HermeticUITests.swift in Sources */,
 				F68388300A9C077D5A1900F7 /* LibraryUITests.swift in Sources */,
 				669BFCE44685040B3B0D97A5 /* OldMansBookClubUITests.swift in Sources */,

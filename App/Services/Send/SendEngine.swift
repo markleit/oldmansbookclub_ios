@@ -233,6 +233,12 @@ final class SendEngine: ObservableObject {
             let ids = SendPolicy.itemsToSubmit(outbox.items, clock: clock, now: now, isOffline: false)
             if !ids.isEmpty { SendLog.note("pump", nil, "reason=\(reason) items=\(ids.count)") }
             for id in ids { submit(id) }
+            // In flight with iOS but already failing directly: retry directly on the same clock.
+            if clock.isDue(now: now) {
+                for item in outbox.items where item.status == .inFlight && item.firstFailureAt != nil {
+                    sendDirectIfPossible(item.id)
+                }
+            }
         }
         scheduleWake()
         publish()
@@ -406,8 +412,12 @@ final class SendEngine: ObservableObject {
             markWaiting(id, because: "rate limited", now: now)
         case .offline:
             isOffline = true
-            if (copies[id] ?? 0) > 0 { return }   // iOS's copy is waiting for the network itself
-            markWaiting(id, because: "offline", now: now)
+            if (copies[id] ?? 0) > 0 {
+                // iOS's copy waits for the network itself; the bubble still shows "waiting".
+                noteCopyFailure(id, "offline", now: now)
+            } else {
+                markWaiting(id, because: "offline", now: now)
+            }
         case .refreshAuth:
             // A second 401 straight after refreshing: treat like any passing failure.
             if !transientFailure(id, "token refused again", now: now) { return }
@@ -418,11 +428,23 @@ final class SendEngine: ObservableObject {
         publish()
     }
 
-    /// Returns false when another copy of the attempt is still out (it decides the outcome).
+    /// The direct copy failed but iOS still holds the background copy (it can sit on one for a long
+    /// time when the server is unreachable). The message stays in flight — iOS may yet deliver it —
+    /// but it now counts as failing: the bubble turns to "waiting" on the usual delay, and the
+    /// shared clock retries it directly (pump) instead of leaving it to iOS's schedule.
+    private func noteCopyFailure(_ id: UUID, _ why: String, now: Date) {
+        SendLog.note("copy failed, other continues", id, why)
+        outbox.update(id) {
+            $0.lastError = why
+            if $0.firstFailureAt == nil { $0.firstFailureAt = now }
+        }
+        if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
+    }
+
     private func transientFailure(_ id: UUID, _ why: String, now: Date) -> Bool {
         if (copies[id] ?? 0) > 0 {
-            SendLog.note("copy failed, other continues", id, why)
-            return false
+            noteCopyFailure(id, why, now: now)
+            return true
         }
         // One round of failures moves the clock once: several messages failing together (the server
         // is down) mustn't escalate the backoff for each of them.

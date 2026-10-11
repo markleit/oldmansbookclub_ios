@@ -361,6 +361,30 @@ final class SendEngineTests: XCTestCase {
                        "the probe landed: the other two go at once")
     }
 
+    func testWhileIOSHoldsItsCopyAFailingMessageStillShowsWaitingAndIsRetriedDirectly() async throws {
+        // The server is down but the phone has a network: iOS can sit on its background copy for a
+        // long time. The bubble must still turn to "waiting", and the engine must keep retrying
+        // directly on its own clock rather than wait on iOS's schedule.
+        var directCalls = 0
+        transport.directResponse = { _ in directCalls += 1; return SendResponse(status: 503) }
+        let engine = await started(makeEngine())
+        let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        XCTAssertEqual(directCalls, 1)
+        XCTAssertEqual(engine.items.first?.status, .inFlight, "iOS's copy is still out")
+
+        now = now.addingTimeInterval(30)
+        XCTAssertEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .waiting)
+
+        transport.directResponse = { [unowned self] _ in directCalls += 1; return self.delivered(item.id) }
+        engine.pump("retry clock")
+        await settle()
+
+        XCTAssertEqual(directCalls, 2, "retried directly on the shared clock")
+        XCTAssertTrue(engine.items.isEmpty)
+        XCTAssertTrue(transport.cancelled.contains(item.id), "iOS's copy is dropped once it's delivered")
+    }
+
     func testOfflineAtTapShowsWaitingAndGoesTheMomentTheNetworkIsBack() async throws {
         network = false
         let engine = await started(makeEngine())

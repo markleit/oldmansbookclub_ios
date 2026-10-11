@@ -25,7 +25,7 @@ LANE_DEVICE=0
 RESET_DEV_DB=1
 SIMULATOR="${OMBC_SIMULATOR:-iPhone 17 Pro}"
 SKIP_UNIT=0
-HERMETIC_SHARDS_TO_RUN="1 2"
+HERMETIC_SHARDS_TO_RUN="1 2 3"
 BUILD_FOR_TESTING_DIR=""
 PRODUCTS_DIR=""
 
@@ -35,6 +35,7 @@ PRODUCTS_DIR=""
 # that silently runs nowhere is the failure mode this guards against.
 HERMETIC_SHARD_1="OldMansBookClubUITests/HermeticChatUITests"
 HERMETIC_SHARD_2="OldMansBookClubUITests/HermeticMediaUITests"
+HERMETIC_SHARD_3="OldMansBookClubUITests/HermeticSendUITests"
 
 usage() {
     sed -n '3,13p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -45,8 +46,8 @@ Options:
   --device             --live, plus the device-only tests on OMBC_DEVICE_UDID
   --only api|ios|ui    run just one part
   --only ios-unit      iOS unit tests only, skipping the hermetic UI tests
-  --only hermetic-1    one half of the hermetic UI tests (hermetic-2 for the other) — what each
-                       parallel CI job runs (#204)
+  --only hermetic-N    one part (1–3) of the hermetic UI tests — what each parallel CI job
+                       runs (#204)
   --build-for-testing DIR   build the app + test bundles into DIR and stop (CI's build job)
   --products DIR       run tests from bundles already built into DIR (test-without-building)
   --no-reset           for --live: do not wipe bookclubdb-dev first (leaves your dev state alone,
@@ -77,9 +78,9 @@ while [[ $# -gt 0 ]]; do
                 # Unit tests without the hermetic UI tests — a faster subset for quick local
                 # iteration. CI itself gates on the full `--only ios` (both).
                 ios-unit) LANE_IOS_UNIT=1; SKIP_HERMETIC_UI=1 ;;
-                hermetic-1|hermetic-2) LANE_IOS_UNIT=1; SKIP_UNIT=1; HERMETIC_SHARDS_TO_RUN="${2#hermetic-}" ;;
+                hermetic-1|hermetic-2|hermetic-3) LANE_IOS_UNIT=1; SKIP_UNIT=1; HERMETIC_SHARDS_TO_RUN="${2#hermetic-}" ;;
                 ui)  LANE_LIVE=1 ;;
-                *)   echo "--only takes api, ios, ios-unit, hermetic-1, hermetic-2 or ui" >&2; exit 2 ;;
+                *)   echo "--only takes api, ios, ios-unit, hermetic-1..3 or ui" >&2; exit 2 ;;
             esac
             shift ;;
         -h|--help)   usage; exit 0 ;;
@@ -217,8 +218,8 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <retry:0|
 check_hermetic_shards() {
     local cls missing=0
     for cls in $(grep -hoE "class Hermetic[A-Za-z]*UITests" UITests/*.swift | awk '{print $2}'); do
-        if [[ " $HERMETIC_SHARD_1 $HERMETIC_SHARD_2 " != *"/$cls "* ]]; then
-            fail "$cls is in neither hermetic half — add it to HERMETIC_SHARD_1 or _2 in regression.sh"
+        if [[ " $HERMETIC_SHARD_1 $HERMETIC_SHARD_2 $HERMETIC_SHARD_3 " != *"/$cls "* ]]; then
+            fail "$cls is in no hermetic part — add it to a HERMETIC_SHARD_N in regression.sh"
             missing=1
         fi
     done
@@ -313,11 +314,11 @@ if [[ $LANE_IOS_UNIT -eq 1 ]]; then
             # deterministic as the unit tests, just slower because a simulator has to boot and draw.
             scripts/start_hermetic_stub.sh
             for shard in $HERMETIC_SHARDS_TO_RUN; do
-                step "Hermetic UI tests, half $shard of 2 (stub server, still no backend)"
+                step "Hermetic UI tests, part $shard of 3 (stub server, still no backend)"
                 reset_simulator_state
                 classes_var="HERMETIC_SHARD_$shard"
                 # shellcheck disable=SC2086
-                run_xcodebuild_tests "hermetic UI $shard/2" "platform=iOS Simulator,name=$SIMULATOR" 1 ${!classes_var}
+                run_xcodebuild_tests "hermetic UI $shard/3" "platform=iOS Simulator,name=$SIMULATOR" 1 ${!classes_var}
             done
         else
             record "hermetic UI (shard check)" 1
