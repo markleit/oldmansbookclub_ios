@@ -1,0 +1,296 @@
+import XCTest
+
+/// #204 — fire-and-forget sending, driven through the real app against the hermetic stub (CI half
+/// 3). Each test is one scenario from the spec: send, then walk away / lose the server / get refused
+/// — and the message still arrives (or says clearly why it can't) with nobody tapping Retry.
+///
+/// The stub stands in for the server: `/_stub/sent` is what actually landed (deduped by client id,
+/// like the real server), `/_stub/script` makes the next requests fail in a chosen way, and
+/// `/_stub/down` makes the server unreachable. DEBUG launch arguments shorten the send timings so
+/// the real schedule runs in seconds (#204 T2).
+final class HermeticSendUITests: HermeticTestCase {
+
+    /// Spinner → "waiting" after 3 s; retries 10× faster than in the app (0.1, 0.2, 0.4… s).
+    private let fastTimings = ["-sendWaitingAfter", "3", "-sendTimingScale", "0.1", "-sendDirectNudge", "1"]
+
+    // MARK: - Helpers
+
+    private func send(_ text: String) {
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText(text)
+        let button = app.buttons["sendButton"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "sendButton never appeared after typing")
+        button.tap()
+    }
+
+    /// Everything that has landed on the stub, waiting up to `timeout` for at least `count`.
+    @discardableResult
+    private func waitForSent(_ count: Int, timeout: TimeInterval) throws -> [[String: Any]] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var sent: [[String: Any]] = []
+        repeat {
+            sent = try sentMessages()
+            if sent.count >= count { return sent }
+            Thread.sleep(forTimeInterval: 0.2)
+        } while Date() < deadline
+        return sent
+    }
+
+    private func script(_ route: String, _ responses: [[String: Any]]) throws {
+        try controlRequest(path: "/_stub/script", method: "POST", jsonBody: ["route": route, "responses": responses])
+    }
+
+    private func setServerDown(_ down: Bool) throws {
+        try controlRequest(path: "/_stub/down", method: "POST", jsonBody: ["down": down])
+    }
+
+    private func requests(matching fragment: String) throws -> Int {
+        try requestedPaths().filter { $0.contains(fragment) }.count
+    }
+
+    private func indicator(_ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    private func goBack() {
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.staticTexts["Discussion"].firstMatch.waitForExistence(timeout: 10), "never got back to the Library")
+    }
+
+    private func pickPhotos(_ count: Int) {
+        app.buttons["attachmentMenuButton"].tap()
+        let photos = app.buttons["Photos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), "+ menu has no Photos item")
+        photos.tap()
+        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
+        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
+        XCTAssertGreaterThanOrEqual(thumbs.count, count, "simulator library needs at least \(count) sample photos")
+        for i in 0..<count { thumbs.element(boundBy: i).tap() }
+        // The picker's confirm (✓): identifier "Add", label "Done" — not the app's own "Add" button.
+        app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch.tap()
+        let pending = app.descendants(matching: .any).matching(identifier: "pendingPhoto")
+        XCTAssertTrue(pending.element(boundBy: count - 1).waitForExistence(timeout: 20), "picked photos didn't reach the composer")
+    }
+
+    // MARK: - H1: as fast as before
+
+    func testATextReachesTheServerWithinTwoSecondsOfTappingSend() throws {
+        launch()
+        openCurrentBook()
+
+        send("quick one")
+        let tapped = Date()
+        let sent = try waitForSent(1, timeout: 10)
+
+        XCTAssertEqual(sent.first?["body"] as? String, "quick one")
+        XCTAssertLessThan(Date().timeIntervalSince(tapped), 2.5, "a text must go at once while the app is open")
+    }
+
+    // MARK: - H2–H5: walking away
+
+    func testATextSentThenLeftImmediatelyStillArrives() throws {
+        // #204 A2 — leaving the chat used to strand a failed text until that chat was reopened.
+        try script("POST /books/*/messages", [["delay": 2], ["delay": 2]])
+        launch()
+        openCurrentBook()
+
+        send("said and gone")
+        goBack()
+
+        XCTAssertEqual(try waitForSent(1, timeout: 15).first?["body"] as? String, "said and gone")
+        openCurrentBook()
+        XCTAssertTrue(app.staticTexts["said and gone"].waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForDisappearance(indicator("sendingIndicator"), timeout: 10), "the bubble never showed as sent")
+    }
+
+    func testAPhotoSentThenLeftImmediatelyStillArrives() throws {
+        // A2 for media: 2.1 never posted a photo whose upload finished after you left the chat.
+        try setMessages([])
+        try script("POST /books/*/messages", [["delay": 3], ["delay": 3]])
+        launch()
+        openCurrentBook()
+
+        pickPhotos(1)
+        app.buttons["sendButton"].tap()
+        goBack()
+
+        let sent = try waitForSent(1, timeout: 20)
+        XCTAssertEqual(sent.first?["type"] as? String, "Photo")
+        XCTAssertEqual(sent.first?["via"] as? String, "file", "one request: the photo itself (#204 PR 1)")
+    }
+
+    func testSendsInTwoChatsBothArriveWhileYouSitInTheLibrary() throws {
+        // A8 — each chat used to send only while it was open.
+        try script("POST /books/*/messages", [["delay": 2], ["delay": 2], ["delay": 2], ["delay": 2]])
+        launch()
+        openCurrentBook()
+        send("in the current read")
+        goBack()
+        let future = app.buttons.containing(NSPredicate(format: "label CONTAINS 'Seed: Future Read'")).firstMatch
+        XCTAssertTrue(future.waitForExistence(timeout: 5), "the future read isn't in the Library")
+        future.tap()
+        XCTAssertTrue(app.textViews["messageTextField"].waitForExistence(timeout: 10), "future read's chat never loaded")
+        send("in the future read")
+        goBack()
+
+        let sent = try waitForSent(2, timeout: 20)
+        XCTAssertEqual(Set(sent.compactMap { $0["body"] as? String }), ["in the current read", "in the future read"])
+        XCTAssertEqual(Set(sent.compactMap { $0["book_id"] as? String }).count, 2)
+    }
+
+    func testATextSentThenBackgroundedStillArrives() throws {
+        // A3 — iOS carries it once handed over; the app needn't be on screen.
+        try script("POST /books/*/messages", [["delay": 3], ["delay": 3]])
+        launch()
+        openCurrentBook()
+
+        send("then home")
+        XCUIDevice.shared.press(.home)
+
+        XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "then home")
+        app.activate()
+    }
+
+    // MARK: - H6: the app was killed with messages queued
+
+    func testMessagesQueuedWhenTheAppWasKilledGoOnRelaunchWithoutOpeningTheChat() throws {
+        // A5/A6 — on disk before anything is sent; the engine sends from any screen at launch.
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+        try setServerDown(true)
+        for text in ["one", "two", "three"] { send(text) }
+        XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "never showed waiting while the server was down")
+        app.terminate()
+
+        try setServerDown(false)
+        launch(freshState: false, extraArguments: fastTimings)   // lands on the Library; the chat is never opened
+
+        let sent = try waitForSent(3, timeout: 30)
+        XCTAssertEqual(Set(sent.compactMap { $0["body"] as? String }), ["one", "two", "three"])
+    }
+
+    // MARK: - H7–H10: server trouble, retried on the shared clock
+
+    func testWhenTheServerIsDownItShowsWaitingThenSendsByItselfWhenItsBack() throws {
+        // B4 / #121 — nothing used to retry while the network was up but the server wasn't.
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+        try setServerDown(true)
+
+        send("while it's down")
+        XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "a passing failure should become a quiet clock, not red")
+        XCTAssertFalse(indicator("failedSendIndicator").exists, "never red for a passing failure")
+
+        try setServerDown(false)
+        XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "while it's down")
+        XCTAssertTrue(waitForDisappearance(indicator("waitingSendIndicator"), timeout: 15))
+    }
+
+    func testServerErrorsAreRetriedAutomatically() throws {
+        try script("POST /books/*/messages", Array(repeating: ["status": 503], count: 4))
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+
+        send("persistent")
+
+        XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "persistent")
+        XCTAssertGreaterThanOrEqual(try requests(matching: "/messages"), 3, "it took retries to get through")
+    }
+
+    func testAnExpiredSignInIsRefreshedOnceAndTheMessageSent() throws {
+        // B8 — a refused token is refreshed and the send repeated at once.
+        try script("POST /books/*/messages", [["status": 401], ["status": 401]])
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+        let refreshesBefore = try requests(matching: "/auth/refresh")
+
+        send("after a refresh")
+
+        XCTAssertEqual(try waitForSent(1, timeout: 20).first?["body"] as? String, "after a refresh")
+        XCTAssertEqual(try requests(matching: "/auth/refresh") - refreshesBefore, 1, "one refresh, not one per copy")
+    }
+
+    func testRateLimitedWaitsForRetryAfterThenSends() throws {
+        // E1 — 429 is not a refusal: wait as long as the server says, then send.
+        try script("POST /books/*/messages", [["status": 429, "retry_after": 3], ["status": 429, "retry_after": 3]])
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+
+        send("slow down")
+        let tapped = Date()
+
+        XCTAssertEqual(try waitForSent(1, timeout: 20).first?["body"] as? String, "slow down")
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(tapped), 3, "it waited for Retry-After")
+        XCTAssertFalse(indicator("failedSendIndicator").exists)
+    }
+
+    // MARK: - H11–H12: what the sender can do
+
+    func testARefusedMessageShowsTheReasonAndCanBeDeleted() throws {
+        // E2 — a permanent refusal is red with the server's reason, never retried, never silent.
+        let reason = "Not a member of this club."
+        try script("POST /books/*/messages", [["status": 400, "body": ["error": reason]], ["status": 400, "body": ["error": reason]]])
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+
+        send("not allowed")
+        let refused = app.buttons.matching(identifier: "failedSendIndicator").firstMatch
+        XCTAssertTrue(refused.waitForExistence(timeout: 10), "a refusal should show red")
+        let attempts = try requests(matching: "/messages")
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertEqual(try requests(matching: "/messages"), attempts, "a refusal is never retried")
+
+        refused.tap()
+        // A menu's text row may be exposed as a button or as text — match the label either way.
+        let reasonRow = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", reason)).firstMatch
+        XCTAssertTrue(reasonRow.waitForExistence(timeout: 5), "the reason isn't shown")
+        app.buttons["Delete"].tap()
+        XCTAssertTrue(waitForDisappearance(app.staticTexts["not allowed"], timeout: 5), "Delete didn't remove it")
+        XCTAssertTrue(try sentMessages().isEmpty)
+    }
+
+    func testSendNowTriesImmediatelyInsteadOfWaitingForTheNextRetry() throws {
+        // F1 — retries 100× slower than the app's, so only Send now can explain a quick arrival.
+        try script("POST /books/*/messages", [["status": 503], ["status": 503]])
+        launch(extraArguments: ["-sendWaitingAfter", "1", "-sendTimingScale", "100"])
+        openCurrentBook()
+
+        send("now please")
+        let waiting = app.buttons.matching(identifier: "waitingSendIndicator").firstMatch
+        XCTAssertTrue(waiting.waitForExistence(timeout: 15))
+        waiting.tap()
+        app.buttons["Send now"].tap()
+
+        XCTAssertEqual(try waitForSent(1, timeout: 8).first?["body"] as? String, "now please")
+    }
+
+    // MARK: - H13: a batch keeps the order it was sent in
+
+    func testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn() throws {
+        // #201 + #204 (1b) — sent in parallel, so they can ARRIVE in any order; each carries its
+        // tap time, which is what orders the chat. Replaces the old "post in order" and "start
+        // every upload together" tests: there's no upload-link step and no line to wait in.
+        try setMessages([])
+        launch()
+        openCurrentBook()
+
+        pickPhotos(3)
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText("a caption")
+        app.buttons["sendButton"].tap()
+
+        let sent = try waitForSent(4, timeout: 45)
+        XCTAssertEqual(sent.count, 4, "the caption and three photos, each once: \(sent)")
+        let byTapTime = sent.sorted { ($0["sent_at"] as? String ?? "") < ($1["sent_at"] as? String ?? "") }
+        XCTAssertEqual(byTapTime.map { $0["type"] as? String }, ["Text", "Photo", "Photo", "Photo"])
+        XCTAssertEqual(byTapTime.first?["body"] as? String, "a caption")
+        XCTAssertEqual(Set(sent.compactMap { $0["sent_at"] as? String }).count, 4, "every tap time is distinct")
+
+        let bubbles = app.buttons.matching(identifier: "photoMessage")
+        let settled = NSPredicate(format: "count == 3")
+        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: settled, object: bubbles)], timeout: 15),
+                       .completed, "expected 3 photo bubbles, found \(bubbles.count)")
+    }
+}

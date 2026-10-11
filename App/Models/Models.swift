@@ -55,8 +55,14 @@ struct User: Identifiable, Codable {
     var avatarUrl: String?
 }
 
-enum MessageSendState: String, Codable {
-    case sending, failed
+// #204 — a bubble the server hasn't confirmed yet (local only, never sent or received).
+enum MessageSendState: Equatable {
+    /// Spinner: on its way.
+    case sending
+    /// Quiet clock: offline or still retrying — it'll go by itself. Send now / Delete.
+    case waiting
+    /// Red: the server refused it for good, with its reason. Copy / Delete.
+    case refused(String)
 }
 
 // #47 — one user's reaction on a message (per-user; client derives counts/"mine").

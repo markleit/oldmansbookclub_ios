@@ -61,14 +61,18 @@ class HermeticTestCase: XCTestCase {
     /// real cause of #126's "stub sometimes unreachable" flake (see `openCurrentBook()`'s doc
     /// comment). A launch-argument override that never matches anything the app reads is silently
     /// a no-op, not an error, which is exactly what made it invisible for so long.
-    func launch() {
+    ///
+    /// `freshState: false` relaunches WITHOUT wiping local state — what a test of "it was still
+    /// queued after the app was killed" needs. `extraArguments` are DEBUG launch overrides, e.g.
+    /// the send timings (#204 T2: `-sendWaitingAfter 3`, `-sendTimingScale 0.1`).
+    func launch(freshState: Bool = true, extraArguments: [String] = []) {
         app = XCUIApplication()
         app.launchArguments += [
             "-debugServerBaseURL", stubBaseURL,
             "-hasAcceptedEULA_v2", "YES",
             // Start from the stub's data alone — see OldMansBookClubApp.init.
-            "-uiTestFreshLocalState", "YES",
-        ]
+            "-uiTestFreshLocalState", freshState ? "YES" : "NO",
+        ] + extraArguments
         app.launch()
         SystemAlerts.dismissAny()
 
@@ -670,103 +674,4 @@ final class HermeticMediaUITests: HermeticTestCase {
         XCTAssertTrue(waitForCounter("\(start + 1) of \(total)"), "at 1× a swipe should page: \(counter.label)")
     }
 
-    /// + → Photos picks several photos in the real system picker; one can be removed; Send posts
-    /// the typed caption first, then each photo, in picked order.
-    func testPickingSeveralPhotosSendsCaptionThenEachPhotoInOrder() throws {
-        try setMessages([])
-        launch()
-        openCurrentBook()
-
-        app.buttons["attachmentMenuButton"].tap()
-        let photos = app.buttons["Photos"]
-        XCTAssertTrue(photos.waitForExistence(timeout: 5), "+ menu has no Photos item")
-        XCTAssertTrue(app.buttons["Video"].exists, "+ menu has no Video item")
-        photos.tap()
-
-        // The system picker (out of process, reached through the app's accessibility tree).
-        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
-        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
-        XCTAssertGreaterThanOrEqual(thumbs.count, 3, "simulator library needs at least 3 sample photos")
-        for i in 0..<3 { thumbs.element(boundBy: i).tap() }
-        // The picker's confirm (✓) is identifier "Add" / label "Done". Not buttons["Add"]: that
-        // matches the app's own + button, whose accessibility label is "Add".
-        let confirm = app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "picker has no confirm button")
-        confirm.tap()
-
-        let pending = app.descendants(matching: .any).matching(identifier: "pendingPhoto")
-        XCTAssertTrue(pending.element(boundBy: 2).waitForExistence(timeout: 20), "picked photos didn't reach the composer")
-        let picked = pending.count
-        XCTAssertLessThanOrEqual(picked, 10)
-        app.buttons.matching(identifier: "removePendingPhoto").element(boundBy: 0).tap()
-        XCTAssertTrue(waitForDisappearance(pending.element(boundBy: picked - 1)), "removing a photo didn't shrink the strip")
-        let toSend = picked - 1
-
-        let field = app.textViews["messageTextField"]
-        field.tap()
-        field.typeText("a caption")
-        app.buttons["sendButton"].tap()
-
-        var sent: [[String: Any]] = []
-        let deadline = Date().addingTimeInterval(45)
-        while Date() < deadline {
-            sent = try sentMessages()
-            if sent.count >= toSend + 1 { break }
-            Thread.sleep(forTimeInterval: 0.5)
-        }
-        XCTAssertEqual(sent.map { $0["type"] as? String }, ["Text"] + Array(repeating: "Photo", count: toSend),
-                       "expected the caption then \(toSend) photos, in that order; got \(sent)")
-        XCTAssertEqual(sent.first?["body"] as? String, "a caption")
-
-        // #203 — each photo may be posted twice (directly and via the background session); the
-        // chat must still show exactly one bubble per photo once everything has been confirmed.
-        let bubbles = app.buttons.matching(identifier: "photoMessage")
-        let settled = NSPredicate(format: "count == %d", toSend)
-        XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: settled, object: bubbles)], timeout: 15),
-                       .completed, "expected \(toSend) photo bubbles, found \(bubbles.count)")
-    }
-
-    /// A photo batch must start every photo's send at once. Started one after another, each
-    /// upload-link wait stacked behind the previous one — on a bad network N photos took N
-    /// timeouts to resolve. The stub holds each upload-link request for 2 s and records when it
-    /// ARRIVED: started together they arrive within moments; one-at-a-time they'd be ~2 s apart.
-    func testAPhotoBatchStartsEveryUploadTogether() throws {
-        try setMessages([])
-        try controlRequest(path: "/_stub/upload-url-delay", method: "POST", jsonBody: ["seconds": 2])
-        launch()
-        openCurrentBook()
-
-        app.buttons["attachmentMenuButton"].tap()
-        app.buttons["Photos"].tap()
-        let thumbs = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Photo'"))
-        XCTAssertTrue(thumbs.firstMatch.waitForExistence(timeout: 20), "photo picker never showed the library")
-        for i in 0..<3 { thumbs.element(boundBy: i).tap() }
-        app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch.tap()
-        let pending = app.descendants(matching: .any).matching(identifier: "pendingPhoto")
-        XCTAssertTrue(pending.element(boundBy: 2).waitForExistence(timeout: 20))
-        let picked = pending.count
-        app.buttons["sendButton"].tap()
-
-        var times: [Double] = []
-        let deadline = Date().addingTimeInterval(30)
-        while Date() < deadline {
-            let data = try controlRequest(path: "/_stub/upload-url-times", method: "GET")
-            times = (try JSONSerialization.jsonObject(with: data) as? [Double]) ?? []
-            if times.count >= picked { break }
-            Thread.sleep(forTimeInterval: 0.25)
-        }
-        XCTAssertEqual(times.count, picked, "expected one upload-link request per photo")
-        let spread = (times.max() ?? 0) - (times.min() ?? 0)
-        XCTAssertLessThan(spread, 1.5, "upload-link requests were spread over \(spread)s — the batch started one at a time")
-
-        // And starting together doesn't change posting order: every photo posts, in order.
-        var sent: [[String: Any]] = []
-        let postDeadline = Date().addingTimeInterval(45)
-        while Date() < postDeadline {
-            sent = try sentMessages()
-            if sent.count >= picked { break }
-            Thread.sleep(forTimeInterval: 0.5)
-        }
-        XCTAssertEqual(sent.map { $0["type"] as? String }, Array(repeating: "Photo", count: picked))
-    }
 }

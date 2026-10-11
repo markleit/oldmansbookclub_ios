@@ -21,15 +21,15 @@ commands.
 
 CI calls this same script, so "green in CI" and "green on my machine" mean the same thing rather
 than being two implementations that drift. `.github/workflows/test.yml` (#204) runs `--only api`,
-then builds the app once (`--build-for-testing`) and runs `--only ios-unit`, `--only hermetic-1`
-and `--only hermetic-2` on three runners at the same time from those bundles (`--products`):
+then builds the app once (`--build-for-testing`) and runs `--only ios-unit` and `--only
+hermetic-1`/`-2`/`-3` on separate runners at the same time from those bundles (`--products`):
 
 | CI job | Runs | Typical time |
 |---|---|---|
 | API integration | `--only api` — API suite + the hermetic stub's self-test | ~1 min |
 | iOS build | `--build-for-testing build/ci`, uploaded as an artifact | ~8 min |
 | iOS unit | `--only ios-unit --products build/ci` | ~4 min after the build |
-| iOS UI (1/2), (2/2) | `--only hermetic-N --products build/ci` | ~10–15 min after the build |
+| iOS UI (1), (2), (3) | `--only hermetic-N --products build/ci` — chat, media, sending | ~10–20 min after the build |
 
 UI tests retry a **failing test** once (`-retry-tests-on-failure`), never the whole suite. A test
 that only passed on its retry is listed as **flaky** in the run output and the GitHub job summary
@@ -178,9 +178,16 @@ voice/photo send (file body), forwards, 429 + `Retry-After`. Every message it re
 the API's contract fixture (`Tests/contract`), so its shape can't drift from the real server's, and
 `scripts/test_hermetic_stub.py` (run in the API lane) checks all of it.
 
-The tests are split into two classes that CI runs in parallel — `HermeticChatUITests` and
-`HermeticMediaUITests`, sharing `HermeticTestCase`. A new test goes in one of them (or a new
-`Hermetic*UITests` class added to a half in `regression.sh`); a class in neither half fails the run. It runs as a real host process rather than in-process, because the iOS
+The tests are split into classes that CI runs in parallel — `HermeticChatUITests`,
+`HermeticMediaUITests` and `HermeticSendUITests` (#204: send then leave / background / kill, server
+down, 503s, 401 refresh, 429, refusals, Send now, batch order), sharing `HermeticTestCase`. A new
+test goes in one of them (or a new `Hermetic*UITests` class added to a part in `regression.sh`); a
+class in no part fails the run. Send tests launch with DEBUG timing overrides
+(`-sendWaitingAfter 3 -sendTimingScale 0.1`) so the real retry schedule runs in seconds.
+
+Every test has a time limit (unit 2 min, UI 10 min): a hung test fails by name. In async XCTest
+methods don't use `continueAfterFailure = false` (it stalled a run for hours) — read arrays through a
+safe subscript + `XCTUnwrap` so a regression fails instead of crashing. It runs as a real host process rather than in-process, because the iOS
 Simulator does not reliably bridge loopback connections *between two* Simulator-hosted app
 processes — only from a Simulator app to a genuine macOS host process, which is also why the live
 lane's real API (also a host process) never has this problem. `/hubs/*` returns a hard 404 rather
@@ -307,6 +314,8 @@ it.
 | Drop the `CappedReadStream` wrapper in the file-body send | `A_body_with_no_declared_length_is_still_capped_while_it_streams` |
 | Validate sender/book after storing the file | the file-body `..._is_refused_and_nothing_is_stored` tests |
 | Answer a rate-limit refusal with 400 | `The_thirty_first_send_in_a_window_is_told_when_to_try_again` |
+| The SendEngine only sending while a chat is open, or giving up after N retries | `HermeticSendUITests` (leave the chat / server down) |
+| No probe while backing off; media sent directly at once; the other copy not cancelled; 401 not refreshed; Retry-After ignored; relaunch re-sending what iOS holds | the matching `SendEngineTests` |
 | Count unread by `SentAt` instead of `ReceivedAt` | `A_late_arrival_is_unread_even_though_it_was_sent_before_what_you_read` + the late-arrival push test |
 | Compare the read marker by `SentAt` | `Reading_a_late_arrival_moves_the_marker_and_clears_it` |
 | Drop the `ReceivedAt = SentAt` backfill from the migration | `Existing_messages_get_their_sent_time_as_their_arrival_time` |

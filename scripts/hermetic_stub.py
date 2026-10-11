@@ -83,6 +83,18 @@ def _dto(**fields):
     return d
 
 
+def _access_token():
+    """A JWT-shaped token with a real `exp` an hour out (no valid signature — the stub doesn't
+    check). The app reads `exp` to decide whether to refresh before handing a send to iOS (#204);
+    an opaque token would make it refresh before every send, and a test counting refreshes after
+    a 401 would count those too."""
+    import base64
+
+    def part(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+    return f"{part({'alg': 'HS256', 'typ': 'JWT'})}.{part({'sub': USER_ID, 'exp': int(time.time()) + 3600})}.stub"
+
+
 def _now_iso():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
@@ -438,7 +450,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if route in ("/auth/dev-login", "/auth/refresh"):
             return self._send_json({
-                "access_token": "stub-access-token", "refresh_token": "stub-refresh-token",
+                "access_token": _access_token(), "refresh_token": "stub-refresh-token",
                 "user": _user(),
             })
         # Media send (#201): hand out an upload URL on this stub, accept the PUT, and serve the

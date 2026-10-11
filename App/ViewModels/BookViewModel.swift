@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import UIKit
 import AVFoundation
@@ -60,7 +61,18 @@ final class BookViewModel: ObservableObject {
     @Published private(set) var visibleMessages: [Message] = []
 
     private func recomputeVisibleMessages() {
-        visibleMessages = messages.filter { !blockedUserIds.contains($0.senderId) }
+        // #204 — the chat shows the server's messages plus this chat's unsent ones, which belong
+        // to the SendEngine (app-wide, on disk), not to this screen. Ordered by sentAt: the tap
+        // time for a pending bubble, the server's clamped copy of it once confirmed — so a bubble
+        // stays put when its confirmation swaps in.
+        let confirmed = messages.filter { !blockedUserIds.contains($0.senderId) }
+        visibleMessages = pendingBubbles.isEmpty ? confirmed
+            : (confirmed + pendingBubbles).sorted { $0.sentAt > $1.sentAt }
+    }
+
+    /// This chat's unsent messages, as bubbles (from SendEngine.items).
+    private var pendingBubbles: [Message] = [] {
+        didSet { recomputeVisibleMessages() }
     }
 
     // Voice messages from others this device hasn't heard — drives "Mark all as read".
@@ -219,37 +231,53 @@ final class BookViewModel: ObservableObject {
         UnreadStore.shared.bump(bookId: book.id, by: -newlyHeard.count)
     }
 
-    // Optimistic text messages awaiting their server echo, tracked by clientId (the
-    // server echoes it back). Keyed by id — not body — so identical consecutive sends
-    // don't clobber each other (#35).
-    private var pendingTextIds: Set<UUID> = []
-    private var currentlySendingMedia: Set<UUID> = []
-    // SendOrder — this chat's messages are POSTed one at a time in the order the user tapped
-    // Send (see pumpSendQueue). `sendFailed`: gave up, shows Retry, doesn't hold up the line.
-    // `mediaPostsAwaitingResult`: a media POST is in flight; nothing after it may post yet.
-    private var sendFailed: Set<UUID> = []
-    private var mediaPostsAwaitingResult: Set<UUID> = []
-    private var announceTextFailure: Set<UUID> = []
-    private var isPumpingSends = false
-    private var pumpSendsAgain = false
-    // Echo-timeout watchdogs keyed by item id so we can cancel them when the app
-    // backgrounds (a frozen timer would otherwise fire on resume and falsely mark an
-    // in-flight send as failed) and replace them on re-send.
-    private var echoTimeoutTasks: [UUID: Task<Void, Never>] = [:]
-    // App-lifecycle observers: re-flush pending media when we return to the foreground,
-    // cancel echo watchdogs when we leave it. Registered once (see startLifecycleObservers).
-    private var appActiveObserver: NSObjectProtocol?
+    // #204 — every send goes through the app-wide SendEngine; this screen only draws its items
+    // for this book and applies its confirmations.
+    private let engine: SendEngine
+    private var engineSubscriptions: Set<AnyCancellable> = []
+    // App-lifecycle observers: finalize a recording when we leave the foreground or a call
+    // interrupts it. Registered once (see startLifecycleObservers).
     private var appBackgroundObserver: NSObjectProtocol?
-    private var uploadCompletedObserver: NSObjectProtocol?
-    private var sendCompletedObserver: NSObjectProtocol?
     private var audioInterruptionObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
-    private let maxAutoRetries = 5
 
-    init(book: Book) {
+    init(book: Book, engine: SendEngine = .shared) {
         self.book = book
+        self.engine = engine
+        let bookId = book.id
+        engine.$items.combineLatest(engine.$isOffline)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] items, _ in self?.refreshPendingBubbles(items.filter { $0.bookId == bookId }) }
+            .store(in: &engineSubscriptions)
+        engine.confirmations
+            .filter { $0.bookId == bookId }
+            .sink { [weak self] in self?.reconcileConfirmedMessage($0.message) }
+            .store(in: &engineSubscriptions)
+    }
+
+    private func refreshPendingBubbles(_ items: [SendItem]) {
+        guard let userId = TokenStore.shared.userId else { pendingBubbles = []; return }
+        let name = TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? ""
+        pendingBubbles = items.map { item in
+            let state: MessageSendState
+            switch engine.displayState(of: item) {
+            case .sending: state = .sending
+            case .waiting: state = .waiting
+            case .refused(let reason): state = .refused(reason)
+            }
+            return Message(
+                id: item.id, clubId: item.clubId, senderId: userId, senderName: name,
+                type: item.messageType,
+                body: item.body,
+                // The local file until it's confirmed — the bubble shows what you sent at once.
+                mediaUrl: item.fileName.map { engine.files.fileURL($0).absoluteString } ?? item.mediaUrl,
+                durationSeconds: item.durationSeconds, sentAt: item.sentAt,
+                sendState: state, clientId: item.id,
+                parentMessageId: item.parentMessageId, parentSenderName: item.parentSenderName,
+                parentPreview: item.parentPreview)
+        }
     }
 
     func load() async {
@@ -261,18 +289,11 @@ final class BookViewModel: ObservableObject {
         let cached = ChatCache.load(bookId: book.id)
         let hasCachedState = !cached.isEmpty
         if hasCachedState {
+            // Unsent messages aren't in `messages` at all (#204): they're drawn from the SendEngine,
+            // so replacing `messages` here can't hide one — the #189 "sent text vanishes" case.
             messages = cached
-            // #146 — the cache deliberately excludes un-confirmed sends, so seeding from it
-            // blanks any pending bubble. Restore immediately rather than waiting for the fetch
-            // below to resolve: on a dead network that fetch can park for its full resource
-            // timeout, and until #146 those seconds were a window where a failed send simply
-            // wasn't on screen (reported from device testing as "the message disappeared, then
-            // came back when airplane mode was toggled off" — it was queued and safe the whole
-            // time, just invisible). Also covers the early-return paths below, which skip the
-            // restore calls entirely.
-            restorePendingMediaBubbles()
-            restorePendingTextBubbles()
         }
+        engine.chatOpened()
         isOffline = false
         isLoadingMessages = !hasCachedState
         reachedBeginning = false
@@ -299,22 +320,19 @@ final class BookViewModel: ObservableObject {
             // is already loaded here) and stick permanently on .failed.
             let merged = ChatCache.merge(existing: messages, incoming: fetched, myUserId: TokenStore.shared.userId)
             messages = merged.messages
-            for cid in merged.reconciledClientIds { clearPendingSend(clientId: cid) }
+            // A send the server has (it landed while the app was closed, or its response was lost)
+            // is confirmed by the fetch itself — the engine drops it and stops retrying.
+            for message in fetched where message.senderId == TokenStore.shared.userId {
+                if let cid = message.clientId { engine.confirm(clientId: cid, message: message) }
+            }
             saveMessagesCache()
             prefetchRecentVoiceAudio()
-
-            // Restore any media/text messages that were pending when the app was last closed
-            restorePendingMediaBubbles()
-            restorePendingTextBubbles()
         } catch is CancellationError {
             isLoadingMessages = false
             return
         } catch {
             if hasCachedState {
                 isOffline = true
-                // Keep any pending media/text items visible while offline
-                restorePendingMediaBubbles()
-                restorePendingTextBubbles()
             } else {
                 errorMessage = "Failed to load discussion."
             }
@@ -325,25 +343,9 @@ final class BookViewModel: ObservableObject {
 
         guard !isOffline else { return }
 
-        // #146 — drain queued sends on any successful load, mirroring how #119's receipt outbox
-        // drains. Previously the only trigger was didBecomeActive, which never fires if the app
-        // stays foregrounded — so toggling airplane mode back off from Control Center restored
-        // connectivity but left queued messages sitting there until something else woke the app
-        // (reported from device testing: "manual retry sends it, but it won't go on its own").
-        // The network monitor's offline→online transition calls load(), so hanging it here
-        // covers that, plus foreground and pull-to-refresh, in one place.
-        // #203 — media too, not just text: #146 left queued voice/photo/video on the foreground-only
-        // trigger, so a send that failed on a bad connection sat until the app was next reopened
-        // (a voice message stuck ~2 h) even though the network had long since come back. Media
-        // first, then text, the same order the foreground path uses.
-        Task {
-            await flushPendingMedia(trigger: "load")
-            await flushPendingText(trigger: "load")
-        }
-
         // Newest SERVER-known message: an optimistic send still in flight has an id the server
         // has never seen, and the read marker must point at a real message (#119).
-        let latestId = messages.first(where: { $0.sendState == nil })?.id
+        let latestId = messages.first?.id
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
         if let fetched = try? await readsFetch { reads = fetched }
@@ -390,6 +392,12 @@ final class BookViewModel: ObservableObject {
             // Drop SignalR replays on auto-reconnect (same server ID already in list)
             guard !self.messages.contains(where: { $0.id == message.id }) else { return }
 
+            // Our own send echoed back: it's delivered, whichever transfer route is still out.
+            if message.senderId == TokenStore.shared.userId, let cid = message.clientId,
+               self.engine.items.contains(where: { $0.id == cid }) {
+                self.engine.confirm(clientId: cid, message: message)
+                return
+            }
             self.reconcileConfirmedMessage(message)
         }
 
@@ -440,205 +448,31 @@ final class BookViewModel: ObservableObject {
         }
 
         await ChatService.shared.connect(bookId: book.id)
-        await flushPendingMedia(trigger: "chat open")
     }
 
-    // Re-insert optimistic bubbles for any media items still in the queue. Marks them
-    // .failed by default — flushPendingMedia will flip them to .sending and resend.
-    private func restorePendingMediaBubbles() {
-        let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
-        guard let userId = TokenStore.shared.userId else { return }
-        for item in pending where !messages.contains(where: { $0.id == item.id }) {
-            let type: MessageType
-            switch item.kind {
-            case .voice: type = .voice
-            case .photo: type = .photo
-            case .video: type = .video
-            }
-            let restored = Message(
-                id: item.id,
-                clubId: item.clubId,
-                senderId: userId,
-                senderName: TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? "",
-                type: type,
-                mediaUrl: item.localFileUrl.absoluteString,
-                durationSeconds: item.durationSeconds,
-                sentAt: Date(),
-                sendState: .failed,
-                clientId: item.id
-            )
-            messages.insert(restored, at: 0)
-        }
-    }
-
+    /// Send the composer's text. Fire and forget (#204): the engine has it on disk before this
+    /// returns, and sends it whatever happens next.
     func sendMessage() async {
-        guard let clientId = enqueueText() else { return }
-        await finishTextSend(clientId)
-    }
-
-    // The synchronous half of a text send: bubble, durable queue entry and its place in the
-    // chat's send order (SendOrder). No awaits, so a caller can queue text and media back to
-    // back and know the order they'll post in. Returns nil when there's nothing to send.
-    private func enqueueText() -> UUID? {
         let text = messageText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return nil }
-        guard let userId = TokenStore.shared.userId else {
+        guard !text.isEmpty else { return }
+        guard TokenStore.shared.userId != nil else {
             errorMessage = "Session error — please sign out and back in."
-            return nil
+            return
         }
         messageText = ""
         let reply = replyingTo
         replyingTo = nil
-
-        let clientId = UUID()
-        let optimistic = Message(
-            id: clientId,
-            clubId: book.clubId,
-            senderId: userId,
-            senderName: TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? "",
-            type: .text,
-            body: text,
-            mediaUrl: nil,
-            durationSeconds: nil,
-            sentAt: Date(),
-            parentMessageId: reply?.id,
-            parentSenderName: reply?.senderName,
-            parentPreview: reply.map(replyPreview)
-        )
-        messages.insert(optimistic, at: 0)
-        pendingTextIds.insert(clientId)
-
-        // #146 — persisted BEFORE the network call, so a force-quit at any point (mid-call, or
-        // even before it starts) leaves a durable record: restorePendingTextBubbles() picks it
-        // back up on relaunch instead of losing it with zero trace (confirmed nothing else
-        // persists an in-flight text send). A text body is small enough that the network call
-        // itself always finishes well inside BackgroundTaskBox's ~30s grace — this queue exists
-        // for durability across a kill, not to extend how long the call is allowed to run.
-        let seq = SendOrder.nextSeq()
-        TextSendQueue.shared.enqueue(TextSendQueue.PendingSend(
-            clientId: clientId, bookId: book.id, clubId: book.clubId,
-            body: text, parentMessageId: reply?.id, queuedAt: Date(), seq: seq))
-        SendLog.note("queued text", clientId, "seq=\(seq)")
-
-        announceTextFailure.insert(clientId)
-        return clientId
+        engine.enqueueText(bookId: book.id, clubId: book.clubId, body: text, replyTo: reply)
     }
 
-    private func finishTextSend(_ clientId: UUID) async {
-        // Posted by the pump, in tap order: if an earlier photo/video in this chat is still
-        // uploading, this waits (bubble stays .sending) rather than overtaking it on the server.
-        await pumpSendQueue()
-        // Still queued and not failed = waiting behind something sent earlier. Show the spinner
-        // so it doesn't read as delivered; a text that posted straight away never shows one.
-        if TextSendQueue.shared.items.contains(where: { $0.clientId == clientId }),
-           !sendFailed.contains(clientId),
-           let idx = messages.firstIndex(where: { $0.id == clientId }) {
-            messages[idx].sendState = .sending
-        }
+    /// "Send now" on a waiting message.
+    func sendNow(id: UUID) {
+        engine.sendNow(id)
     }
 
-    // One text POST — called only by pumpSendQueue, which guarantees nothing queued earlier in
-    // this chat is still unposted. Every outcome resolves the item (removed, or marked failed) so
-    // the pump can move on.
-    private func postText(_ item: TextSendQueue.PendingSend) async {
-        let clientId = item.clientId
-        let announce = announceTextFailure.remove(clientId) != nil
-        let bgTask = BackgroundTaskBox(name: "send-text-\(clientId.uuidString)")
-        defer { bgTask.end() }
-        do {
-            // #146 — with no network path at all (airplane mode), skip the attempt rather than
-            // waiting for URLSession to exhaust name resolution and connect timeouts, measured
-            // on-device at ~20s before it errors. Thrown rather than handled inline so the catch
-            // below treats it exactly like any other transport failure: bubble goes .failed,
-            // entry stays queued, outbox retries when there's a network again.
-            guard NetworkReachability.shared.hasNetworkPath else { throw URLError(.notConnectedToInternet) }
-            SendLog.note("post text", clientId)
-            let sent = try await APIClient.shared.sendMessage(
-                bookId: item.bookId, type: .text, body: item.body, clientId: clientId,
-                parentMessageId: item.parentMessageId)
-            markOnline()
-            TextSendQueue.shared.remove(clientId: clientId)
-            SendLog.note("sent text", clientId)
-            reconcileConfirmedMessage(sent)
-        } catch {
-            // #146 — a permanent refusal (4xx: validation, rate limit) is a real answer, not an
-            // outage; retrying can't change it, so it's dropped rather than left to retry
-            // forever. Anything else (no network, 5xx) stays queued — the bubble goes .failed
-            // (not removed) and flushPendingText() retries it on the next foreground/load.
-            let permanent = TextSendQueue.shared.isPermanentRefusal(error)
-            SendLog.note(permanent ? "text refused (dropped)" : "text failed (queued)", clientId, SendLog.describe(error))
-            if permanent {
-                TextSendQueue.shared.remove(clientId: clientId)
-                pendingTextIds.remove(clientId)
-                messages.removeAll { $0.id == clientId }
-            } else {
-                sendFailed.insert(clientId)
-                if let idx = messages.firstIndex(where: { $0.id == clientId }) {
-                    messages[idx].sendState = .failed
-                }
-            }
-            guard announce else { return }
-            if case ChatError.serverError(let msg) = error {
-                errorMessage = msg
-            } else {
-                errorMessage = "Failed to send — connection lost. Please try again."
-            }
-        }
-    }
-
-    // #146 — retry a failed text send (mirrors retryMediaMessage). Manual retry from the
-    // failed-message action menu, or driven automatically by flushPendingText().
-    func retryTextMessage(id: UUID) async {
-        SendLog.note("manual retry (text)", id)
-        guard TextSendQueue.shared.items.contains(where: { $0.clientId == id }) else { return }
-        sendFailed.remove(id)   // rejoin the line
-        if let idx = messages.firstIndex(where: { $0.id == id }) {
-            messages[idx].sendState = .sending
-        }
-        await pumpSendQueue()
-    }
-
-    private var isFlushingText = false
-
-    // #146 — same guard-against-overlap reasoning as flushPendingMedia (#37): foreground-resume
-    // and a fresh load() can both trigger this.
-    private func flushPendingText(trigger: String) async {
-        guard !isFlushingText else { return }
-        isFlushingText = true
-        defer { isFlushingText = false }
-        let pending = TextSendQueue.shared.items(for: book.id)
-        if !pending.isEmpty { SendLog.note("retry pass (text)", nil, "trigger=\(trigger) items=\(pending.count)") }
-        for item in pending {
-            sendFailed.remove(item.clientId)   // auto-retry: back into the line
-            if let idx = messages.firstIndex(where: { $0.id == item.clientId }) {
-                messages[idx].sendState = .sending
-            }
-        }
-        await pumpSendQueue()
-    }
-
-    // Re-insert optimistic bubbles for any text sends still in the queue after a relaunch —
-    // mirrors restorePendingMediaBubbles(). Marked .failed; flushPendingText() will flip them
-    // to .sending and retry.
-    private func restorePendingTextBubbles() {
-        let pending = TextSendQueue.shared.items(for: book.id)
-        guard let userId = TokenStore.shared.userId else { return }
-        for item in pending where !messages.contains(where: { $0.id == item.clientId }) {
-            let restored = Message(
-                id: item.clientId,
-                clubId: item.clubId,
-                senderId: userId,
-                senderName: TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? "",
-                type: .text,
-                body: item.body,
-                sentAt: item.queuedAt,
-                sendState: .failed,
-                clientId: item.clientId,
-                parentMessageId: item.parentMessageId
-            )
-            messages.insert(restored, at: 0)
-            pendingTextIds.insert(item.clientId)
-        }
+    /// Delete an unsent message (waiting or refused).
+    func deleteUnsent(id: UUID) {
+        engine.delete(id)
     }
 
     // #201 — send the picked photos (1–10) as one batch: any typed text first as the caption
@@ -648,30 +482,40 @@ final class BookViewModel: ObservableObject {
     // exactly this order however their uploads happen to finish.
     func sendPhotos() async {
         let images = pendingImages
-        guard !images.isEmpty, let userId = TokenStore.shared.userId else { return }
+        guard !images.isEmpty, TokenStore.shared.userId != nil else { return }
         pendingImages = []   // consumed before any await, so a double-tap can't send twice
-        let captionId = enqueueText()
+        let reply = replyingTo
+        replyingTo = nil
+        // The caption goes first: its tap time is earlier, and tap time orders the chat (#204).
+        let caption = messageText.trimmingCharacters(in: .whitespaces)
+        if !caption.isEmpty {
+            messageText = ""
+            engine.enqueueText(bookId: book.id, clubId: book.clubId, body: caption, replyTo: reply)
+        }
 
         // Resize + encode off the main actor: ten full-size photos would otherwise hitch the UI.
         let encoded: [Data] = await Task.detached(priority: .userInitiated) {
             images.compactMap { $0.resizedForUpload().jpegData(compressionQuality: 0.7) }
         }.value
-        let items = encoded.compactMap { data -> MediaQueueItem? in
-            guard let url = MediaSendQueue.shared.saveToQueue(data: data, extension: "jpg") else { return nil }
-            return enqueueMedia(kind: .photo, contentType: "image/jpeg", durationSeconds: nil,
-                                persistentUrl: url, userId: userId)
+        if encoded.count < images.count {
+            errorMessage = "\(images.count - encoded.count) photo(s) couldn't be prepared and weren't sent."
         }
-        // Kick every send at once (#203): each one's upload-link request can wait on a bad
-        // network, and done one after another those waits stacked up (N photos ≈ N timeouts).
-        // Posting order doesn't depend on this — the pump posts strictly in queued order.
-        await withTaskGroup(of: Void.self) { group in
-            if let captionId { group.addTask { await self.finishTextSend(captionId) } }
-            for item in items { group.addTask { await self.sendMediaItem(item) } }
+        // Without a caption, the first photo carries the reply (as before); never every photo.
+        var replyForNext = caption.isEmpty ? reply : nil
+        for data in encoded {
+            do {
+                let name = try engine.files.importData(data, extension: "jpg")
+                engine.enqueueMedia(.photo, bookId: book.id, clubId: book.clubId, fileName: name,
+                                    contentType: "image/jpeg", durationSeconds: nil, replyTo: replyForNext)
+                replyForNext = nil
+            } catch {
+                errorMessage = "Your phone's storage is full, so a photo couldn't be queued."   // D4
+            }
         }
     }
 
     func sendVideo() async {
-        guard let videoUrl = pendingVideo, let userId = TokenStore.shared.userId else { return }
+        guard let videoUrl = pendingVideo, TokenStore.shared.userId != nil else { return }
         // Consume the pending video up front, before any await. Everything below — the duration
         // load, and especially compression — suspends for seconds, and leaving pendingVideo set
         // across that window let a second invocation clear the guard above and send the same
@@ -707,17 +551,18 @@ final class BookViewModel: ObservableObject {
             return
         }
 
-        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: compressedUrl, extension: "mp4") else {
-            // Couldn't stage the file (disk error) — hand the pending video back so the send
-            // button stays live and the user can try again, matching the pre-#146 behaviour
-            // where this early return happened before pendingVideo was cleared.
+        guard let fileName = try? engine.files.importFile(at: compressedUrl, extension: "mp4",
+                                                         move: compressedUrl != videoUrl) else {
+            // Couldn't stage the file (disk full) — hand the pending video back so the send
+            // button stays live and the user can try again.
             pendingVideo = videoUrl
+            errorMessage = "Your phone's storage is full, so the video couldn't be queued."
             return
         }
-        await enqueueAndSendMedia(
-            kind: .video, contentType: "video/mp4", durationSeconds: nil,
-            persistentUrl: persistentUrl, userId: userId
-        )
+        let reply = replyingTo
+        replyingTo = nil
+        engine.enqueueMedia(.video, bookId: book.id, clubId: book.clubId, fileName: fileName,
+                            contentType: "video/mp4", durationSeconds: nil, replyTo: reply)
     }
 
     // #146 — HEVC 1080p, matching sendPhotos' "resize before upload" treatment for video.
@@ -756,71 +601,6 @@ final class BookViewModel: ObservableObject {
             return nil
         }
         return outputUrl
-    }
-
-    // Shared optimistic-insert + enqueue + send entry point for all media kinds.
-    private func enqueueAndSendMedia(
-        kind: MediaQueueKind,
-        contentType: String,
-        durationSeconds: Int?,
-        persistentUrl: URL,
-        userId: UUID
-    ) async {
-        let item = enqueueMedia(kind: kind, contentType: contentType, durationSeconds: durationSeconds,
-                                persistentUrl: persistentUrl, userId: userId)
-        await sendMediaItem(item)
-    }
-
-    // The synchronous half of a media send (see enqueueText): bubble, durable queue entry, seq.
-    private func enqueueMedia(
-        kind: MediaQueueKind,
-        contentType: String,
-        durationSeconds: Int?,
-        persistentUrl: URL,
-        userId: UUID
-    ) -> MediaQueueItem {
-        let localId = UUID()
-        let reply = replyingTo
-        replyingTo = nil
-        let messageType: MessageType
-        switch kind {
-        case .voice: messageType = .voice
-        case .photo: messageType = .photo
-        case .video: messageType = .video
-        }
-        let optimistic = Message(
-            id: localId,
-            clubId: book.clubId,
-            senderId: userId,
-            senderName: TokenStore.shared.nickname ?? TokenStore.shared.displayName ?? "",
-            type: messageType,
-            mediaUrl: persistentUrl.absoluteString,
-            durationSeconds: durationSeconds,
-            sentAt: Date(),
-            sendState: .sending,
-            clientId: localId,
-            parentMessageId: reply?.id,
-            parentSenderName: reply?.senderName,
-            parentPreview: reply.map(replyPreview)
-        )
-        messages.insert(optimistic, at: 0)
-
-        let item = MediaQueueItem(
-            id: localId,
-            bookId: book.id,
-            clubId: book.clubId,
-            kind: kind,
-            fileName: persistentUrl.lastPathComponent,
-            contentType: contentType,
-            durationSeconds: durationSeconds,
-            uploadedMediaUrl: nil,
-            retryCount: 0,
-            parentMessageId: reply?.id,
-            seq: SendOrder.nextSeq()
-        )
-        MediaSendQueue.shared.enqueue(item)
-        SendLog.note("queued \(kind.rawValue)", localId, "seq=\(item.seq ?? 0)")
-        return item
     }
 
     func toggleRecording() async {
@@ -894,15 +674,12 @@ final class BookViewModel: ObservableObject {
         AudioCue.shared.playRecordStop()
         guard let (tempUrl, duration) = recording else { return false }
         guard elapsed >= 0.5 else { return false }
-        guard let persistentUrl = MediaSendQueue.shared.moveToQueue(from: tempUrl, extension: "m4a"),
-              let userId = TokenStore.shared.userId else { return false }
-
-        Task {
-            await enqueueAndSendMedia(
-                kind: .voice, contentType: "audio/mp4", durationSeconds: duration,
-                persistentUrl: persistentUrl, userId: userId
-            )
-        }
+        guard TokenStore.shared.userId != nil,
+              let fileName = try? engine.files.importFile(at: tempUrl, extension: "m4a") else { return false }
+        let reply = replyingTo
+        replyingTo = nil
+        engine.enqueueMedia(.voice, bookId: book.id, clubId: book.clubId, fileName: fileName,
+                            contentType: "audio/mp4", durationSeconds: duration, replyTo: reply)
         return true
     }
 
@@ -920,19 +697,6 @@ final class BookViewModel: ObservableObject {
         audioRecorder.discard()
     }
 
-    func retryMediaMessage(id: UUID) async {
-        SendLog.note("manual retry (media)", id)
-        // Manual retry resets the auto-retry budget so the user can always try again,
-        // even after the automatic attempts were exhausted (retryCount hit the ceiling).
-        MediaSendQueue.shared.resetRetry(id: id)
-        sendFailed.remove(id)   // rejoin the line
-        guard let item = MediaSendQueue.shared.items.first(where: { $0.id == id }) else { return }
-        if let idx = messages.firstIndex(where: { $0.id == id }) {
-            messages[idx].sendState = .sending
-        }
-        await sendMediaItem(item)
-    }
-
     // Warm the audio cache for the most recent voice messages so playback starts
     // instantly. AudioCache dedupes and skips already-cached / non-https URLs.
     private func prefetchRecentVoiceAudio(limit: Int = 15) {
@@ -942,230 +706,6 @@ final class BookViewModel: ObservableObject {
             AudioCache.shared.prefetch(url)
             count += 1
             if count >= limit { break }
-        }
-    }
-
-    // Reconciliation cleanup when load() finds a confirmed server message for one of
-    // our optimistic sends (the live echo was missed): drop the media queue entry and
-    // schedule its local file for deletion, and clear any pending-text bookkeeping.
-    private func clearPendingSend(clientId: UUID) {
-        if let item = MediaSendQueue.shared.items.first(where: { $0.id == clientId }) {
-            MediaSendQueue.shared.remove(id: clientId)
-            MediaSendQueue.shared.scheduleCleanup(fileName: item.fileName)
-        }
-        // #146 — a fresh getMessages() fetch can reconcile a queued text send the server
-        // actually received even before flushPendingText() got to it (e.g. it landed right
-        // before a force-quit) — clear the queue entry so it isn't resent as a duplicate attempt.
-        TextSendQueue.shared.remove(clientId: clientId)
-        pendingTextIds.remove(clientId)
-    }
-
-    func cancelMediaMessage(id: UUID) {
-        if let item = MediaSendQueue.shared.items.first(where: { $0.id == id }) {
-            MediaSendQueue.shared.cleanupFile(for: item)
-            MediaSendQueue.shared.remove(id: id)
-        }
-        messages.removeAll { $0.id == id }
-        releaseFromLine(id)
-    }
-
-    // #146 — mirrors cancelMediaMessage, for a failed text send the user chooses not to retry.
-    func cancelTextMessage(id: UUID) {
-        TextSendQueue.shared.remove(clientId: id)
-        pendingTextIds.remove(id)
-        messages.removeAll { $0.id == id }
-        releaseFromLine(id)
-    }
-
-    /// An item left the queue some other way (cancelled) — forget its line state and let
-    /// whatever was waiting behind it go.
-    private func releaseFromLine(_ id: UUID) {
-        sendFailed.remove(id)
-        mediaPostsAwaitingResult.remove(id)
-        announceTextFailure.remove(id)
-        Task { await pumpSendQueue() }
-    }
-
-    private func sendMediaItem(_ item: MediaQueueItem) async {
-        guard !currentlySendingMedia.contains(item.id) else { return }
-        guard item.retryCount < maxAutoRetries else {
-            SendLog.note("\(item.kind.rawValue) failed: retry cap", item.id, "retries=\(item.retryCount)")
-            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                messages[idx].sendState = .failed
-            }
-            sendFailed.insert(item.id)
-            await pumpSendQueue()
-            return
-        }
-        currentlySendingMedia.insert(item.id)
-        defer { currentlySendingMedia.remove(item.id) }
-        // Hold a background-task assertion across the foreground work (getUploadUrl + kicking
-        // the upload, or the invoke) so locking/backgrounding right after send doesn't suspend
-        // us mid-step. iOS grants ~30s; the background URLSession then carries the actual blob
-        // PUT across full suspension/termination, and the resume-time flush drives the invoke.
-        let bgTask = BackgroundTaskBox(name: "send-media-\(item.id.uuidString)")
-        defer { bgTask.end() }
-
-        // Upload phase: if the blob isn't up yet, hand the PUT to the background session and
-        // return. Completion posts .mediaUploadCompleted → flush re-enters here with
-        // uploadedMediaUrl set to run the invoke (which can't happen while suspended anyway).
-        guard item.uploadedMediaUrl != nil else {
-            if await BackgroundUploadService.shared.hasInflightUpload(itemId: item.id) {
-                SendLog.note("upload already in flight", item.id)
-                // Already uploading in the background; its completion will drive the rest. Arm the
-                // upload watchdog so a silently-broken completion→invoke chain can't spin forever.
-                scheduleUploadWatchdog(for: item.id)
-                return
-            }
-            // #203 — no network at all: fail now instead of parking ~30 s on the upload-link
-            // request, and don't spend the auto-retry budget on it — being offline isn't a failed
-            // attempt. Network-back / foreground / Retry pick it up.
-            guard NetworkReachability.shared.hasNetworkPath else {
-                SendLog.note("offline — upload link skipped", item.id)
-                if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                    messages[idx].sendState = .failed
-                }
-                sendFailed.insert(item.id)
-                await pumpSendQueue()
-                return
-            }
-            // Another path (foreground resume, network-back, a flush) is already starting it.
-            guard BackgroundUploadService.shared.claimUploadStart(item.id) else {
-                SendLog.note("upload start already claimed", item.id)
-                scheduleUploadWatchdog(for: item.id)
-                return
-            }
-            defer { BackgroundUploadService.shared.releaseUploadStart(item.id) }
-            do {
-                let ext = (item.fileName as NSString).pathExtension
-                SendLog.note("upload link requested", item.id, "kind=\(item.kind.rawValue) retries=\(item.retryCount)")
-                let response = try await APIClient.shared.getUploadUrl(clubId: item.clubId, ext: ext.isEmpty ? nil : ext)
-                guard let uploadUrl = URL(string: response.uploadUrl) else { return }
-                SendLog.note("upload started", item.id)
-                BackgroundUploadService.shared.upload(
-                    itemId: item.id, fileUrl: item.localFileUrl, uploadUrl: uploadUrl,
-                    mediaUrl: response.mediaUrl, contentType: item.contentType)
-                // Leave the bubble in .sending; it clears when the upload completes and the
-                // invoke (below, on re-entry) lands the server echo. Arm the upload watchdog as a
-                // safety net for that chain (#91) so a stuck send eventually becomes retryable.
-                scheduleUploadWatchdog(for: item.id)
-            } catch {
-                SendLog.note("upload link failed", item.id, SendLog.describe(error))
-                MediaSendQueue.shared.incrementRetry(id: item.id)
-                if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                    messages[idx].sendState = .failed
-                }
-                if case ChatError.serverError(let msg) = error { errorMessage = msg }
-                sendFailed.insert(item.id)
-                await pumpSendQueue()
-            }
-            return
-        }
-
-        // Send phase: the blob is uploaded; only posting the message remains — and that is the
-        // pump's call, not this item's: it posts only once everything queued before it in this
-        // chat has posted (SendOrder), so a finished upload may wait its turn here.
-        await pumpSendQueue()
-    }
-
-    // MARK: - Send ordering (SendOrder)
-
-    /// Post this chat's queued messages one at a time, in the order the user tapped Send. Text
-    /// POSTs resolve inline, so the loop continues past them; a media POST resolves later via
-    /// .mediaSendCompleted → handleSendCompleted, which pumps again. Re-entrant calls (an upload
-    /// finishing mid-pump, a flush) just request another pass.
-    private func pumpSendQueue() async {
-        if isPumpingSends { pumpSendsAgain = true; return }
-        isPumpingSends = true
-        defer { isPumpingSends = false }
-        repeat {
-            pumpSendsAgain = false
-            drain: while true {
-                let texts = TextSendQueue.shared.items(for: book.id)
-                let media = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
-                let entries = texts.map { SendOrder.Entry(id: $0.clientId, seq: $0.seq ?? 0, kind: .text) }
-                    + media.map { SendOrder.Entry(id: $0.id, seq: $0.seq ?? 0,
-                                                  kind: .media(uploaded: $0.uploadedMediaUrl != nil)) }
-                switch SendOrder.next(entries: entries, failed: sendFailed, awaitingResult: mediaPostsAwaitingResult) {
-                case .postText(let id):
-                    guard let item = texts.first(where: { $0.clientId == id }) else { break drain }
-                    await postText(item)
-                case .postMedia(let id):
-                    if let item = media.first(where: { $0.id == id }) { await postMedia(item) }
-                    break drain
-                case .wait, .idle:
-                    break drain
-                }
-            }
-        } while pumpSendsAgain
-    }
-
-    // One media POST, over the background session (#131) so it outlives app suspension. Its
-    // outcome arrives via .mediaSendCompleted → handleSendCompleted.
-    private func postMedia(_ item: MediaQueueItem) async {
-        guard let mediaUrl = item.uploadedMediaUrl else { return }
-        mediaPostsAwaitingResult.insert(item.id)
-        if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-            messages[idx].sendState = .sending
-        }
-        scheduleSendWatchdog(for: item.id)
-        // A POST already running (e.g. started by a previous process before a relaunch) reports
-        // through the same completion — don't start a second one.
-        if await BackgroundUploadService.shared.hasInflightSend(itemId: item.id) {
-            SendLog.note("post already in flight", item.id)
-        } else {
-            SendLog.note("post \(item.kind.rawValue)", item.id)
-            BackgroundUploadService.shared.sendMessage(
-                itemId: item.id, bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
-                durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
-        }
-        // #203 — and, while the app is in the foreground, the same POST directly. The background
-        // post (#140) is what guarantees delivery if the app is suspended, but nsurlsessiond
-        // schedules it on its own clock: a device log on 2.1 (4) showed one held 86 s on the
-        // phone (server log: handled in 0.3 s on arrival) with two photos waiting behind it.
-        // Whichever lands first wins; the server dedups by clientId, so a second copy returns the
-        // same message with no re-broadcast or push.
-        if UIApplication.shared.applicationState == .active {
-            Task { await postMediaDirect(item, mediaUrl: mediaUrl) }
-        }
-    }
-
-    private var directPostsInFlight: Set<UUID> = []
-
-    private func postMediaDirect(_ item: MediaQueueItem, mediaUrl: String) async {
-        guard NetworkReachability.shared.hasNetworkPath,
-              directPostsInFlight.insert(item.id).inserted else { return }
-        defer { directPostsInFlight.remove(item.id) }
-        do {
-            let sent = try await APIClient.shared.sendMessage(
-                bookId: item.bookId, type: Self.messageType(for: item.kind), mediaUrl: mediaUrl,
-                durationSeconds: item.durationSeconds, clientId: item.id, parentMessageId: item.parentMessageId)
-            SendLog.note("posted directly", item.id)
-            BackgroundUploadService.shared.cancelSend(itemId: item.id)
-            handleSendCompleted(itemId: item.id, success: true, message: sent, errorMessage: nil)
-        } catch {
-            // Not a failure of the send: the background post is still carrying it.
-            SendLog.note("direct post failed (background post continues)", item.id, SendLog.describe(error))
-        }
-    }
-
-    // Drive the send once a background upload finishes. On success the queue item now has
-    // uploadedMediaUrl set, so re-entering sendMediaItem skips straight to posting the message;
-    // on failure it re-fetches a fresh SAS and re-uploads (auto-retry up to the cap).
-    private func handleUploadCompleted(_ itemId: UUID) async {
-        guard let item = MediaSendQueue.shared.items.first(where: { $0.id == itemId }),
-              item.bookId == book.id else { return }
-        if let idx = messages.firstIndex(where: { $0.id == itemId }) {
-            messages[idx].sendState = .sending
-        }
-        await sendMediaItem(item)
-    }
-
-    private static func messageType(for kind: MediaQueueKind) -> MessageType {
-        switch kind {
-        case .voice: return .voice
-        case .photo: return .photo
-        case .video: return .video
         }
     }
 
@@ -1190,20 +730,11 @@ final class BookViewModel: ObservableObject {
         case .ignoreWrongClub, .ignoreAlreadyApplied:
             return
 
-        case let .replaceOptimistic(idx, clientId, oldUrlString):
-            messages[idx] = message
-            pendingTextIds.remove(clientId)
-            echoTimeoutTasks[clientId]?.cancel()
-            echoTimeoutTasks[clientId] = nil
-            if message.type != .text {
-                // Media: confirmed delivery — clear the send queue + local file.
-                MediaSendQueue.shared.remove(id: clientId)
-                if let oldUrlString,
-                   let oldUrl = URL(string: oldUrlString),
-                   oldUrl.scheme == "file" {
-                    MediaSendQueue.shared.scheduleCleanup(fileName: oldUrl.lastPathComponent)
-                }
-            }
+        case .replaceOptimistic:
+            // #204 — unsent bubbles are no longer kept in `messages` (they're the SendEngine's),
+            // so there's nothing to replace: our own confirmed send simply joins the list. The
+            // engine has already dropped its pending copy and cleans up the local file.
+            messages.insert(message, at: 0)
             saveMessagesCache()
 
         case .insert:
@@ -1212,48 +743,6 @@ final class BookViewModel: ObservableObject {
             // The read receipt's response carries this book's fresh unread count — an arriving
             // voice message raises it (unheard), non-voice nets to zero (read on arrival).
             Task { await ReceiptQueue.shared.markRead(bookId: book.id, messageId: message.id) }
-        }
-    }
-
-    // Completion of the background-session send POST kicked from sendMediaItem (#131). This
-    // is the send confirmation now — no SignalR echo wait needed, since the REST response
-    // itself proves the message reached the server (or tells us definitively why it didn't).
-    @MainActor
-    private func handleSendCompleted(itemId: UUID, success: Bool, message: Message?, errorMessage: String?) {
-        // #203 — with the direct + background posts racing, the second result for an item that's
-        // already been delivered (and left the queue) is a no-op, never a failure.
-        guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }) else {
-            mediaPostsAwaitingResult.remove(itemId)
-            Task { await pumpSendQueue() }
-            return
-        }
-        mediaPostsAwaitingResult.remove(itemId)
-        // Either way this item is resolved for now — let the next one in line post.
-        defer { Task { await pumpSendQueue() } }
-        guard success, let message else {
-            SendLog.note("post failed", itemId, errorMessage ?? "no detail")
-            MediaSendQueue.shared.incrementRetry(id: itemId)
-            sendFailed.insert(itemId)
-            if let idx = messages.firstIndex(where: { $0.id == itemId }) {
-                messages[idx].sendState = .failed
-            }
-            if let errorMessage { self.errorMessage = errorMessage }
-            return
-        }
-        markOnline()
-        SendLog.note("sent media", itemId)
-        reconcileConfirmedMessage(message)
-    }
-
-    // Preview text for the quoted-reply chip (mirrors the server's ParentPreviewText).
-    private func replyPreview(for m: Message) -> String {
-        if m.isDeleted { return "Deleted message" }
-        switch m.type {
-        case .text: return m.body ?? ""
-        case .voice: return "🎤 Voice message"
-        case .photo: return "📷 Photo"
-        case .video: return "🎬 Video"
-        case .unknown: return ""
         }
     }
 
@@ -1268,13 +757,8 @@ final class BookViewModel: ObservableObject {
     // chat scroll view; idempotent under repeated calls (in-flight or terminal).
     func loadOlderMessages() async {
         guard !isLoadingOlderMessages, !reachedBeginning else { return }
-        // Find the oldest confirmed message — skip optimistic entries whose sentAt
-        // is "now" and would yield a useless query.
-        let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
-        let oldestConfirmed = messages.last(where: {
-            !pendingTextIds.contains($0.id) && !pendingMediaIds.contains($0.id)
-        })
-        guard let before = oldestConfirmed?.sentAt else { return }
+        // `messages` holds only confirmed messages (#204), so the last is the oldest the server has.
+        guard let before = messages.last?.sentAt else { return }
 
         isLoadingOlderMessages = true
         defer { isLoadingOlderMessages = false }
@@ -1300,111 +784,8 @@ final class BookViewModel: ObservableObject {
     // waiting on echo, media still in the send queue) are excluded so a kill +
     // relaunch doesn't show ghost messages that never actually got delivered.
     private func saveMessagesCache() {
-        let pendingMediaIds = Set(MediaSendQueue.shared.items.map { $0.id })
-        let pending = pendingTextIds.union(pendingMediaIds)
-        ChatCache.save(messages, bookId: book.id, excludingPending: pending)
-    }
-
-    // Send-phase safety net (#131): a media item hands its "post the message" call to a
-    // background-URLSession POST (BackgroundUploadService.sendMessage), which has no time
-    // limit but could still, in principle, have its completion callback silently dropped. If
-    // that happens the bubble would spin in .sending forever. This flips a genuinely-stuck item
-    // to .failed so the user can retry — but re-arms instead of failing while a send is still
-    // actually in flight, so it can never false-fail a slow-but-healthy transfer.
-    //
-    // The watchdog is tracked + cancellable so backgrounding can tear it down: otherwise its
-    // sleep would elapse against wall-clock while suspended and fire the instant we resume,
-    // falsely failing a send that was simply waiting out a suspension (#70/#72). A fresh
-    // send/re-send replaces any prior watchdog for the same item.
-    private func scheduleSendWatchdog(for itemId: UUID, after seconds: TimeInterval = 90) {
-        echoTimeoutTasks[itemId]?.cancel()
-        echoTimeoutTasks[itemId] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard let self, !Task.isCancelled else { return }
-            // Still sending — give it more time rather than failing an in-progress POST.
-            if await BackgroundUploadService.shared.hasInflightSend(itemId: itemId) {
-                self.scheduleSendWatchdog(for: itemId, after: seconds)
-                return
-            }
-            self.echoTimeoutTasks[itemId] = nil
-            // No POST running any more — stop holding the line for it whatever happens below.
-            self.mediaPostsAwaitingResult.remove(itemId)
-            SendLog.note("send watchdog fired", itemId)
-            defer { Task { await self.pumpSendQueue() } }
-            // Only fail an item that's still an un-confirmed optimistic send stuck in .sending
-            // (a confirmed send would have reconciled the bubble's id via handleSendCompleted).
-            guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }),
-                  let idx = self.messages.firstIndex(where: { $0.id == itemId }),
-                  self.messages[idx].sendState == .sending else { return }
-            self.messages[idx].sendState = .failed
-            self.sendFailed.insert(itemId)
-        }
-    }
-
-    // Upload-phase safety net (#91): a media send hands its blob to the background upload and
-    // leaves the bubble .sending, relying on the upload-completion → send → confirmation chain
-    // to finish it. If any link in that chain silently breaks (a missed completion callback, a
-    // dropped connection on re-entry), the bubble would spin forever — which is the reported
-    // "voice message stuck spinning, later messages went through". This flips a genuinely-stuck
-    // item to .failed so the user can retry.
-    //
-    // Guarded so it can't false-fail a legitimately slow transfer: if the upload is still in
-    // flight when it fires, it re-arms instead of failing. The send phase's own
-    // scheduleSendWatchdog supersedes this (both key echoTimeoutTasks by id), and backgrounding
-    // cancels it (cancelEchoTimeouts) so a suspended wall-clock can't fire it on resume.
-    private func scheduleUploadWatchdog(for itemId: UUID, after seconds: TimeInterval = 90) {
-        echoTimeoutTasks[itemId]?.cancel()
-        echoTimeoutTasks[itemId] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard let self, !Task.isCancelled else { return }
-            // Still uploading — give it more time rather than failing an in-progress transfer.
-            if await BackgroundUploadService.shared.hasInflightUpload(itemId: itemId) {
-                self.scheduleUploadWatchdog(for: itemId, after: seconds)
-                return
-            }
-            self.echoTimeoutTasks[itemId] = nil
-            SendLog.note("upload watchdog fired", itemId)
-            // Only fail an item that's still an un-echoed optimistic send stuck in .sending
-            // (the echo would have removed it from the queue and reconciled the bubble's id).
-            guard MediaSendQueue.shared.items.contains(where: { $0.id == itemId }),
-                  let idx = self.messages.firstIndex(where: { $0.id == itemId }),
-                  self.messages[idx].sendState == .sending else { return }
-            self.messages[idx].sendState = .failed
-            // A stuck upload stops holding up the rest of the chat.
-            self.sendFailed.insert(itemId)
-            Task { await self.pumpSendQueue() }
-        }
-    }
-
-    // Tear down all echo watchdogs (app backgrounding). The pending items stay queued with
-    // their current state; the foreground re-flush re-sends and re-arms fresh watchdogs.
-    private func cancelEchoTimeouts() {
-        for task in echoTimeoutTasks.values { task.cancel() }
-        echoTimeoutTasks.removeAll()
-    }
-
-    private var isFlushingMedia = false
-
-    private func flushPendingMedia(trigger: String) async {
-        // Guard against overlapping flushes (#37): foreground-resume and a SignalR reconnect can
-        // both fire this, and without the guard each would resend the same queued items.
-        guard !isFlushingMedia else { return }
-        isFlushingMedia = true
-        defer { isFlushingMedia = false }
-        let pending = MediaSendQueue.shared.items.filter { $0.bookId == book.id }
-        if !pending.isEmpty { SendLog.note("retry pass (media)", nil, "trigger=\(trigger) items=\(pending.count)") }
-        for item in pending {
-            // Auto-retry puts failed items back in line, and forgets in-memory "POST in flight"
-            // state (watchdogs were torn down on backgrounding) — postMedia re-derives it from
-            // the background session, so nothing is posted twice.
-            sendFailed.remove(item.id)
-            mediaPostsAwaitingResult.remove(item.id)
-            if let idx = messages.firstIndex(where: { $0.id == item.id }) {
-                messages[idx].sendState = .sending
-            }
-            await sendMediaItem(item)
-        }
-        await pumpSendQueue()
+        // Only confirmed messages are in `messages`; unsent ones live in the SendEngine's outbox.
+        ChatCache.save(messages, bookId: book.id, excludingPending: [])
     }
 
     func reportMessage(id: UUID) async {
@@ -1537,29 +918,18 @@ final class BookViewModel: ObservableObject {
     func disconnect() {
         networkMonitor?.cancel()
         networkMonitor = nil
-        cancelEchoTimeouts()
         stopLifecycleObservers()
         // Hand unread authority back to server truth (library reloads may now update this book).
         if UnreadStore.shared.activeBookIdIsCurrent(book.id) { UnreadStore.shared.setActiveBook(nil) }
         Task { await ChatService.shared.disconnect() }
     }
 
-    // Re-flush pending media when the app returns to the foreground, and cancel echo
-    // watchdogs when it leaves — so a send interrupted by locking/backgrounding the phone
-    // finishes on resume instead of stranding (or falsely failing) the message (#70/#72).
-    // Re-flush is safe to fire repeatedly: sendMediaItem skips items already in flight, and
-    // the server's (SenderId, ClientId) idempotency makes any re-invoke duplicate-proof.
+    // Finalize an in-progress recording when the app leaves the foreground or a call interrupts
+    // it. (Sending itself — retries, foreground and network-back triggers — is the SendEngine's,
+    // app-wide, since #204; nothing here depends on this chat being open.)
     private func startLifecycleObservers() {
-        guard appActiveObserver == nil else { return }
+        guard appBackgroundObserver == nil else { return }
         let center = NotificationCenter.default
-        appActiveObserver = center.addObserver(
-            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                await self?.flushPendingMedia(trigger: "foreground")
-                await self?.flushPendingText(trigger: "foreground")
-            }
-        }
         appBackgroundObserver = center.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -1574,7 +944,6 @@ final class BookViewModel: ObservableObject {
                 bgTask = .invalid
             }
             Task { @MainActor in
-                self?.cancelEchoTimeouts()
                 // #146 — was discardRecording() (#75): iOS suspends capture seconds from now,
                 // so the take can't continue either way, but silently throwing away whatever was
                 // captured is the wrong default — finalize and send it instead, same as if the
@@ -1599,36 +968,12 @@ final class BookViewModel: ObservableObject {
                   AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
             Task { @MainActor in await self?.stopRecording() }
         }
-        // A background blob upload finished — drive the send for that item (B).
-        uploadCompletedObserver = center.addObserver(
-            forName: .mediaUploadCompleted, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
-            Task { @MainActor in await self?.handleUploadCompleted(itemId) }
-        }
-        // A background message-send POST finished (#131) — reconcile the bubble directly from
-        // the response, no echo wait needed.
-        sendCompletedObserver = center.addObserver(
-            forName: .mediaSendCompleted, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let itemId = note.userInfo?["itemId"] as? UUID else { return }
-            let success = note.userInfo?["success"] as? Bool ?? false
-            let message = note.userInfo?["message"] as? Message
-            let errorMessage = note.userInfo?["errorMessage"] as? String
-            Task { @MainActor in self?.handleSendCompleted(itemId: itemId, success: success, message: message, errorMessage: errorMessage) }
-        }
     }
 
     private func stopLifecycleObservers() {
-        if let o = appActiveObserver { NotificationCenter.default.removeObserver(o) }
         if let o = appBackgroundObserver { NotificationCenter.default.removeObserver(o) }
-        if let o = uploadCompletedObserver { NotificationCenter.default.removeObserver(o) }
-        if let o = sendCompletedObserver { NotificationCenter.default.removeObserver(o) }
         if let o = audioInterruptionObserver { NotificationCenter.default.removeObserver(o) }
-        appActiveObserver = nil
         appBackgroundObserver = nil
-        uploadCompletedObserver = nil
-        sendCompletedObserver = nil
         audioInterruptionObserver = nil
     }
 
@@ -1641,19 +986,9 @@ final class BookViewModel: ObservableObject {
             let wasOffline = prevStatus.value.map { $0 != .satisfied } ?? false
             prevStatus.value = path.status
             guard wasOffline, path.status == .satisfied else { return }
-            SendLog.note("chat sees network back")
-            Task { @MainActor in
-                await self?.load()
-                // #203 — load() only flushes if its fetch succeeds, and right after airplane mode
-                // goes off that first fetch can still fail (2.1 (4) device log: no flush ran until
-                // the app was backgrounded and reopened). Retry queued sends directly, and once more
-                // a few seconds later in case the network wasn't fully usable the first time.
-                await self?.flushPendingMedia(trigger: "network back")
-                await self?.flushPendingText(trigger: "network back")
-                try? await Task.sleep(for: .seconds(5))
-                await self?.flushPendingMedia(trigger: "network back +5s")
-                await self?.flushPendingText(trigger: "network back +5s")
-            }
+            // Refresh what others sent while we were offline. Our own unsent messages are the
+            // SendEngine's: it hears "network back" app-wide (#204) and sends them from any screen.
+            Task { @MainActor in await self?.load() }
         }
         monitor.start(queue: DispatchQueue(label: "book-net-monitor"))
     }

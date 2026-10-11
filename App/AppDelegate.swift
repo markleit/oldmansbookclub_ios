@@ -30,15 +30,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         // Re-published every launch so an install that predates the extension is covered too.
         ServerEnvironment.publishToSharedContainer()
         SharedContainer.defaults?.set(TokenStore.shared.registeredDeviceToken, forKey: SharedContainer.Key.deviceToken)
-        // Recreate the background upload session so any task that finished while the app was
-        // suspended/killed delivers its completion (marks the queue item uploaded).
+        // #204 — sending is app-wide: start the SendEngine now, which also runs when iOS launches
+        // the app in the background just to report a finished transfer. It takes over anything 2.1
+        // had queued, re-attaches to transfers iOS still holds, and sends whatever's ready.
+        SendEngine.startLive()
+        // 2.1's own background session, so a transfer it handed iOS before the update still reports
+        // in (forwarded to the engine — see BackgroundUploadService).
         BackgroundUploadService.shared.activate()
-        // #203 — the moment the network comes back, restart any queued media upload from whatever
-        // screen is up (getting the upload link + the blob PUT; the post lands when its chat is
-        // open). Previously this only happened when the app came to the foreground.
-        NetworkReachability.shared.onBecameReachable {
-            Task { @MainActor in await BackgroundUploadService.shared.resumePendingUploads(trigger: "network back") }
-        }
         // Cold launch: notification payload is in launchOptions before any view exists
         if let notification = launchOptions?[.remoteNotification] as? [String: Any],
            let bookIdStr = notification["bookId"] as? String,
@@ -105,7 +103,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler, for: identifier)
+        if identifier == URLSessionSendTransport.sessionIdentifier {
+            SendEngine.liveTransport.setSystemCompletionHandler(completionHandler, for: identifier)
+        } else {
+            BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler, for: identifier)
+        }
     }
 
     func application(

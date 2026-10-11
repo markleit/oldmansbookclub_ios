@@ -606,7 +606,9 @@ struct MessageRow: View {
         .highPriorityGesture(
             LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
-                    guard message.sendState == .failed || (!message.isDeleted && message.sendState == nil) else { return }
+                    // Unsent (waiting/refused): Send now / Copy / Delete. Confirmed: reactions + actions.
+                    let pendingActionable = message.sendState != nil && message.sendState != .sending
+                    guard pendingActionable || (!message.isDeleted && message.sendState == nil) else { return }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     showReactMenu = true
                 }
@@ -672,15 +674,30 @@ struct MessageRow: View {
 
     @ViewBuilder
     private var actionMenuButtons: some View {
-        if message.sendState == .failed {
-            // #146 — text now reaches .failed too (previously only media could); route by type.
-            if message.type == .text {
-                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryTextMessage(id: message.id) } }
-                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelTextMessage(id: message.id) }
+        if let state = message.sendState, state != .sending {
+            // #204 — an unsent message: waiting goes by itself (Send now just doesn't wait for the
+            // next try); refused shows the server's reason. Either can be copied (text) or deleted.
+            if case .refused(let reason) = state {
+                Text(reason)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .accessibilityIdentifier("sendRefusedReason")
             } else {
-                menuRow("Retry", "arrow.clockwise") { Task { await viewModel.retryMediaMessage(id: message.id) } }
-                menuRow("Cancel", "xmark", destructive: true) { viewModel.cancelMediaMessage(id: message.id) }
+                Text("Will send automatically")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                menuRow("Send now", "paperplane") { viewModel.sendNow(id: message.id) }
             }
+            if message.type == .text, let body = message.body, !body.isEmpty {
+                menuRow("Copy", "doc.on.doc") { UIPasteboard.general.string = body }
+            }
+            menuRow("Delete", "trash", destructive: true) { viewModel.deleteUnsent(id: message.id) }
         } else if !message.isDeleted && message.sendState == nil {
             menuRow("Reply", "arrowshape.turn.up.left") {
                 viewModel.replyingTo = message
@@ -952,16 +969,13 @@ struct MessageRow: View {
                         }
                         return .systemAction
                     })
-                // #146 — text could never reach .sending/.failed visibly before (no retry
-                // queue existed, so a failed send was just removed); now that it can, give it
-                // the same overlay media bubbles already have.
-                if message.sendState == .sending {
-                    SendStateBadge(state: .sending).padding(4)
-                } else if message.sendState == .failed {
+                // An unsent text gets the same badge as every other bubble (#204).
+                if let state = message.sendState {
                     SendStateBadge(
-                        state: .failed,
-                        onRetry: { Task { await viewModel.retryTextMessage(id: message.id) } },
-                        onCancel: { viewModel.cancelTextMessage(id: message.id) }
+                        state: state,
+                        onSendNow: { viewModel.sendNow(id: message.id) },
+                        onDelete: { viewModel.deleteUnsent(id: message.id) },
+                        onCopy: message.body.map { body in { UIPasteboard.general.string = body } }
                     ).padding(4)
                 }
             }
@@ -972,8 +986,8 @@ struct MessageRow: View {
                     url: url,
                     sendState: message.sendState,
                     onTap: { showFullScreen = true },
-                    onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
-                    onCancel: { viewModel.cancelMediaMessage(id: message.id) }
+                    onSendNow: { viewModel.sendNow(id: message.id) },
+                    onDelete: { viewModel.deleteUnsent(id: message.id) }
                 )
             }
 
@@ -982,8 +996,8 @@ struct MessageRow: View {
                 message: message,
                 isMe: isMe,
                 bookId: viewModel.book.id,
-                onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
-                onCancel: { viewModel.cancelMediaMessage(id: message.id) }
+                onSendNow: { viewModel.sendNow(id: message.id) },
+                onDelete: { viewModel.deleteUnsent(id: message.id) }
             )
 
         case .video:
@@ -991,8 +1005,8 @@ struct MessageRow: View {
                 VideoMessageBubble(
                     url: url,
                     sendState: message.sendState,
-                    onRetry: { Task { await viewModel.retryMediaMessage(id: message.id) } },
-                    onCancel: { viewModel.cancelMediaMessage(id: message.id) }
+                    onSendNow: { viewModel.sendNow(id: message.id) },
+                    onDelete: { viewModel.deleteUnsent(id: message.id) }
                 )
             }
         case .unknown:
@@ -1093,8 +1107,8 @@ struct VoiceMessageBubble: View {
     let message: Message
     let isMe: Bool
     var bookId: UUID
-    var onRetry: (() -> Void)? = nil
-    var onCancel: (() -> Void)? = nil
+    var onSendNow: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
     @ObservedObject private var audio = AudioPlayerService.shared
     @ObservedObject private var store = PlaybackProgressStore.shared
     @ObservedObject private var heard = HeardStore.shared
@@ -1105,8 +1119,6 @@ struct VoiceMessageBubble: View {
     @State private var isTranscribing = false
 
     private var isPlaying: Bool { audio.playingMessageId == message.id }
-    private var isSending: Bool { message.sendState == .sending }
-    private var isFailed: Bool { message.sendState == .failed }
     private var totalSeconds: Int { message.durationSeconds ?? 0 }
     // Fully listened: the play circle goes green once the audio has reached the end. For
     // others' messages that's the heard state — shared across your devices and sticky through
@@ -1158,19 +1170,6 @@ struct VoiceMessageBubble: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             controlsRow
-            if isFailed {
-                HStack(spacing: 12) {
-                    Button { onRetry?() } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                            .font(.caption.weight(.medium))
-                    }
-                    Button { onCancel?() } label: {
-                        Text("Cancel")
-                            .font(.caption)
-                            .foregroundColor(isMe ? .white.opacity(0.7) : .secondary)
-                    }
-                }
-            }
             if showTranscription {
                 Divider()
                     .overlay(isPlaying || isMe ? Color.white.opacity(0.3) : Color(.systemGray3))
@@ -1203,21 +1202,11 @@ struct VoiceMessageBubble: View {
 
     private var controlsRow: some View {
         HStack(spacing: 4) {
-            if isSending {
-                ProgressView()
+            if let state = message.sendState {
+                // #150/#204 — the same badge every other bubble uses (spinner / waiting clock /
+                // refused), in place of the play control until the server confirms it.
+                SendStateBadge(state: state, onSendNow: onSendNow, onDelete: onDelete)
                     .frame(width: 36, height: 36)
-                    // Voice draws its own inline send-state UI rather than using
-                    // SendStateBadge, so it needs to carry the same identifiers or its state is
-                    // invisible to tests. It genuinely was: testSendVoiceMessage asserted on
-                    // failedSendIndicator, which this bubble never renders under any state, so
-                    // the test passed even while every send was being rejected.
-                    .accessibilityIdentifier("sendingIndicator")
-            } else if isFailed {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(isMe ? .white.opacity(0.85) : .orange)
-                    .frame(width: 36, height: 36)
-                    .accessibilityIdentifier("failedSendIndicator")
             } else {
                 Button { audio.toggle(message: message, bookId: bookId) } label: {
                     Group {
@@ -1300,7 +1289,7 @@ struct VoiceMessageBubble: View {
                     .frame(width: 44, height: 44)
             }
 
-            if !isSending && !isFailed {
+            if message.sendState == nil {
                 Button {
                     showTranscription.toggle()
                     if showTranscription && transcription == nil && !isTranscribing {
@@ -1421,24 +1410,23 @@ private func formatMessageDate(_ date: Date) -> String {
 struct VideoMessageBubble: View {
     let url: URL
     var sendState: MessageSendState? = nil
-    var onRetry: (() -> Void)? = nil
-    var onCancel: (() -> Void)? = nil
+    var onSendNow: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
     @State private var showFullScreen = false
 
-    private var isSending: Bool { sendState == .sending }
-    private var isFailed: Bool { sendState == .failed }
+    private var isPending: Bool { sendState != nil }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Button {
-                guard !isSending && !isFailed else { return }
+                guard !isPending else { return }
                 showFullScreen = true
             } label: {
                 VideoThumbnailView(url: url)
                     .frame(width: 240, height: 180)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .overlay {
-                        if !isSending && !isFailed {
+                        if !isPending {
                             Image(systemName: "play.circle.fill")
                                 .font(.system(size: 48))
                                 .foregroundStyle(.white, .black.opacity(0.4))
@@ -1447,12 +1435,9 @@ struct VideoMessageBubble: View {
             }
             .buttonStyle(.plain)
             .contentShape(RoundedRectangle(cornerRadius: 16))
-            .disabled(isSending || isFailed)
-            if isSending {
-                SendStateBadge(state: .sending)
-                    .padding(8)
-            } else if isFailed {
-                SendStateBadge(state: .failed, onRetry: onRetry, onCancel: onCancel)
+            .disabled(isPending)
+            if let sendState {
+                SendStateBadge(state: sendState, onSendNow: onSendNow, onDelete: onDelete)
                     .padding(8)
             }
         }
@@ -1468,8 +1453,8 @@ struct PhotoMessageBubble: View {
     let url: URL
     var sendState: MessageSendState? = nil
     var onTap: () -> Void
-    var onRetry: (() -> Void)? = nil
-    var onCancel: (() -> Void)? = nil
+    var onSendNow: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
 
     @ObservedObject private var aspects = ImageAspectStore.shared
 
@@ -1490,14 +1475,13 @@ struct PhotoMessageBubble: View {
             : CGSize(width: Self.maxHeight * aspect, height: Self.maxHeight)
     }
 
-    private var isSending: Bool { sendState == .sending }
-    private var isFailed: Bool { sendState == .failed }
+    private var isPending: Bool { sendState != nil }
     private var isLocalFile: Bool { url.scheme == "file" }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             Button {
-                guard !isSending && !isFailed else { return }
+                guard !isPending else { return }
                 onTap()
             } label: {
                 imageContent
@@ -1508,11 +1492,9 @@ struct PhotoMessageBubble: View {
             .accessibilityLabel("Photo")
             .accessibilityIdentifier("photoMessage")
             .contentShape(RoundedRectangle(cornerRadius: 16))
-            .disabled(isSending || isFailed)
-            if isSending {
-                SendStateBadge(state: .sending).padding(8)
-            } else if isFailed {
-                SendStateBadge(state: .failed, onRetry: onRetry, onCancel: onCancel).padding(8)
+            .disabled(isPending)
+            if let sendState {
+                SendStateBadge(state: sendState, onSendNow: onSendNow, onDelete: onDelete).padding(8)
             }
         }
     }
@@ -1543,12 +1525,15 @@ struct PhotoMessageBubble: View {
     }
 }
 
-// Shared overlay for .sending / .failed bubbles. Sending → spinner badge.
-// Failed → exclamation icon; tap shows a small Retry/Cancel menu.
+/// #204 — what an unsent bubble shows, the same on every bubble type (#150).
+/// - sending: a spinner.
+/// - waiting: a quiet clock — it'll go by itself; the menu offers Send now and Delete.
+/// - refused: red — the server said no for good; the menu shows why, Copy (text), Delete.
 struct SendStateBadge: View {
     let state: MessageSendState
-    var onRetry: (() -> Void)? = nil
-    var onCancel: (() -> Void)? = nil
+    var onSendNow: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+    var onCopy: (() -> Void)? = nil
 
     var body: some View {
         switch state {
@@ -1558,19 +1543,34 @@ struct SendStateBadge: View {
                 .padding(8)
                 .background(Color.black.opacity(0.55))
                 .clipShape(Circle())
-                // Paired with failedSendIndicator so a test can assert the discrete send state
-                // directly: a message is confirmed exactly when it carries neither badge
-                // (sendState == nil after reconciliation). Asserting "no failure appeared" alone
-                // can't tell a success apart from a send that is still in flight.
+                // A test asserts the discrete send state directly: a message is confirmed exactly
+                // when it carries none of these badges (sendState == nil).
                 .accessibilityIdentifier("sendingIndicator")
-        case .failed:
+        case .waiting:
             Menu {
-                Button { onRetry?() } label: { Label("Retry", systemImage: "arrow.clockwise") }
-                Button(role: .destructive) { onCancel?() } label: { Label("Cancel", systemImage: "xmark") }
+                Text("Will send automatically")
+                Button { onSendNow?() } label: { Label("Send now", systemImage: "paperplane") }
+                Button(role: .destructive) { onDelete?() } label: { Label("Delete", systemImage: "trash") }
+            } label: {
+                Image(systemName: "clock")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(7)
+                    .background(Color.black.opacity(0.45))
+                    .clipShape(Circle())
+                    .accessibilityLabel("Waiting to send")
+                    .accessibilityIdentifier("waitingSendIndicator")
+            }
+        case .refused(let reason):
+            Menu {
+                Text(reason)
+                if let onCopy { Button { onCopy() } label: { Label("Copy", systemImage: "doc.on.doc") } }
+                Button(role: .destructive) { onDelete?() } label: { Label("Delete", systemImage: "trash") }
             } label: {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(.white, .red)
+                    .accessibilityLabel("Couldn't send")
                     .accessibilityIdentifier("failedSendIndicator")
                     .padding(4)
                     .background(Color.black.opacity(0.3))
