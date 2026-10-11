@@ -840,6 +840,43 @@ final class APIClient {
     private var refreshTask: Task<RefreshOutcome, Never>?
     private let refreshLock = NSLock()
 
+    // MARK: - #204 — tokens for the SendEngine
+
+    enum SendToken: Equatable {
+        case token(String)
+        /// The session is over (no token, or the refresh was refused): sends wait for sign-in.
+        case signedOut
+        /// Couldn't refresh right now (no network, server trouble): try again later.
+        case unavailable
+    }
+
+    /// A token that's good for at least `minRemaining` more seconds, refreshing first if not. A
+    /// send handed to iOS's background transfer can sit with iOS for a long time before it goes,
+    /// so it must not leave with a token about to expire.
+    func sendToken(validFor minRemaining: TimeInterval) async -> SendToken {
+        guard let token = TokenStore.shared.token else { return .signedOut }
+        if let expiry = JWTExpiry.expiresAt(token), expiry.timeIntervalSinceNow > minRemaining { return .token(token) }
+        return await refreshedSendToken()
+    }
+
+    /// The server refused `rejected` (401). Use a newer stored token if one exists; else refresh.
+    func sendToken(afterRejecting rejected: String) async -> SendToken {
+        if let current = TokenStore.shared.token, current != rejected,
+           let expiry = JWTExpiry.expiresAt(current), expiry.timeIntervalSinceNow > 60 {
+            return .token(current)
+        }
+        return await refreshedSendToken()
+    }
+
+    private func refreshedSendToken() async -> SendToken {
+        guard TokenStore.shared.refreshToken != nil else { return .signedOut }
+        switch await attemptRefresh() {
+        case .refreshed: return TokenStore.shared.token.map { .token($0) } ?? .signedOut
+        case .transient: return .unavailable
+        case .rejected: handleAuthFailure(); return .signedOut
+        }
+    }
+
     // Refresh the access token if it's expired or within 2 minutes of expiry.
     // Returns true if the token is valid afterwards. Call before opening long-lived
     // connections (SignalR) where 401 mid-stream is messier than refreshing up-front.
@@ -966,6 +1003,8 @@ final class APIClient {
             handleAuthFailure(); throw URLError(.userAuthenticationRequired)
         }
         guard (200..<300).contains(http.statusCode) else { throw APIError.serverError(http.statusCode) }
+        // #204 — proof the server is reachable: a send waiting on the retry clock goes now.
+        NotificationCenter.default.post(name: .apiServerReachable, object: nil)
         return data
     }
 
@@ -1047,4 +1086,10 @@ final class APIClient {
         guard (200..<300).contains(http.statusCode) else { throw URLError(.badServerResponse) }
         return try Self.decoder.decode(Response.self, from: data)
     }
+}
+
+extension Notification.Name {
+    /// #204 — posted whenever an API request succeeds: the server is reachable, so a send waiting
+    /// on the retry clock should go now rather than at its next scheduled try.
+    static let apiServerReachable = Notification.Name("APIServerReachable")
 }

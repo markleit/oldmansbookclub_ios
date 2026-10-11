@@ -174,6 +174,13 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <retry:0|
     # (and in the GitHub job summary), so it gets an issue instead of quietly costing a retry.
     # Unit tests never retry: they don't touch a simulator UI, so a flaky one is always a bug.
     if [[ "$retry" -eq 1 ]]; then args+=(-retry-tests-on-failure -test-iterations 2); fi
+    # #204 — a hung test fails by name instead of holding the runner for hours (GitHub's job limit
+    # is 6 h). Found the hard way: a deliberately broken engine left a unit test waiting forever.
+    # XCTest rounds allowances up to whole minutes.
+    local allowance=120
+    if [[ "$retry" -eq 1 ]]; then allowance=600; fi
+    args+=(-test-timeouts-enabled YES -default-test-execution-time-allowance "$allowance"
+           -maximum-test-execution-time-allowance "$allowance")
 
     local mode=(test -project OldMansBookClub.xcodeproj -scheme OldMansBookClub)
     if [[ -n "$PRODUCTS_DIR" ]]; then
