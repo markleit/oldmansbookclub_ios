@@ -49,6 +49,12 @@ class HermeticTestCase: XCTestCase {
     }
 
     override func tearDown() {
+        // Kill the app NOW, not when the next test launches its own. Otherwise it's still running
+        // when the next test resets the stub, and an unfinished send (#204: a backgrounded text, a
+        // photo still uploading) gets "sign-in expired", refreshes into the NEXT test's sign-in and
+        // lands there — seen on CI as a "refused" message that arrived, and a text-send test
+        // receiving the previous test's text.
+        app?.terminate()
         app = nil
         super.tearDown()
     }
