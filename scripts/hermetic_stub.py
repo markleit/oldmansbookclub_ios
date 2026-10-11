@@ -59,7 +59,9 @@ def _fresh_state():
             "by_client_id": {}, "post_attempts": 0, "book_patches": [],
             # #204 — scripted responses per "METHOD /path" glob, consumed in order; and a switch
             # that makes the whole server unreachable (every non-control request is dropped).
-            "scripts": {}, "down": False}
+            "scripts": {}, "down": False,
+            # #204 — bumped by every reset (each test's setUp). Tokens carry it; see _stale().
+            "epoch": 0}
 
 
 _state = _fresh_state()
@@ -92,7 +94,21 @@ def _access_token():
 
     def part(obj):
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
-    return f"{part({'alg': 'HS256', 'typ': 'JWT'})}.{part({'sub': USER_ID, 'exp': int(time.time()) + 3600})}.stub"
+    with _lock:
+        epoch = _state["epoch"]
+    claims = {"sub": USER_ID, "exp": int(time.time()) + 3600, "epoch": epoch}
+    return f"{part({'alg': 'HS256', 'typ': 'JWT'})}.{part(claims)}.stub"
+
+
+def _token_epoch(authorization):
+    """The test epoch baked into a request's bearer token, or None."""
+    import base64
+    try:
+        payload = (authorization or "").split(" ", 1)[1].split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload)).get("epoch")
+    except (IndexError, ValueError):
+        return None
 
 
 def _now_iso():
@@ -264,11 +280,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except OSError:
             pass
 
+    def _stale(self):
+        """#204 — a request from an EARLIER test. iOS's background transfers outlive the app run
+        that made them, so a send a previous test left with iOS can arrive during the next one. Its
+        bearer token carries the earlier test's epoch (tokens are minted per test by dev-login).
+        Such a request gets 401 (expired): it isn't recorded and doesn't use up a scripted response."""
+        epoch = _token_epoch(self.headers.get("Authorization"))
+        with _lock:
+            return epoch is not None and epoch != _state["epoch"]
+
     def _intercept(self, route):
         """#204 — the server-down switch and scripted responses, ahead of normal handling.
         Returns True if this request has been dealt with."""
         if route.startswith("/_stub/"):
             return False
+        if not route.startswith("/auth/") and self._stale():
+            # The token is from an earlier test: "expired". The app refreshes once at the start of
+            # each test (tests share one install, so it keeps the previous test's sign-in) and gets
+            # a token for this test; a stray background transfer from an earlier test just fails.
+            with _lock:
+                _state["requested_paths"].append(f"STALE {self.command} {self.path}")
+            self._send_json({"error": "a token from an earlier test"}, 401)
+            return True
         step, down = None, False
         with _lock:
             down = _state["down"]
@@ -399,8 +432,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if route == "/_stub/reset":
             with _lock:
+                epoch = _state.get("epoch", 0) + 1
                 _state.clear()
                 _state.update(_fresh_state())
+                _state["epoch"] = epoch
             return self._send_json({"status": "reset"})
 
         if route == "/_stub/messages":
