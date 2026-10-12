@@ -110,7 +110,12 @@ final class SendEngine: ObservableObject {
         let held = await transport.backgroundTaskKeys()
         for item in outbox.items where item.status == .inFlight {
             let count = held.filter { $0.itemId == item.id }.count
-            if count > 0 {
+            if count == 0, item.shareSession != nil {
+                // The share sheet's upload, in a session this run hasn't joined: iOS reports it
+                // through a wake. Waited for — and sent directly too while the app is open.
+                copies[item.id] = 1
+                sendDirectIfPossible(item.id)
+            } else if count > 0 {
                 copies[item.id] = count
                 // iOS still has it, but on its own schedule — with the app open, also send it
                 // directly (rebuilt: the request from the previous run died with it). Without this
@@ -264,13 +269,16 @@ final class SendEngine: ObservableObject {
             var item = SendItem(id: entry.id, bookId: entry.bookId, clubId: entry.clubId,
                                 kind: entry.kind == .photo ? .photo : .text, sentAt: entry.sentAt, body: entry.body,
                                 fileName: fileName, contentType: entry.kind == .photo ? "image/jpeg" : nil)
-            if entry.handedToIOS {
+            if let session = entry.sessionIdentifier {
                 item.status = .inFlight
                 item.attempts = 1
+                item.shareSession = session
                 copies[entry.id] = 1
             }
             outbox.add(item)
             SendLog.note("from the share sheet", entry.id, entry.handedToIOS ? "with iOS" : "to send")
+            // With the app open it goes directly too, as any message iOS holds does (dedup by id).
+            if entry.handedToIOS { sendDirectIfPossible(entry.id) }
         }
         publish()
         pump("share sheet")

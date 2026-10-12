@@ -103,10 +103,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         handleEventsForBackgroundURLSession identifier: String,
         completionHandler: @escaping () -> Void
     ) {
-        if identifier == URLSessionSendTransport.sessionIdentifier || identifier == ShareInbox.sessionIdentifier {
+        if identifier == URLSessionSendTransport.sessionIdentifier || ShareInbox.isShareSession(identifier) {
             // The share sheet's uploads (PR 10): take its messages into the outbox before reading
             // their results, so each result finds its message.
-            if identifier == ShareInbox.sessionIdentifier {
+            if ShareInbox.isShareSession(identifier) {
                 MainActor.assumeIsolated { SendEngine.shared.takeSharedMessages() }
             }
             // iOS may suspend the app as soon as this handler is called. A refused token (401)

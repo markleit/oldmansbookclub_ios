@@ -29,7 +29,8 @@ enum ShareSender {
         // Without a token right now (it needs refreshing and there's no signal) they stay in the
         // inbox unhanded: the app sends them when it next runs.
         guard let token = try? await api.signIn.accessToken() else { return }
-        let config = URLSessionConfiguration.background(withIdentifier: ShareInbox.sessionIdentifier)
+        let identifier = ShareInbox.newSessionIdentifier()
+        let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.sharedContainerIdentifier = SharedContainer.appGroupId
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true   // the app hears the results
@@ -40,7 +41,7 @@ enum ShareSender {
             let task = session.uploadTask(with: built.request, fromFile: built.bodyFile)
             task.taskDescription = ShareInbox.taskDescription(for: entry)
             task.resume()
-            entry.handedToIOS = true
+            entry.sessionIdentifier = identifier
             try? ShareInbox.save(entry, in: inbox)
         }
     }

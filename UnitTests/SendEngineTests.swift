@@ -954,7 +954,7 @@ final class SendEngineTests: XCTestCase {
         let inbox = root.appendingPathComponent("inbox")
         var shared = try ShareInbox.add(.init(id: UUID(), bookId: book, clubId: club, kind: .photo, sentAt: now),
                                         photo: Data([0xFF, 0xD8]), in: inbox)
-        shared.handedToIOS = true
+        shared.sessionIdentifier = ShareInbox.newSessionIdentifier()
         try ShareInbox.save(shared, in: inbox)
         let engine = makeEngine()
         engine.shareInbox = inbox
@@ -971,6 +971,25 @@ final class SendEngineTests: XCTestCase {
         await settle()
         XCTAssertTrue(engine.items.isEmpty)
         XCTAssertEqual(confirmations.map(\.clientId), [shared.id])
+    }
+
+    func testU16AShareSheetUploadInASessionNotYetJoinedIsWaitedForNotUploadedAgain() async throws {
+        // The app joins a share's session only when iOS wakes it with the results — one process at
+        // a time can hold a session, and the extension may still have it. Until then the message is
+        // with iOS: no second background upload (with the app open it also goes directly; dedup).
+        let inbox = root.appendingPathComponent("inbox")
+        var shared = try ShareInbox.add(.init(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now,
+                                              body: "shared"), photo: nil, in: inbox)
+        shared.sessionIdentifier = ShareInbox.newSessionIdentifier()
+        try ShareInbox.save(shared, in: inbox)
+        let engine = makeEngine()
+        engine.shareInbox = inbox
+        _ = await started(engine)   // transport.held is empty: this run can't see that session
+        await settle()
+
+        XCTAssertEqual(engine.items.first?.status, .inFlight, "still with iOS, not started again")
+        XCTAssertEqual(transport.background.count, 0)
+        XCTAssertEqual(transport.direct.count, 1, "and sent directly too, with the app open")
     }
 
     func testU16AShareSheetMessageNotHandedToIOSIsSentByTheApp() async throws {

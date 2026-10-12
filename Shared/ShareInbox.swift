@@ -9,9 +9,14 @@ import Foundation
 /// from then on each is an ordinary unsent message: waited for if iOS has it, retried if not.
 /// The record is written after its file, so a half-written message is never taken.
 enum ShareInbox {
-    /// The extension's background session. Each process needs its own; the app's is
-    /// URLSessionSendTransport's.
-    static let sessionIdentifier = "ombc.share-send"
+    /// Each share gets its own background session: one process at a time can hold a session, and
+    /// the app (suspended in the background) mustn't be holding the one the extension needs. The app
+    /// joins a share's session only when iOS wakes it with that session's results.
+    static let sessionPrefix = "ombc.share-send."
+
+    static func newSessionIdentifier() -> String { sessionPrefix + UUID().uuidString }
+
+    static func isShareSession(_ identifier: String) -> Bool { identifier.hasPrefix(sessionPrefix) }
 
     struct Entry: Codable, Equatable {
         enum Kind: String, Codable { case text, photo }
@@ -25,8 +30,10 @@ enum ShareInbox {
         var body: String?
         /// The photo, in the inbox directory.
         var fileName: String?
-        /// The extension handed the upload to iOS: the app waits for it rather than send again.
-        var handedToIOS = false
+        /// The extension handed the upload to iOS in this session: the app waits for its result
+        /// (and sends directly too while it's open) rather than start a second background upload.
+        var sessionIdentifier: String?
+        var handedToIOS: Bool { sessionIdentifier != nil }
     }
 
     static func defaultDirectory() -> URL? {

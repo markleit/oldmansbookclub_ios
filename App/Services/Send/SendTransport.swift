@@ -90,18 +90,15 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     private var systemCompletionHandlers: [String: () -> Void] = [:]
     /// One delegate per session: task numbers are only unique within a session.
     private let delegate = Delegate()
-    private let shareDelegate = Delegate()
-    private var shareJoined = false
+    /// The share sheet's sessions this run has joined (PR 10), each with its own delegate. Joined
+    /// only when iOS wakes the app for one — by then the extension that started it is gone.
+    private var shareSessions: [String: (session: URLSession, delegate: Delegate)] = [:]
 
-    private lazy var background: URLSession = makeSession(Self.sessionIdentifier, delegate: delegate, shared: false)
-
-    /// The share sheet's uploads (PR 10). The extension started them in its own session; the app
-    /// joins it to hear their results (iOS relaunches the app for them). Joined only at launch or
-    /// for that wake — one process at a time can hold a background session.
-    private lazy var share: URLSession = {
-        shareJoined = true
-        return makeSession(ShareInbox.sessionIdentifier, delegate: shareDelegate, shared: true)
-    }()
+    private func joinShareSession(_ identifier: String) {
+        guard shareSessions[identifier] == nil else { return }
+        let delegate = Delegate()
+        shareSessions[identifier] = (makeSession(identifier, delegate: delegate, shared: true), delegate)
+    }
 
     private func makeSession(_ identifier: String, delegate: Delegate, shared: Bool) -> URLSession {
         let config = URLSessionConfiguration.background(withIdentifier: identifier)
@@ -123,7 +120,7 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     /// The sessions with tasks this app should know about.
-    private var joinedSessions: [URLSession] { shareJoined ? [background, share] : [background] }
+    private var joinedSessions: [URLSession] { [background] + shareSessions.values.map(\.session) }
 
     private let direct: URLSession = {
         let config = URLSessionConfiguration.default
@@ -141,9 +138,9 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         case Self.sessionIdentifier:
             systemCompletionHandlers[identifier] = handler
             activate()
-        case ShareInbox.sessionIdentifier:
+        case _ where ShareInbox.isShareSession(identifier):
             systemCompletionHandlers[identifier] = handler
-            _ = share
+            joinShareSession(identifier)
         default:
             return
         }
@@ -187,8 +184,6 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func backgroundTaskKeys() async -> [SendTaskKey] {
-        // At launch: the share sheet's uploads count too (PR 10).
-        if SharedContainer.appGroupId != nil { _ = share }
         var tasks: [URLSessionTask] = []
         for session in joinedSessions {
             tasks += await withCheckedContinuation { cont in session.getAllTasks { cont.resume(returning: $0) } }
