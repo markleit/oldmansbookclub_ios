@@ -28,7 +28,7 @@ enum ShareSender {
 
         // Without a token right now (it needs refreshing and there's no signal) they stay in the
         // inbox unhanded: the app sends them when it next runs.
-        guard let token = try? await api.signIn.accessToken() else { return }
+        guard let token = try? await api.signIn.sendToken() else { return }
         let identifier = ShareInbox.newSessionIdentifier()
         let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.sharedContainerIdentifier = SharedContainer.appGroupId

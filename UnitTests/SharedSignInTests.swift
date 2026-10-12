@@ -46,6 +46,10 @@ final class SharedSignInTests: XCTestCase {
         func refreshToken() -> String? { refresh }
         func saveAccessToken(_ token: String) { lock.withLock { access = token; saved.append(token) } }
         func replaceAccessToken(_ token: String) { lock.withLock { access = token } }
+        private var send: String?
+        func sendToken() -> String? { lock.withLock { send } }
+        func saveSendToken(_ token: String) { lock.withLock { send = token } }
+        func setSendToken(_ token: String?) { lock.withLock { send = token } }
     }
 
     private let base = URL(string: "https://share.test")!

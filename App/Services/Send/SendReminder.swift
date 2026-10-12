@@ -25,7 +25,8 @@ enum SendReminder {
     }
 
     static func basis(for items: [SendItem]) -> Basis? {
-        let unsent = items.filter { $0.status != .refused }
+        // A video whose upload has landed is the server's to create (design v2): not unsent.
+        let unsent = items.filter { $0.status != .refused && $0.serverCreates != true }
         guard let oldest = unsent.map(\.sentAt).min() else { return nil }
         return Basis(oldest: oldest, count: unsent.count)
     }

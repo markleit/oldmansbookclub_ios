@@ -117,6 +117,43 @@ class StubTests(unittest.TestCase):
         self.assertTrue(echo["is_forwarded"])
         self.assertEqual(echo["type"], "Photo")
 
+    # ---- design v2: the send token and the reserved video ------------------------------------
+
+    def test_sign_in_hands_out_a_week_long_send_token(self):
+        import base64
+        _, _, auth = self.request("POST", "/auth/refresh", {"refresh_token": "stub-refresh-token"})
+        payload = auth["send_token"].split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        self.assertEqual(claims["scope"], "send")
+        self.assertAlmostEqual(claims["exp"] - time.time(), 7 * 24 * 3600, delta=60)
+
+    def test_a_reserved_video_is_created_when_its_upload_lands(self):
+        cid = str(uuid.uuid4())
+        book = "/books/66666666-6666-6666-6666-666666666666/messages"
+        _, _, reservation = self.request("POST", book + "/video", {"client_id": cid, "sent_at": "2026-10-10T10:00:00.000Z"})
+        self.assertIsNone(reservation["message"])
+        self.assertEqual(self.sent(), [])   # nothing until the file lands
+
+        upload = "/" + reservation["upload_url"].split("/", 3)[3]
+        self.request("PUT", upload, b"\x00" * 10, content_type="video/mp4")
+
+        record = self.sent()[0]
+        self.assertEqual((record["via"], record["type"], record["client_id"], record["sent_at"]),
+                         ("landed", "Video", cid, "2026-10-10T10:00:00.000Z"))
+        # The app's own post then just confirms it, and reserving again says it's sent.
+        _, _, posted = self.request("POST", book, {"type": "Video", "media_url": reservation["media_url"], "client_id": cid})
+        _, _, again = self.request("POST", book + "/video", {"client_id": cid})
+        self.assertEqual(len(self.sent()), 1)
+        self.assertEqual(again["message"]["id"], posted["id"])
+        self.assertIsNone(again["upload_url"])
+
+    def test_reserving_again_before_the_upload_reuses_the_blob(self):
+        cid = str(uuid.uuid4())
+        book = "/books/66666666-6666-6666-6666-666666666666/messages/video"
+        first = self.request("POST", book, {"client_id": cid})[2]
+        second = self.request("POST", book, {"client_id": cid})[2]
+        self.assertEqual(first["media_url"], second["media_url"])
+
     # ---- scripted trouble --------------------------------------------------------------------
 
     def test_scripted_responses_are_used_in_order_then_normal_handling_resumes(self):

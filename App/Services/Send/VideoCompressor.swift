@@ -22,7 +22,10 @@ enum VideoCompression {
 /// limit. AVPlayer has played HEVC since iOS 11. Falls back to the H.264 preset if HEVC isn't
 /// available for this asset.
 enum VideoCompressor {
-    static func compress(_ source: URL) async -> VideoCompression {
+    /// `progress` gets 0–1 about once a second (it feeds the "Sending video" progress iOS shows
+    /// while it keeps the work going — design v2). Cancelling the calling task stops the export:
+    /// iOS ended that, and it starts again from the original the next time the app runs.
+    static func compress(_ source: URL, progress: @escaping (Double) -> Void = { _ in }) async -> VideoCompression {
         let asset = AVURLAsset(url: source)
         let preset = AVAssetExportSession.exportPresets(compatibleWith: asset)
             .contains(AVAssetExportPresetHEVC1920x1080)
@@ -35,9 +38,21 @@ enum VideoCompressor {
         export.outputURL = output
         export.outputFileType = .mp4
         // The completion-handler API, not iOS 18's `export(to:as:)`: the deployment target is 16.
-        await withCheckedContinuation { continuation in
-            export.exportAsynchronously { continuation.resume() }
+        nonisolated(unsafe) let session = export
+        let reporting = Task {
+            while !Task.isCancelled {
+                progress(Double(session.progress))
+                try? await Task.sleep(for: .seconds(1))
+            }
         }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                export.exportAsynchronously { continuation.resume() }
+            }
+        } onCancel: {
+            session.cancelExport()
+        }
+        reporting.cancel()
         if export.status == .completed { return .compressed(output) }
         try? FileManager.default.removeItem(at: output)
         // An export iOS stopped because the app left the foreground is worth trying again; a

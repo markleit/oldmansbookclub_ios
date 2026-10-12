@@ -34,4 +34,6 @@ enum SharedContainer {
     static let keychainService = "com.example.oldmansbookclub"
     static let keychainTokenAccount = "jwt_token"
     static let keychainRefreshAccount = "refresh_token"
+    /// #204 design v2 — the week-long, send-only token (TokenStore.sendToken).
+    static let keychainSendAccount = "send_token"
 }

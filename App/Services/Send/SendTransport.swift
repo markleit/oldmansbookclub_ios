@@ -60,6 +60,8 @@ struct SendResponse {
 protocol SendTransport: AnyObject {
     /// Results of background tasks — including ones started by a previous run of the app.
     var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)? { get set }
+    /// An upload's progress while the app is running: (bytes sent, bytes in all).
+    var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)? { get set }
     /// `notBefore`: iOS holds the transfer until then — the retry clock, kept while the app is
     /// suspended and can't run it.
     func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)
@@ -86,44 +88,75 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         }
     }
     private var earlyResults: [(SendTaskKey, SendResponse)] = []
+    var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)?
     /// iOS's "done with this wake" handlers, per background session.
     private var systemCompletionHandlers: [String: () -> Void] = [:]
-    /// One delegate per session: task numbers are only unique within a session.
-    private let delegate = Delegate()
 
-    private lazy var background: URLSession = makeSession(Self.sessionIdentifier, delegate: delegate, shared: false)
+    /// Sessions by identifier: the app's own, and the share sheet's ones this run has joined (PR 10) —
+    /// joined only when iOS wakes the app for one, since the extension that started it is gone.
+    /// Each has its own delegate: task numbers are only unique within a session.
+    private var sessions: [String: URLSession] = [:]
+    private var delegates: [String: Delegate] = [:]
+    /// Work waiting for a session still being created, in the order it came.
+    private var waiting: [String: [(URLSession) -> Void]] = [:]
 
-    /// The share sheet's sessions this run has joined (PR 10), each with its own delegate. Joined
-    /// only when iOS wakes the app for one — by then the extension that started it is gone.
-    private var shareSessions: [String: (session: URLSession, delegate: Delegate)] = [:]
-
-    private func joinShareSession(_ identifier: String) {
-        guard shareSessions[identifier] == nil else { return }
+    /// Runs `body` with the session, creating it first if need be — off the main thread (#204 design
+    /// v2). On iOS 26.6 and 27, creating a background session can block at launch inside
+    /// NSURLBackgroundSession (Apple Developer Forums thread 848396, across many apps), and a long
+    /// block on the main thread at launch is a watchdog kill. Work queues until it exists and then
+    /// runs in order, so a cancel can't overtake the submit it follows.
+    private func withSession(_ identifier: String, _ body: @escaping (URLSession) -> Void) {
+        if let session = sessions[identifier] { return body(session) }
+        let creating = waiting[identifier] != nil
+        waiting[identifier, default: []].append(body)
+        guard !creating else { return }
         let delegate = Delegate()
-        shareSessions[identifier] = (makeSession(identifier, delegate: delegate, shared: true), delegate)
+        delegates[identifier] = delegate
+        wire(delegate, identifier)
+        let shared = identifier != Self.sessionIdentifier
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let session = Self.makeSession(identifier, delegate: delegate, shared: shared)
+            await self?.sessionReady(identifier, session)
+        }
     }
 
-    private func makeSession(_ identifier: String, delegate: Delegate, shared: Bool) -> URLSession {
+    private func sessionReady(_ identifier: String, _ session: URLSession) {
+        sessions[identifier] = session
+        let queued = waiting.removeValue(forKey: identifier) ?? []
+        queued.forEach { $0(session) }
+    }
+
+    nonisolated private static func makeSession(_ identifier: String, delegate: Delegate, shared: Bool) -> URLSession {
         let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.isDiscretionary = false          // a chat message, not a podcast download
         config.sessionSendsLaunchEvents = true  // relaunch the app to report a result
         config.allowsCellularAccess = true
         config.timeoutIntervalForRequest = 60
         if shared { config.sharedContainerIdentifier = SharedContainer.appGroupId }
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }
+
+    private func wire(_ delegate: Delegate, _ identifier: String) {
         delegate.deliver = { [weak self] key, response in
             Task { @MainActor in
                 guard let self else { return }
                 if let handler = self.onBackgroundResult { handler(key, response) } else { self.earlyResults.append((key, response)) }
             }
         }
+        delegate.progress = { [weak self] key, sent, total in
+            Task { @MainActor in self?.onBackgroundProgress?(key, sent, total) }
+        }
         delegate.finishedEvents = { [weak self] in
             Task { @MainActor in self?.systemCompletionHandlers.removeValue(forKey: identifier)?() }
         }
-        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     }
 
-    /// The sessions with tasks this app should know about.
-    private var joinedSessions: [URLSession] { [background] + shareSessions.values.map(\.session) }
+    /// Every session with tasks this app should know about: its own (created if need be) and the
+    /// share sheet's ones already joined.
+    private func forEachSession(_ body: @escaping (URLSession) -> Void) {
+        withSession(Self.sessionIdentifier, body)
+        for (identifier, session) in sessions where identifier != Self.sessionIdentifier { body(session) }
+    }
 
     private let direct: URLSession = {
         let config = URLSessionConfiguration.default
@@ -134,26 +167,21 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }()
 
     /// Recreate the session at launch so finished background tasks deliver their results.
-    func activate() { _ = background }
+    func activate() { withSession(Self.sessionIdentifier) { _ in } }
 
     func setSystemCompletionHandler(_ handler: @escaping () -> Void, for identifier: String) {
-        switch identifier {
-        case Self.sessionIdentifier:
-            systemCompletionHandlers[identifier] = handler
-            activate()
-        case _ where ShareInbox.isShareSession(identifier):
-            systemCompletionHandlers[identifier] = handler
-            joinShareSession(identifier)
-        default:
-            return
-        }
+        guard identifier == Self.sessionIdentifier || ShareInbox.isShareSession(identifier) else { return }
+        systemCompletionHandlers[identifier] = handler
+        withSession(identifier) { _ in }
     }
 
     func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?) {
-        let task = background.uploadTask(with: request, fromFile: bodyFile)
-        task.taskDescription = key.taskDescription
-        if let notBefore { task.earliestBeginDate = notBefore }
-        task.resume()
+        withSession(Self.sessionIdentifier) { session in
+            let task = session.uploadTask(with: request, fromFile: bodyFile)
+            task.taskDescription = key.taskDescription
+            if let notBefore { task.earliestBeginDate = notBefore }
+            task.resume()
+        }
     }
 
     func sendDirect(_ request: URLRequest, body: Data?, bodyFile: URL?) async -> SendResponse {
@@ -177,7 +205,7 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func cancelBackground(itemId: UUID) {
-        for session in joinedSessions {
+        forEachSession { session in
             session.getAllTasks { tasks in
                 for task in tasks where task.taskDescription.flatMap(SendTaskKey.init(taskDescription:))?.itemId == itemId {
                     task.cancel()
@@ -188,8 +216,11 @@ final class URLSessionSendTransport: NSObject, SendTransport {
 
     func backgroundTaskKeys() async -> [SendTaskKey] {
         var tasks: [URLSessionTask] = []
-        for session in joinedSessions {
-            tasks += await withCheckedContinuation { cont in session.getAllTasks { cont.resume(returning: $0) } }
+        let identifiers = [Self.sessionIdentifier] + sessions.keys.filter { $0 != Self.sessionIdentifier }
+        for identifier in identifiers {
+            tasks += await withCheckedContinuation { cont in
+                withSession(identifier) { $0.getAllTasks { cont.resume(returning: $0) } }
+            }
         }
         return tasks
             .filter { $0.state == .running || $0.state == .suspended }
@@ -197,14 +228,26 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func cancelAll() {
-        for session in joinedSessions { session.getAllTasks { $0.forEach { $0.cancel() } } }
+        forEachSession { $0.getAllTasks { $0.forEach { $0.cancel() } } }
     }
 
     /// The session delegate — called on the session's own serial queue.
     private final class Delegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var deliver: ((SendTaskKey, SendResponse) -> Void)?
+        var progress: ((SendTaskKey, Int64, Int64) -> Void)?
         var finishedEvents: (() -> Void)?
         private var buffers: [Int: Data] = [:]
+        private var lastProgress: [Int: Date] = [:]
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                        totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+            // At most twice a second: it only feeds a progress bar.
+            let now = Date()
+            if let last = lastProgress[task.taskIdentifier], now.timeIntervalSince(last) < 0.5 { return }
+            lastProgress[task.taskIdentifier] = now
+            guard let key = task.taskDescription.flatMap(SendTaskKey.init(taskDescription:)) else { return }
+            progress?(key, totalBytesSent, totalBytesExpectedToSend)
+        }
 
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             buffers[dataTask.taskIdentifier, default: Data()].append(data)
@@ -212,6 +255,7 @@ final class URLSessionSendTransport: NSObject, SendTransport {
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
             let body = buffers.removeValue(forKey: task.taskIdentifier)
+            lastProgress[task.taskIdentifier] = nil
             guard let key = task.taskDescription.flatMap(SendTaskKey.init(taskDescription:)) else { return }
             let http = task.response as? HTTPURLResponse
             deliver?(key, SendResponse(status: http?.statusCode, body: body, error: error,
