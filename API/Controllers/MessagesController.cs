@@ -61,6 +61,7 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
     [HttpPost("~/books/{bookId}/messages")]
     [Consumes("audio/mp4", "image/jpeg")]
     [RequestSizeLimit(MessageSendService.MaxMediaFileRequestBytes)]
+    [NoMinimumUploadSpeed]   // a batch of photos queues on one connection — see the attribute
     public async Task<ActionResult<MessageDto>> SendMediaFile(Guid bookId,
         [FromQuery(Name = "client_id")] Guid? clientId,
         [FromQuery(Name = "duration_seconds")] int? durationSeconds,

@@ -53,11 +53,9 @@ enum SharedItemLoader {
         default: source = nil
         }
         guard let source else { return nil }
-        // Same output as the in-app picker: UIImage.resizedForUpload(maxDimension: 1024) is in
-        // points, i.e. 1024 × screen scale pixels, then JPEG 0.7 (BookViewModel.sendPhoto).
-        let maxPixels = 1024 * UIScreen.main.scale
-        guard let upload = downsample(source, maxPixels: maxPixels),
-              let jpeg = UIImage(cgImage: upload).jpegData(compressionQuality: 0.7),
+        // Same output as the in-app picker (PhotoUpload).
+        guard let upload = downsample(source, maxPixels: PhotoUpload.maxPixels),
+              let jpeg = UIImage(cgImage: upload).jpegData(compressionQuality: PhotoUpload.jpegQuality),
               let thumb = downsample(source, maxPixels: 240) else { return nil }
         return .photo(id: UUID(), jpeg: jpeg, thumbnail: UIImage(cgImage: thumb))
     }

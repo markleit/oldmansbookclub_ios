@@ -53,7 +53,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     // Per-type upload caps, enforced server-side so a misbehaving client can't bypass the
     // client-side checks. Generous headroom over the expected encoded sizes.
     private const long MaxVoiceBytes = 25L * 1024 * 1024;   // ~15 min voice is a few MB
-    private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to ~<1 MB
+    private const long MaxPhotoBytes = 15L * 1024 * 1024;   // resized client-side to 2048 px, ~1 MB
     private const long MaxVideoBytes = 100L * 1024 * 1024;  // 100 MB cap (matches client)
 
     /// #204 — the largest request body the file-body send accepts: the voice cap (the bigger of
