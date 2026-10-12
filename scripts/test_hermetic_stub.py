@@ -129,6 +129,15 @@ class StubTests(unittest.TestCase):
         self.assertEqual(self.send_text()[0], 200)
         self.assertEqual(len(self.sent()), 1)   # only the one that got through
 
+    def test_a_step_for_one_content_type_leaves_other_requests_alone(self):
+        # The photo is held up; the text sent after it on the same route isn't (#204 PR 6's O3 test).
+        self.request("POST", "/_stub/script", {"route": "POST /books/*/messages",
+                                               "responses": [{"status": 503, "content_type": "image/jpeg"}]})
+        self.assertEqual(self.send_text()[0], 200, "a JSON send doesn't use up the photo's step")
+        path = f"/books/66666666-6666-6666-6666-666666666666/messages?client_id={uuid.uuid4()}"
+        self.assertEqual(self.request("POST", path, b"\xff\xd8", content_type="image/jpeg")[0], 503)
+        self.assertEqual(self.request("POST", path, b"\xff\xd8", content_type="image/jpeg")[0], 200)
+
     def test_a_dropped_connection_gets_no_answer(self):
         self.request("POST", "/_stub/script", {"route": "POST /books/*/messages", "responses": [{"drop": True}]})
         with self.assertRaises((http.client.HTTPException, ConnectionError, OSError)):

@@ -307,10 +307,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             down = _state["down"]
             if not down:
                 key = f"{self.command} {route}"
+                # A step may name a "content_type": then it's for that kind of request only — a
+                # photo's upload, say, not the text sent after it on the same route (#204 PR 6).
+                ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip()
                 for pattern, queue in _state["scripts"].items():
                     if queue and fnmatch.fnmatch(key, pattern):
-                        step = queue.pop(0)
-                        break
+                        index = next((i for i, s in enumerate(queue) if s.get("content_type") in (None, ctype)), None)
+                        if index is not None:
+                            step = queue.pop(index)
+                            break
             if down or step is not None:
                 _state["requested_paths"].append(f"{self.command} {self.path}")
         if down:
