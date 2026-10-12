@@ -101,6 +101,8 @@ final class SendEngine: ObservableObject {
         }
         let taken = outbox.migrateLegacy()
         if taken > 0 { SendLog.note("migrated legacy", nil, "items=\(taken)") }
+        // Before asking iOS what it holds: the share sheet's uploads are among them (PR 10).
+        takeSharedMessages()
         isOffline = !env.hasNetwork()
 
         // Anything marked in flight by the last run: if iOS still holds a transfer for it, wait for
@@ -239,7 +241,43 @@ final class SendEngine: ObservableObject {
         }
     }
 
+    /// Where the Share extension leaves messages (PR 10); injectable for tests.
+    var shareInbox: URL? = ShareInbox.defaultDirectory()
+
+    /// Messages queued in the share sheet join the outbox (PR 10): one the extension handed to iOS
+    /// is waited for (it's in flight; `start` checks iOS still has it), the rest are sent from here.
+    /// Called at launch, on coming to the foreground, and when iOS wakes the app with the share
+    /// sheet's results — before those results are read, so none arrives for a message not yet here.
+    func takeSharedMessages() {
+        guard let inbox = shareInbox else { return }
+        let entries = ShareInbox.entries(in: inbox)
+        guard !entries.isEmpty else { return }
+        for entry in entries {
+            defer { ShareInbox.remove(entry, in: inbox) }
+            guard outbox.item(entry.id) == nil else { continue }
+            var fileName: String?
+            if let name = entry.fileName {
+                // A copy: iOS may still be uploading from the inbox's file.
+                fileName = try? outbox.importFile(at: inbox.appendingPathComponent(name), extension: "jpg", move: false)
+                if fileName == nil { continue }
+            }
+            var item = SendItem(id: entry.id, bookId: entry.bookId, clubId: entry.clubId,
+                                kind: entry.kind == .photo ? .photo : .text, sentAt: entry.sentAt, body: entry.body,
+                                fileName: fileName, contentType: entry.kind == .photo ? "image/jpeg" : nil)
+            if entry.handedToIOS {
+                item.status = .inFlight
+                item.attempts = 1
+                copies[entry.id] = 1
+            }
+            outbox.add(item)
+            SendLog.note("from the share sheet", entry.id, entry.handedToIOS ? "with iOS" : "to send")
+        }
+        publish()
+        pump("share sheet")
+    }
+
     func appBecameActive() {
+        takeSharedMessages()
         clock.reset()
         pump("foreground")
     }
@@ -670,6 +708,7 @@ final class SendEngine: ObservableObject {
 
     private func forget(_ item: SendItem, fileGrace: TimeInterval) {
         outbox.remove(item.id, fileGrace: fileGrace)
+        if let inbox = shareInbox { ShareInbox.removeFiles(for: item.id, in: inbox) }   // PR 10
         copies[item.id] = nil
         builtPosts[item.id] = nil
         directInFlight.remove(item.id)
