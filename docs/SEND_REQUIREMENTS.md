@@ -27,6 +27,8 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | S1 | The bubble appears instantly; the message is on the phone before any network work | E: `testATextIsOnDiskBeforeAnythingIsSent`, `testS1EveryKindIsOnDiskBeforeAnythingIsSent` | Covered |
 | S2 | The composer is free immediately; video compressed after it's queued | — | **PR 5** |
 | S3 | App open, good signal: arrives in ~1–2 s | H: `testATextReachesTheServerWithinTwoSecondsOfTappingSend` (< 2.5 s), `testS3APhotoReachesTheServerWithinSecondsWithTheAppOpen` (< 5 s: iOS first, direct after 3 s) | Covered; voice: **PR 8** (needs the test recorder) |
+| S5 | **Ten photos sent at once all arrive on the first try**, even when some wait their turn on the phone's one connection | API (real web server): `BatchUploadTests.A_photo_that_waits_its_turn_for_eight_seconds_still_arrives`, `…Ten_photos_sent_at_once_over_one_slow_connection_all_arrive_the_first_time` | Covered by #231 (found 2026-10-11: the server cut 2 of 9 off); **Device**: M5 with 10 photos, zero 408s in the server log |
+| S6 | A photo is sent at 2048 px on its long side (~1 MB), from the chat and the share sheet | `PhotoUploadTests` (chat path) | Covered by #231 (chat); share sheet uses the same constant, untested — **PR 10** |
 | S4 | Storage full at tap: an error, no bubble (D4) | — | **PR 8** — photo/video show the error (untested); voice currently loses the take silently (found 2026-10-11): fix + tests for all three with PR 8's test recorder |
 
 ## Order and time
