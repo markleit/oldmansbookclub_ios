@@ -60,6 +60,15 @@ final class SendEngineTests: XCTestCase {
     private var tokenResult: APIClient.SendToken = .token("tok")
     /// When set, getting a token waits here (a refresh that takes a while).
     private var tokenGate: (() async -> Void)?
+    private var uploadLinkCalls = 0
+    /// Videos handed to the compressor, and what it does: by default a smaller copy.
+    private var compressed: [URL] = []
+    private var compressGate: (() async -> Void)?
+    private var compression: (URL) -> VideoCompression = { source in
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        try? Data([1]).write(to: out)
+        return .compressed(out)
+    }
     private var rejections = 0
     private var tokenAfterRejectionResult: APIClient.SendToken = .token("fresh-token")
     /// When set, a token refresh waits here until the test resumes it.
@@ -104,7 +113,15 @@ final class SendEngineTests: XCTestCase {
                 if let gate = self.refreshGate { await gate() }
                 return self.tokenAfterRejectionResult
             },
-            uploadLink: { _, _ in (URL(string: "https://blob.test/v.mp4?sig=w")!, "https://blob.test/v.mp4") },
+            uploadLink: { [unowned self] _, _ in
+                self.uploadLinkCalls += 1
+                return (URL(string: "https://blob.test/v.mp4?sig=w")!, "https://blob.test/v.mp4")
+            },
+            compressVideo: { [unowned self] source in
+                self.compressed.append(source)
+                if let gate = self.compressGate { await gate() }
+                return self.compression(source)
+            },
             schedule: { [unowned self] delay, action in
                 let index = self.wakes.count
                 self.wakes.append((delay, action, false))
@@ -877,6 +894,123 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(post["media_url"] as? String, "https://blob.test/v.mp4")
         XCTAssertEqual(post["type"] as? String, "Video")
         XCTAssertEqual(post["client_id"] as? String, item.id.uuidString.lowercased())
+    }
+
+    // MARK: - U9: video compressed after it's queued (PR 5)
+
+    private func queueVideo(_ engine: SendEngine, bytes: Int = 4096) throws -> SendItem {
+        let name = try engine.files.importData(Data(repeating: 9, count: bytes), extension: "mp4")
+        return engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: name, contentType: "video/mp4",
+                                   durationSeconds: nil, replyTo: nil, compress: true)
+    }
+
+    func testU9AVideoIsQueuedAtOnceAndCompressedBeforeItsUpload() async throws {
+        var release: CheckedContinuation<Void, Never>?
+        compressGate = { await withCheckedContinuation { release = $0 } }
+        let engine = await started(makeEngine())
+
+        let item = try queueVideo(engine)
+        await settle()
+        XCTAssertEqual(engine.items.map(\.id), [item.id], "queued — and the bubble shown — before compressing")
+        XCTAssertEqual(compressed.count, 1, "compressing")
+        XCTAssertEqual(transport.background.count, 0, "nothing uploads until it's compressed")
+
+        release?.resume()
+        await settle()
+        let upload = try XCTUnwrap(transport.background[safe: 0])
+        XCTAssertEqual(upload.request.httpMethod, "PUT")
+        XCTAssertEqual(try Data(contentsOf: upload.bodyFile), Data([1]), "the compressed copy is what's uploaded")
+        let saved = try XCTUnwrap(engine.items.first)
+        XCTAssertNotEqual(saved.fileName, item.fileName)
+        XCTAssertTrue(engine.files.fileExists(try XCTUnwrap(item.fileName)), "the original is kept until it's sent")
+    }
+
+    func testU9WhenItCantBeCompressedTheOriginalIsSent() async throws {
+        compression = { _ in .unsupported }
+        let engine = await started(makeEngine())
+        let item = try queueVideo(engine, bytes: 64)
+        await settle()
+
+        let upload = try XCTUnwrap(transport.background[safe: 0])
+        XCTAssertEqual(upload.bodyFile, engine.files.fileURL(try XCTUnwrap(item.fileName)))
+    }
+
+    func testU9TooLargeEvenAfterCompressingIsRefusedWithTheReason() async throws {
+        compression = { _ in
+            let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+            FileManager.default.createFile(atPath: out.path, contents: nil)
+            let handle = try? FileHandle(forWritingTo: out)
+            try? handle?.truncate(atOffset: UInt64(SendItem.maxVideoBytes) + 1)   // sparse: no real 100 MB
+            try? handle?.close()
+            return .compressed(out)
+        }
+        let engine = await started(makeEngine())
+        let item = try queueVideo(engine)
+        await settle()
+
+        XCTAssertEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .refused("Video is too large (max 100 MB)."))
+        XCTAssertEqual(uploadLinkCalls, 0, "nothing uploaded")
+        XCTAssertEqual(engine.items.first?.id, item.id)
+    }
+
+    func testU9AnInterruptedCompressionStartsAgainFromTheOriginal() async throws {
+        compression = { _ in .interrupted }
+        let engine = await started(makeEngine())
+        let item = try queueVideo(engine)
+        await settle()
+        XCTAssertEqual(engine.items.first?.status, .queued, "waiting to start again, not failed")
+        XCTAssertEqual(uploadLinkCalls, 0)
+
+        compression = { source in
+            let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+            try? Data([1]).write(to: out)
+            return .compressed(out)
+        }
+        engine.appBecameActive()
+        await settle()
+        XCTAssertEqual(compressed, Array(repeating: engine.files.fileURL(try XCTUnwrap(item.fileName)), count: 2))
+        XCTAssertEqual(transport.background.count, 1, "compressed this time, and uploading")
+    }
+
+    func testU9AVideoStillCompressingWhenTheAppEndedIsCompressedAgainOnRelaunch() async throws {
+        compressGate = { await withCheckedContinuation { _ in } }   // never finishes: the app ends
+        let first = await started(makeEngine())
+        let item = try queueVideo(first)
+        await settle()
+        compressGate = nil
+
+        let relaunched = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent("Outbox"))))
+        await settle()
+
+        XCTAssertEqual(compressed.last, relaunched.files.fileURL(try XCTUnwrap(item.fileName)))
+        XCTAssertEqual(transport.background.count, 1)
+    }
+
+    func testU9OfflineAVideoIsCompressedThenWaitsWithoutAskingForAnUploadLink() async throws {
+        network = false
+        appActive = false
+        let engine = await started(makeEngine())
+        _ = try queueVideo(engine)
+        await settle()
+
+        XCTAssertEqual(compressed.count, 1, "compressing needs no network")
+        XCTAssertEqual(uploadLinkCalls, 0, "an upload link needs one: don't wait for it inside the hand-over")
+        XCTAssertEqual(engine.items.first?.status, .waiting)
+        XCTAssertEqual(transport.background.count, 0, "and no hand-back loop while suspended")
+    }
+
+    func testU9AFailedUploadGetsAFreshLink() async throws {
+        let engine = await started(makeEngine())
+        _ = try queueVideo(engine)
+        await settle()
+        transport.finish(0, SendResponse(status: 503))
+        await settle()
+        now = now.addingTimeInterval(1)
+        engine.pump("retry clock")
+        await settle()
+
+        XCTAssertEqual(uploadLinkCalls, 2, "an upload link can expire: each try asks for a new one")
+        XCTAssertEqual(compressed.count, 1, "compressed once, not again on a retry")
     }
 
     func testAMessageWhoseFileIsGoneIsRefusedNotSilentlyDropped() async throws {

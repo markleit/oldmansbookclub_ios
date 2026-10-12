@@ -45,6 +45,11 @@ struct SendItem: Codable, Identifiable, Equatable {
     /// The blob is already uploaded (video's upload-link path, or a migrated 2.1 item): only the
     /// JSON post with this `media_url` remains.
     var mediaUrl: String?
+    /// A video still to be compressed (PR 5): queued at once, so the composer is free, and
+    /// compressed before its upload. Optional so items saved before it existed still load.
+    var compressPending: Bool?
+    /// The video as picked, kept until it's sent; `fileName` is then the compressed copy.
+    var originalFileName: String?
 
     var status: Status = .queued
     var attempts: Int = 0
@@ -65,6 +70,9 @@ enum SendDisplayState: Equatable {
 }
 
 extension SendItem {
+    /// The server's cap on a video (MessageSendService.MaxVideoBytes).
+    static let maxVideoBytes: Int64 = 100 * 1024 * 1024
+
     func displayState(now: Date, waitingAfter: TimeInterval, isOffline: Bool) -> SendDisplayState {
         if status == .refused { return .refused(refusedReason ?? "Couldn't send this message.") }
         // No network: whether it's waiting on the clock or handed to iOS (which waits for the
