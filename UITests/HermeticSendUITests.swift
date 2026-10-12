@@ -236,7 +236,8 @@ final class HermeticSendUITests: HermeticTestCase {
 
         send("after a refresh")
 
-        XCTAssertEqual(try waitForSent(1, timeout: 20).first?["body"] as? String, "after a refresh")
+        XCTAssertEqual(try waitForSent(1, timeout: 20).first?["body"] as? String, "after a refresh",
+                       "Stub saw: \(trail())")
         XCTAssertEqual(try requests(matching: "/auth/refresh") - refreshesBefore, 1, "one refresh, not one per copy")
     }
 
