@@ -13,6 +13,21 @@ final class SendLogTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.hasSuffix("unit-test \(marker) [-] n=0") }, "oldest events should roll off")
     }
 
+    func test252TheLogIsSavedEvenWhenItsFolderDoesntExistYet() throws {
+        // A fresh install has no Application Support folder until something creates it; the log
+        // used to fail to save there, silently, so Feedback reports carried nothing.
+        let folder = SendLog.fileURL.deletingLastPathComponent()
+        try? FileManager.default.removeItem(at: folder)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+
+        let marker = "unit-test fresh-install \(UUID().uuidString.prefix(6))"
+        SendLog.note(marker)
+        _ = SendLog.recent(limit: 1)   // waits for the write, which runs on the log's queue
+
+        let saved = try String(contentsOf: SendLog.fileURL, encoding: .utf8)
+        XCTAssertTrue(saved.contains(marker), "the line must be on disk, not only in memory")
+    }
+
     func testRecentHonoursItsLimitAndShortensIds() {
         let id = UUID()
         SendLog.note("unit-test id", id, "detail")

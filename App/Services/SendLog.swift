@@ -24,7 +24,7 @@ enum SendLog {
     nonisolated(unsafe) private static var lines: [String]?   // only touched on `queue`
     @MainActor private static var observers: [NSObjectProtocol] = []
 
-    private static var fileURL: URL {
+    static var fileURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("send_log.txt")
     }
@@ -83,6 +83,9 @@ enum SendLog {
         loadIfNeeded()
         lines?.append(line)
         if let count = lines?.count, count > maxLines { lines?.removeFirst(count - maxLines) }
+        // #252 — the folder may not exist yet (a fresh install, before anything else created it);
+        // without it every write failed silently and Feedback carried an empty log.
+        try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? (lines ?? []).joined(separator: "\n").write(to: fileURL, atomically: true, encoding: .utf8)
     }
 }
