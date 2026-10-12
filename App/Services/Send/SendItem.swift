@@ -54,6 +54,9 @@ struct SendItem: Codable, Identifiable, Equatable {
     /// can't ask that session what it holds until iOS wakes it for it, so the item waits rather
     /// than being started again.
     var shareSession: String?
+    /// A reserved video whose upload has landed (#204 design v2): the server creates the message
+    /// itself, so it's no longer unsent — the app only confirms it (its post returns the message).
+    var serverCreates: Bool?
 
     var status: Status = .queued
     var attempts: Int = 0
@@ -111,9 +114,6 @@ struct SendTiming: Equatable {
     var directNudge: TimeInterval = 3
     /// Even with no network signal, check this often in case the "network back" event is missed.
     var offlineCheck: TimeInterval = 60
-    /// Refresh the access token before handing a request to iOS if it has less than this left —
-    /// a background request can sit with iOS long after it was handed over.
-    var tokenFreshness: TimeInterval = 600
     /// The force-quit reminder (PR 7) comes this long after the oldest unsent message.
     var reminderAfter: TimeInterval = 600
 

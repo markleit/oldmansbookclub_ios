@@ -57,6 +57,9 @@ def _fresh_state():
     return {"messages": [], "other_messages": {}, "saved": [], "refuse_sends": False,
             "requested_paths": [], "sent": [], "upload_url_delay": 0.0, "upload_url_times": [],
             "by_client_id": {}, "post_attempts": 0, "book_patches": [],
+            # #204 design v2 — video reservations by blob name: the message the server creates
+            # when that blob's upload lands.
+            "reservations": {},
             # #204 — scripted responses per "METHOD /path" glob, consumed in order; and a switch
             # that makes the whole server unreachable (every non-control request is dropped).
             "scripts": {}, "down": False,
@@ -85,7 +88,7 @@ def _dto(**fields):
     return d
 
 
-def _access_token():
+def _access_token(lifetime=3600, **extra):
     """A JWT-shaped token with a real `exp` an hour out (no valid signature — the stub doesn't
     check). The app reads `exp` to decide whether to refresh before handing a send to iOS (#204);
     an opaque token would make it refresh before every send, and a test counting refreshes after
@@ -96,8 +99,13 @@ def _access_token():
         return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
     with _lock:
         epoch = _state["epoch"]
-    claims = {"sub": USER_ID, "exp": int(time.time()) + 3600, "epoch": epoch}
+    claims = {"sub": USER_ID, "exp": int(time.time()) + lifetime, "epoch": epoch, **extra}
     return f"{part({'alg': 'HS256', 'typ': 'JWT'})}.{part(claims)}.stub"
+
+
+def _send_token():
+    """#204 design v2 — the week-long, send-only token (AuthController.GenerateSendToken)."""
+    return _access_token(lifetime=7 * 24 * 3600, scope="send")
 
 
 def _token_epoch(authorization):
@@ -241,6 +249,7 @@ def _echo_file(query, content_type):
 
 
 _MESSAGES_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/messages$")
+_VIDEO_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/messages/video$")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -496,7 +505,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if route in ("/auth/dev-login", "/auth/refresh"):
             return self._send_json({
                 "access_token": _access_token(), "refresh_token": "stub-refresh-token",
-                "user": _user(),
+                "send_token": _send_token(), "user": _user(),
             })
         # Media send (#201): hand out an upload URL on this stub, accept the PUT, and serve the
         # "uploaded" photo back from /_stub/media so the sent bubble renders.
@@ -520,7 +529,42 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "media_url": f"http://127.0.0.1:{PORT}/_stub/media/photo.png?u={blob}",
             })
         if route.startswith("/_stub/upload/"):
+            # #204 design v2 — a reserved video's upload landing: the server creates its message
+            # (Event Grid → /storage/events in production), the app's post only confirms it.
+            blob = route.rsplit("/", 1)[-1].split(".")[0]
+            with _lock:
+                reservation = _state["reservations"].pop(blob, None)
+                if reservation and _state["epoch"] == arrival_epoch:
+                    cid = reservation["client_id"]
+                    if cid not in _state["by_client_id"]:
+                        echoed = _echo_sent(reservation, [])
+                        _state["by_client_id"][cid] = echoed
+                        _state["sent"].append({
+                            "via": "landed", "content_type": "video/mp4", "type": echoed["type"],
+                            "body": None, "media_url": echoed["media_url"], "client_id": cid,
+                            "sent_at": echoed["sent_at"], "received_at": echoed["received_at"],
+                            "book_id": reservation["book_id"]})
             return self._send_json({})
+
+        # #204 design v2 — reserve a video message: everything but the file, which goes to the
+        # create-only link this returns. A send the server already has comes back as the message.
+        video = _VIDEO_ROUTE.match(route)
+        if video and self.command == "POST":
+            payload = json.loads(body) if body else {}
+            cid = payload.get("client_id")
+            with _lock:
+                existing = _state["by_client_id"].get(cid)
+                if existing:
+                    return self._send_json({"upload_url": None, "media_url": None, "message": existing})
+                blob = next((b for b, r in _state["reservations"].items() if r["client_id"] == cid),
+                            uuid.uuid4().hex)
+                media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png?u={blob}"
+                _state["reservations"][blob] = {
+                    "type": "Video", "client_id": cid, "media_url": media_url,
+                    "sent_at": payload.get("sent_at"), "book_id": video.group(1).lower()}
+            return self._send_json({
+                "upload_url": f"http://127.0.0.1:{PORT}/_stub/upload/{blob}.mp4",
+                "media_url": media_url, "message": None})
 
         # Edit Book (incl. the 2.1 cover change): record what was sent, answer with the book.
         if self.command == "PATCH" and route == f"/books/{CURRENT_BOOK_ID}":

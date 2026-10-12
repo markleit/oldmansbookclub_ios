@@ -7,6 +7,7 @@ final class TokenStore {
     private let keychainService = "com.example.oldmansbookclub"
     private let keychainTokenAccount = "jwt_token"
     private let keychainRefreshAccount = "refresh_token"
+    private let keychainSendAccount = SharedContainer.keychainSendAccount
 
     private let userIdKey = "user_id"
     private let userNameKey = "user_name"
@@ -36,6 +37,14 @@ final class TokenStore {
     var refreshToken: String? {
         get { keychainRead(account: keychainRefreshAccount) }
         set { keychainWrite(account: keychainRefreshAccount, value: newValue) }
+    }
+
+    /// #204 design v2 — the week-long token that only sends messages (the server's SendToken),
+    /// renewed with every sign-in and refresh. It rides on every send, so a message waiting with
+    /// iOS for the network can't arrive with an expired token. Nil from a server older than it.
+    var sendToken: String? {
+        get { keychainRead(account: keychainSendAccount) }
+        set { keychainWrite(account: keychainSendAccount, value: newValue) }
     }
 
     private func keychainRead(account: String) -> String? {
@@ -157,9 +166,10 @@ final class TokenStore {
         return Date(timeIntervalSince1970: exp) < Date()
     }
 
-    func save(token: String, refreshToken: String?, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false, isClubAdmin: Bool = false) {
+    func save(token: String, refreshToken: String?, sendToken: String? = nil, userId: UUID, displayName: String, nickname: String? = nil, avatarUrl: String? = nil, isAdmin: Bool = false, isClubAdmin: Bool = false) {
         self.token = token
         self.refreshToken = refreshToken
+        self.sendToken = sendToken
         self.userId = userId
         self.displayName = displayName
         self.nickname = nickname
@@ -171,6 +181,7 @@ final class TokenStore {
     func clear() {
         token = nil
         refreshToken = nil
+        sendToken = nil
         userId = nil
         // displayName intentionally kept — Apple only sends it on first auth,
         // so we preserve it as a fallback for re-login on the same device

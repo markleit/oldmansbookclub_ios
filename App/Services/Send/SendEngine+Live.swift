@@ -15,15 +15,13 @@ extension SendEngine {
             baseURL: { ServerEnvironment.baseURL },
             deviceId: { TokenStore.shared.registeredDeviceToken },
             myUserId: { TokenStore.shared.userId },
-            token: { await APIClient.shared.sendToken(validFor: $0) },
-            // The stored token is the one the server just refused: refresh unless it has changed.
-            tokenAfterRejection: { await APIClient.shared.sendToken(afterRejecting: TokenStore.shared.token ?? "") },
-            uploadLink: { clubId, ext in
-                let link = try await APIClient.shared.getUploadUrl(clubId: clubId, ext: ext)
-                guard let url = URL(string: link.uploadUrl) else { throw URLError(.badURL) }
-                return (url, link.mediaUrl)
+            token: { await APIClient.shared.sendToken() },
+            // The stored token is the one the server just refused: renew unless it has changed.
+            tokenAfterRejection: {
+                await APIClient.shared.sendToken(afterRejecting: TokenStore.shared.sendToken ?? TokenStore.shared.token ?? "")
             },
-            compressVideo: { await VideoCompressor.compress($0) },
+            compressVideo: { await VideoCompressor.compress($0, progress: $1) },
+            videoWork: { VideoSendKeeper.shared.apply($0) },
             schedule: { delay, action in
                 let task = Task { @MainActor in
                     try? await Task.sleep(for: .seconds(delay))
@@ -53,10 +51,10 @@ extension SendEngine {
         NotificationCenter.default.addObserver(forName: .apiServerReachable, object: nil, queue: .main) { _ in
             Task { @MainActor in SendEngine.shared.serverReachable() }
         }
-        // Leaving the foreground: hand iOS whatever it doesn't have yet, so it goes with the app
-        // suspended. Started while the app is still in the foreground (a transfer handed over from
-        // the background is scheduled at iOS's discretion), and kept awake until it's handed over —
-        // a token refresh can come first.
+        // Leaving the foreground: every unsent message already has its carrier with iOS; the app is
+        // kept awake (iOS's ~30 s) only for a carrier still being built — a token being renewed, a
+        // video compressing or reserving (which also has continued processing, iOS 26+).
+        VideoSendKeeper.shared.onEnded = { SendEngine.shared.videoWorkEnded($0) }
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil,
                                                queue: .main) { _ in
             MainActor.assumeIsolated {

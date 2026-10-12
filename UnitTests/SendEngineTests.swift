@@ -18,8 +18,18 @@ final class SendEngineTests: XCTestCase {
 
     final class FakeTransport: SendTransport {
         var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)?
+        var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)?
         var background: [(key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)] = []
         var direct: [URLRequest] = []
+        /// The client id of each direct JSON send, in order.
+        var directClientIds: [String] = []
+        /// Video reservations (design v2) — direct requests too, kept apart from the message sends.
+        var reservations: [(request: URLRequest, body: [String: Any])] = []
+        /// How a reservation answers; default: a create-only link to a new blob.
+        var reserveResponse: () async -> SendResponse = {
+            SendResponse(status: 200, body: try! JSONSerialization.data(withJSONObject: [
+                "upload_url": "https://blob.test/v.mp4?sig=create", "media_url": "https://blob.test/v.mp4"]))
+        }
         var cancelled: [UUID] = []
         var held: [SendTaskKey] = []
         /// How a direct send answers; default: never in time (the background copy decides).
@@ -34,7 +44,14 @@ final class SendEngineTests: XCTestCase {
             onSubmit?(key)
         }
         func sendDirect(_ request: URLRequest, body: Data?, bodyFile: URL?) async -> SendResponse {
+            if request.url?.path.hasSuffix("/messages/video") == true {
+                reservations.append((request, body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]))
+                return await reserveResponse()
+            }
             direct.append(request)
+            if let id = body.flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })?["client_id"] as? String {
+                directClientIds.append(id)
+            }
             return await directResponse(request)
         }
         func cancelBackground(itemId: UUID) { cancelled.append(itemId) }
@@ -56,11 +73,12 @@ final class SendEngineTests: XCTestCase {
     private var now = Date(timeIntervalSince1970: 1_000_000)
     private var appActive = true
     private var network = true
-    private var tokenCalls: [TimeInterval] = []
+    private var tokenCalls = 0
     private var tokenResult: APIClient.SendToken = .token("tok")
     /// When set, getting a token waits here (a refresh that takes a while).
     private var tokenGate: (() async -> Void)?
-    private var uploadLinkCalls = 0
+    /// Everything the engine told continued processing (design v2).
+    private var videoWork: [VideoWork] = []
     /// Videos handed to the compressor, and what it does: by default a smaller copy.
     private var compressed: [URL] = []
     private var compressGate: (() async -> Void)?
@@ -87,7 +105,8 @@ final class SendEngineTests: XCTestCase {
         confirmations = []
         cached = []
         wakes = []
-        tokenCalls = []
+        tokenCalls = 0
+        videoWork = []
     }
 
     override func tearDown() async throws {
@@ -105,8 +124,8 @@ final class SendEngineTests: XCTestCase {
             baseURL: { URL(string: "https://api.test")! },
             deviceId: { "device-1" },
             myUserId: { [unowned self] in self.me },
-            token: { [unowned self] validFor in
-                self.tokenCalls.append(validFor)
+            token: { [unowned self] in
+                self.tokenCalls += 1
                 if let gate = self.tokenGate { await gate() }
                 return self.tokenResult
             },
@@ -115,15 +134,13 @@ final class SendEngineTests: XCTestCase {
                 if let gate = self.refreshGate { await gate() }
                 return self.tokenAfterRejectionResult
             },
-            uploadLink: { [unowned self] _, _ in
-                self.uploadLinkCalls += 1
-                return (URL(string: "https://blob.test/v.mp4?sig=w")!, "https://blob.test/v.mp4")
-            },
-            compressVideo: { [unowned self] source in
+            compressVideo: { [unowned self] source, progress in
                 self.compressed.append(source)
+                progress(0.5)
                 if let gate = self.compressGate { await gate() }
                 return self.compression(source)
             },
+            videoWork: { [unowned self] in self.videoWork.append($0) },
             schedule: { [unowned self] delay, action in
                 let index = self.wakes.count
                 self.wakes.append((delay, action, false))
@@ -273,13 +290,17 @@ final class SendEngineTests: XCTestCase {
 
     // MARK: - U4: auth and limits
 
-    func testATokenIsRefreshedIfItExpiresTooSoonForIOSToHoldTheRequest() async throws {
+    func testR7EverySendCarriesTheSendTokenOnBothCopies() async throws {
+        // Design v2 — the week-long send token rides on the carrier, so a message iOS holds for
+        // days can't arrive with an expired token. (Which token, renewed when: APIClient.sendToken.)
+        tokenResult = .token("send-token")
         let engine = await started(makeEngine())
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
-        XCTAssertEqual(tokenCalls, [600])
+        XCTAssertEqual(tokenCalls, 1)
+        XCTAssertEqual(transport.background.first?.request.value(forHTTPHeaderField: "Authorization"), "Bearer send-token")
+        XCTAssertEqual(transport.direct.first?.value(forHTTPHeaderField: "Authorization"), "Bearer send-token")
     }
-
     func testARefusedTokenIsRefreshedAndTheMessageResent() async throws {
         let engine = await started(makeEngine())
         let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
@@ -323,7 +344,7 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.background.count, afterClock, "the refresh added a third, overlapping attempt")
     }
 
-    func testASecondRefusedTokenWaitsOnTheClock() async throws {
+    func testASecondRefusedTokenIsRetriedOnTheClockNotRenewedInALoop() async throws {
         let engine = await started(makeEngine())
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
@@ -333,29 +354,30 @@ final class SendEngineTests: XCTestCase {
         transport.finish(1, status(401))
         await settle()
 
-        XCTAssertEqual(rejections, 1)
-        XCTAssertEqual(engine.items.first?.status, .waiting)
+        XCTAssertEqual(rejections, 1, "renewed once")
+        XCTAssertEqual(transport.background.count, 3, "a new carrier, held until the clock is due")
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 2]).notBefore, now.addingTimeInterval(1))
     }
-
     func testRateLimitedWaitsExactlyAsLongAsTheServerSays() async throws {
+        transport.directResponse = { [unowned self] _ in self.status(429, error: "Slow down", retryAfter: "20") }
         let engine = await started(makeEngine())
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
-        await settle()
+        await settle()   // the direct copy: 429
 
-        transport.finish(0, status(429, error: "Slow down", retryAfter: "20"))
-        XCTAssertEqual(engine.items.first?.status, .waiting)
+        XCTAssertEqual(transport.background.count, 2, "its carrier replaced, held by iOS until Retry-After")
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(20))
+        let direct = transport.direct.count
 
         now = now.addingTimeInterval(19)
         engine.pump("test")
         await settle()
-        XCTAssertEqual(transport.background.count, 1, "not before Retry-After")
+        XCTAssertEqual(transport.direct.count, direct, "not before Retry-After")
 
         now = now.addingTimeInterval(1)
         engine.pump("test")
         await settle()
-        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(transport.direct.count, direct + 1)
     }
-
     // MARK: - U5: refusals and delete
 
     func testARefusalShowsTheReasonAndIsNeverRetried() async throws {
@@ -409,21 +431,26 @@ final class SendEngineTests: XCTestCase {
         await settle()
         for i in 0..<3 { transport.finish(i, status(503)) }
         await settle()
-        XCTAssertTrue(engine.items.allSatisfy { $0.status == .waiting })
+        XCTAssertEqual(transport.background.count, 6, "each failed carrier replaced at once: every message keeps one")
+        XCTAssertTrue(transport.background.dropFirst(3).allSatisfy { $0.notBefore == now.addingTimeInterval(1) },
+                      "held by iOS until the clock is due")
         XCTAssertEqual(wakes.last { !$0.cancelled }?.delay, 1, "three failures in one round move the clock once")
+        let before = transport.directClientIds.count
 
         now = now.addingTimeInterval(1)
         engine.pump("retry clock")
         await settle()
-        XCTAssertEqual(transport.background.count, 4, "one probe per tick while the server's down, not three")
-        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 3]).key.itemId, items[0].id, "the oldest goes first")
+        XCTAssertEqual(Array(transport.directClientIds.dropFirst(before)), [items[0].id.uuidString.lowercased()],
+                       "one probe per tick while the server's down, not three — the oldest")
 
-        transport.finish(3, delivered(items[0].id))
+        now = now.addingTimeInterval(2)
+        transport.directResponse = { [unowned self] _ in self.delivered(UUID()) }
+        engine.pump("retry clock")
         await settle()
-        XCTAssertEqual(Set(transport.background.dropFirst(4).map(\.key.itemId)), [items[1].id, items[2].id],
+        XCTAssertEqual(Set(transport.directClientIds.dropFirst(before + 2)),
+                       [items[1].id.uuidString.lowercased(), items[2].id.uuidString.lowercased()],
                        "the probe landed: the other two go at once")
     }
-
     func testWhileIOSHoldsItsCopyAFailingMessageStillShowsWaitingAndIsRetriedDirectly() async throws {
         // The server is down but the phone has a network: iOS can sit on its background copy for a
         // long time. The bubble must still turn to "waiting", and the engine must keep retrying
@@ -495,12 +522,12 @@ final class SendEngineTests: XCTestCase {
         await settle()
         transport.finish(0, status(503))
         await settle()
-        let before = transport.background.count
+        let before = transport.direct.count
 
         engine.sendNow(item.id)
         await settle()
 
-        XCTAssertEqual(transport.background.count, before + 1)
+        XCTAssertEqual(transport.direct.count, before + 1, "Send now goes directly at once, whatever the clock")
     }
 
     // MARK: - Suspended: everything unsent is with iOS
@@ -526,29 +553,29 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(confirmations.map(\.clientId), [item.id])
     }
 
-    func testLeavingTheAppHandsIOSWhatsWaitingOnTheClock() async throws {
-        // The server's down: the message fails and waits on the retry clock — which stops when the
-        // app is suspended, so it has to go to iOS as the app leaves.
+    func testW2LeavingTheAppHandsNothingOverEveryMessageAlreadyHasItsCarrier() async throws {
+        // Design v2: the server's down; the message's carrier failed and was replaced at once, held
+        // by iOS until the clock is due. Leaving the app has nothing to hand over, and nothing to wait
+        // for — iOS sends it with the app suspended.
         let engine = await started(makeEngine())
         transport.directResponse = { _ in SendResponse(status: 503) }
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
         transport.finish(0, status(503))
         await settle()
-        XCTAssertEqual(engine.items.first?.status, .waiting)
-        let directBefore = transport.direct.count
-
-        var handedOver = false
-        engine.appWillResignActive { handedOver = true }
-        await settle()
-
-        XCTAssertTrue(handedOver, "the app is kept awake until this reports done")
-        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(transport.background.count, 2, "replaced at once")
         XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1),
                        "iOS keeps to the backoff — the server isn't hit again early")
+        let directBefore = transport.direct.count
+
+        var done = false
+        engine.appWillResignActive { done = true }
+        await settle()
+
+        XCTAssertTrue(done, "nothing to keep the app awake for")
+        XCTAssertEqual(transport.background.count, 2, "nothing handed over on leaving")
         XCTAssertEqual(transport.direct.count, directBefore, "no direct copy skipping the backoff")
     }
-
     func testW3LeavingTheAppWaitsForAHandOverStillGettingItsToken() async throws {
         // 2.2 (3) device pass: offline, ten photos were on their way to iOS but still getting a
         // token when the phone locked. Leaving the app didn't wait for them, the app was suspended
@@ -604,23 +631,29 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.background.count, 0)
     }
 
-    func testAFailureWhileSuspendedGoesStraightBackToIOSOnTheBackoff() async throws {
-        let engine = await started(makeEngine())
-        transport.directResponse = { _ in SendResponse(status: 503) }
-        let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
-        await settle()
+    func testR6AFailedCarrierIsReplacedAtOnceHeldUntilTheClockAppOpenOrNot() async throws {
+        // Design v2: the same rule in the foreground and suspended — no hand-back step that only
+        // runs in one of them.
+        for active in [true, false] {
+            transport = FakeTransport()
+            transport.directResponse = { _ in SendResponse(status: 503) }
+            appActive = true
+            now = Date(timeIntervalSince1970: 1_000_000)
+            let engine = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent("r6-\(active)"))))
+            let item = engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+            await settle()
 
-        appActive = false
-        transport.finish(0, status(503))   // iOS's copy fails while the app is suspended
-        await settle()
+            appActive = active
+            transport.finish(0, status(503))   // iOS's copy fails
+            await settle()
 
-        XCTAssertEqual(transport.background.count, 2, "not left waiting for the app to be opened")
-        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1))
-        transport.finish(1, delivered(item.id))
-        await settle()
-        XCTAssertTrue(engine.items.isEmpty)
+            XCTAssertEqual(transport.background.count, 2, "active=\(active): not left waiting for the app")
+            XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1))
+            transport.finish(1, delivered(item.id))
+            await settle()
+            XCTAssertTrue(engine.items.isEmpty)
+        }
     }
-
     func testRateLimitedWhileSuspendedGoesBackToIOSAfterRetryAfter() async throws {
         appActive = false
         let engine = await started(makeEngine())
@@ -642,7 +675,7 @@ final class SendEngineTests: XCTestCase {
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
 
-        XCTAssertEqual(tokenCalls.count, 1)
+        XCTAssertEqual(tokenCalls, 1)
         XCTAssertEqual(transport.background.count, 0)
         XCTAssertEqual(engine.items.first?.status, .waiting)
     }
@@ -702,7 +735,7 @@ final class SendEngineTests: XCTestCase {
         for round in 1...20 {
             transport.finish(transport.background.count - 1, status(503))
             await settle()
-            XCTAssertEqual(engine.items.first?.status, .waiting, "round \(round): never given up on, never red")
+            XCTAssertNotEqual(engine.items.first?.status, .refused, "round \(round): never given up on, never red")
             now = now.addingTimeInterval(61)   // past the longest gap
             engine.pump("retry clock")
             await settle()
@@ -727,15 +760,16 @@ final class SendEngineTests: XCTestCase {
             await settle()
             transport.finish(0, status(503))
             await settle()
-            XCTAssertEqual(engine.items.first?.status, .waiting, trigger.name)
+            XCTAssertEqual(transport.background.count, 2, "\(trigger.name): its carrier replaced, held for the clock")
+            let direct = transport.direct.count
 
             engine.pump("retry clock")   // control: the clock alone says not yet
             await settle()
-            XCTAssertEqual(transport.background.count, 1, "\(trigger.name): the clock sent it early")
+            XCTAssertEqual(transport.direct.count, direct, "\(trigger.name): the clock sent it early")
 
-            trigger.fire(engine)          // same instant: the trigger alone sends it
+            trigger.fire(engine)          // same instant: the trigger alone sends it, directly
             await settle()
-            XCTAssertEqual(transport.background.count, 2, "\(trigger.name) didn't send the waiting message at once")
+            XCTAssertEqual(transport.direct.count, direct + 1, "\(trigger.name) didn't send the waiting message at once")
         }
     }
 
@@ -747,7 +781,7 @@ final class SendEngineTests: XCTestCase {
         await settle()
         transport.finish(0, status(503))
         await settle()
-        XCTAssertEqual(first.items.first?.status, .waiting)
+        XCTAssertEqual(transport.background.count, 2, "replaced — but that carrier is lost with this run")
 
         // The app was suspended and terminated; iOS relaunches it in the background (a transfer
         // finished, or it's time for a fetch). A new run, the same outbox on disk.
@@ -756,7 +790,7 @@ final class SendEngineTests: XCTestCase {
         let relaunched = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent("Outbox"))))
         await settle()
 
-        XCTAssertEqual(transport.background.count, 1, "sent at once on the wake, not when the app is next opened")
+        XCTAssertEqual(transport.background.count, 1, "a carrier again at once on the wake, not when the app is next opened")
         XCTAssertEqual(relaunched.items.first?.status, .inFlight)
     }
 
@@ -878,7 +912,7 @@ final class SendEngineTests: XCTestCase {
 
     // MARK: - Video and missing files
 
-    func testAVideoUploadsItsBlobThenPostsTheURL() async throws {
+    func testV1AVideoIsReservedThenItsCarrierIsOneUploadToTheReservedBlob() async throws {
         let engine = await started(makeEngine())
         let name = try engine.files.importData(Data([7, 7]), extension: "mp4")
 
@@ -886,20 +920,78 @@ final class SendEngineTests: XCTestCase {
                                        durationSeconds: nil, replyTo: nil)
         await settle()
 
+        let reservation = try XCTUnwrap(transport.reservations.first)
+        XCTAssertEqual(reservation.request.url?.path, "/books/\(book.uuidString.lowercased())/messages/video")
+        XCTAssertEqual(reservation.request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        XCTAssertEqual(reservation.body["client_id"] as? String, item.id.uuidString.lowercased())
+        XCTAssertNotNil(reservation.body["sent_at"], "tap time: the server creates the message with it")
         XCTAssertEqual(transport.background.count, 1)
-        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 0]).request.httpMethod, "PUT")
-        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 0]).request.value(forHTTPHeaderField: "x-ms-blob-type"), "BlockBlob")
+        let upload = try XCTUnwrap(transport.background[safe: 0])
+        XCTAssertEqual(upload.request.httpMethod, "PUT")
+        XCTAssertEqual(upload.request.url?.absoluteString, "https://blob.test/v.mp4?sig=create")
+        XCTAssertEqual(upload.request.value(forHTTPHeaderField: "x-ms-blob-type"), "BlockBlob")
+        XCTAssertNil(upload.request.value(forHTTPHeaderField: "Authorization"))
 
         transport.finish(0, SendResponse(status: 201))
         await settle()
 
-        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(SendPolicy.unsent(in: engine.items, bookId: book).count, 0, "not unsent: the server creates it now")
+        XCTAssertEqual(transport.background.count, 2, "with the app open, its post confirms it")
         let post = json(try XCTUnwrap(transport.background[safe: 1]).request, bodyFile: try XCTUnwrap(transport.background[safe: 1]).bodyFile)
         XCTAssertEqual(post["media_url"] as? String, "https://blob.test/v.mp4")
         XCTAssertEqual(post["type"] as? String, "Video")
         XCTAssertEqual(post["client_id"] as? String, item.id.uuidString.lowercased())
     }
 
+    func testV2AVideoWhoseUploadLandsWhileSuspendedNeedsNothingMoreFromTheApp() async throws {
+        let engine = await started(makeEngine())
+        let name = try engine.files.importData(Data([7, 7]), extension: "mp4")
+        let item = engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: name, contentType: "video/mp4",
+                                       durationSeconds: nil, replyTo: nil)
+        await settle()
+
+        appActive = false
+        transport.finish(0, SendResponse(status: 201))
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 1, "no post from the background: the server creates the message")
+        XCTAssertEqual(reminders.last, .some(nil), "no 'waiting to send' reminder — it isn't")
+        XCTAssertEqual(SendPolicy.unsent(in: engine.items, bookId: book).count, 0)
+
+        appActive = true
+        transport.directResponse = { [unowned self] _ in self.delivered(item.id) }
+        engine.appBecameActive()
+        await settle()
+        XCTAssertTrue(engine.items.isEmpty, "confirmed when the app is next open")
+    }
+
+    func testV5ReservingASendThatAlreadyGotThroughUploadsNothing() async throws {
+        let engine = await started(makeEngine())
+        let name = try engine.files.importData(Data([7, 7]), extension: "mp4")
+        transport.reserveResponse = { [unowned self] in
+            let message = try! JSONSerialization.jsonObject(with: self.delivered(UUID()).body!)
+            return SendResponse(status: 200, body: try! JSONSerialization.data(withJSONObject: ["message": message]))
+        }
+        engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: name, contentType: "video/mp4",
+                            durationSeconds: nil, replyTo: nil)
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 0, "not uploaded twice")
+        XCTAssertTrue(engine.items.isEmpty)
+        XCTAssertEqual(confirmations.count, 1)
+    }
+
+    func testV6AReservationTheServerRefusesShowsTheReasonAndUploadsNothing() async throws {
+        let engine = await started(makeEngine())
+        let name = try engine.files.importData(Data([7, 7]), extension: "mp4")
+        transport.reserveResponse = { [unowned self] in self.status(400, error: "Not a member of this club.") }
+        engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: name, contentType: "video/mp4",
+                            durationSeconds: nil, replyTo: nil)
+        await settle()
+
+        XCTAssertEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .refused("Not a member of this club."))
+        XCTAssertEqual(transport.background.count, 0)
+    }
     // MARK: - U10: the force-quit reminder follows what's unsent (PR 7)
 
     func testU10TheReminderIsSetWhenSomethingsUnsentAndMovesAsItSends() async throws {
@@ -1072,7 +1164,7 @@ final class SendEngineTests: XCTestCase {
         await settle()
 
         XCTAssertEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .refused("Video is too large (max 100 MB)."))
-        XCTAssertEqual(uploadLinkCalls, 0, "nothing uploaded")
+        XCTAssertEqual(transport.reservations.count, 0, "nothing reserved or uploaded")
         XCTAssertEqual(engine.items.first?.id, item.id)
     }
 
@@ -1081,8 +1173,9 @@ final class SendEngineTests: XCTestCase {
         let engine = await started(makeEngine())
         let item = try queueVideo(engine)
         await settle()
-        XCTAssertEqual(engine.items.first?.status, .queued, "waiting to start again, not failed")
-        XCTAssertEqual(uploadLinkCalls, 0)
+        XCTAssertEqual(engine.items.first?.status, .waiting, "waiting to start again, not failed")
+        XCTAssertNotEqual(engine.displayState(of: try XCTUnwrap(engine.items.first)), .refused(""))
+        XCTAssertEqual(transport.reservations.count, 0)
 
         compression = { source in
             let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
@@ -1109,33 +1202,114 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.background.count, 1)
     }
 
-    func testU9OfflineAVideoIsCompressedThenWaitsWithoutAskingForAnUploadLink() async throws {
+    func testU9OfflineAVideoIsCompressedThenWaitsWithoutAReservation() async throws {
         network = false
-        appActive = false
         let engine = await started(makeEngine())
         _ = try queueVideo(engine)
         await settle()
 
         XCTAssertEqual(compressed.count, 1, "compressing needs no network")
-        XCTAssertEqual(uploadLinkCalls, 0, "an upload link needs one: don't wait for it inside the hand-over")
+        XCTAssertEqual(transport.reservations.count, 0, "a reservation needs one: no carrier yet")
         XCTAssertEqual(engine.items.first?.status, .waiting)
-        XCTAssertEqual(transport.background.count, 0, "and no hand-back loop while suspended")
-    }
 
-    func testU9AFailedUploadGetsAFreshLink() async throws {
+        appActive = false   // locked, still offline
+        engine.pump("retry clock")
+        await settle()
+        XCTAssertEqual(transport.background.count, 0, "nothing to hand iOS without a reservation")
+        XCTAssertEqual(compressed.count, 1, "and not compressed again")
+    }
+    func testU9AFailedUploadIsReplacedAtOnceWithAFreshReservationNotCompressedAgain() async throws {
         let engine = await started(makeEngine())
         _ = try queueVideo(engine)
         await settle()
         transport.finish(0, SendResponse(status: 503))
         await settle()
-        now = now.addingTimeInterval(1)
-        engine.pump("retry clock")
-        await settle()
 
-        XCTAssertEqual(uploadLinkCalls, 2, "an upload link can expire: each try asks for a new one")
+        XCTAssertEqual(transport.reservations.count, 2, "a fresh link for the new carrier")
+        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1), "held until the clock")
         XCTAssertEqual(compressed.count, 1, "compressed once, not again on a retry")
     }
 
+    func testV7AnUploadStorageRefusesIsReservedAgainNotShownAsRefused() async throws {
+        // A week-old link, or a repeat of an upload that already landed (the link is create-only):
+        // the reservation then says it's sent, or gives a fresh link.
+        let engine = await started(makeEngine())
+        _ = try queueVideo(engine)
+        await settle()
+        transport.finish(0, SendResponse(status: 403))
+        await settle()
+
+        XCTAssertNotEqual(engine.items.first?.status, .refused)
+        XCTAssertEqual(transport.reservations.count, 2, "reserved again")
+    }
+
+    // MARK: - Continued processing for a video (design v2)
+
+    func testCPAVideoAsksIOSToKeepItsWorkGoingAtTheTapAndReleasesItOnceUploaded() async throws {
+        let engine = await started(makeEngine())
+        let item = try queueVideo(engine)
+        await settle()
+
+        XCTAssertEqual(videoWork.first, .start(item.id), "asked for at the tap, with the app in front")
+        XCTAssertTrue(videoWork.contains(.progress(item.id, 0.35)), "compressing reports progress")
+        XCTAssertTrue(videoWork.contains(.progress(item.id, 0.75)), "reserved")
+        XCTAssertFalse(videoWork.contains { if case .finish = $0 { return true }; return false }, "still uploading")
+
+        transport.onBackgroundProgress?(try XCTUnwrap(transport.background.first).key, 50, 100)
+        XCTAssertEqual(videoWork.last, .progress(item.id, 0.875), "the upload is the last quarter")
+
+        transport.finish(0, SendResponse(status: 201))
+        await settle()
+        XCTAssertEqual(videoWork.last, .finish(item.id, success: true))
+    }
+
+    func testCPWhenIOSEndsItTheCompressionStopsAndStartsAgainOnlyWithTheAppOpen() async throws {
+        var release: CheckedContinuation<Void, Never>?
+        compressGate = { await withCheckedContinuation { release = $0 } }
+        compression = { _ in Task.isCancelled ? .interrupted : .unsupported }   // like the real export
+        let engine = await started(makeEngine())
+        let item = try queueVideo(engine)
+        await settle()
+        XCTAssertEqual(compressed.count, 1)
+
+        appActive = false
+        engine.videoWorkEnded(item.id)   // expired, or cancelled by the user
+        release?.resume()
+        await settle()
+        XCTAssertEqual(engine.items.first?.status, .waiting)
+
+        compressGate = nil
+        compression = { _ in .unsupported }
+        engine.pump("retry clock")
+        await settle()
+        XCTAssertEqual(compressed.count, 1, "not restarted with the app suspended and nothing keeping it going")
+
+        appActive = true
+        engine.appBecameActive()
+        await settle()
+        XCTAssertEqual(compressed.count, 2, "started again with the app open")
+        XCTAssertEqual(transport.background.count, 1)
+    }
+
+    func testCPLeavingTheAppOrAWakeDoesntWaitForAVideoStillCompressing() async throws {
+        compressGate = { await withCheckedContinuation { _ in } }   // a long video
+        let engine = await started(makeEngine())
+        _ = try queueVideo(engine)
+        await settle()
+
+        var done = false
+        engine.appWillResignActive { done = true }
+        await settle()
+        XCTAssertTrue(done, "compressing can outlast iOS's ~30 s and a wake: continued processing (or the next run) has it")
+    }
+
+    func testCPNotAskedForAMessageThatIsntAVideo() async throws {
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        XCTAssertEqual(videoWork, [])
+    }
     func testAMessageWhoseFileIsGoneIsRefusedNotSilentlyDropped() async throws {
         let engine = await started(makeEngine())
         let name = try engine.files.importData(Data([1]), extension: "jpg")

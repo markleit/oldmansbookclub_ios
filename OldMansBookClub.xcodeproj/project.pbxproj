@@ -95,6 +95,7 @@
 		927A3B403B545009CDB50392 /* VideoCompressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AC459FB1AA49EC0525C0C76 /* VideoCompressor.swift */; };
 		958AF33D661E4DE915A5862A /* ChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF8FBEB2C7086C94FA433207 /* ChatService.swift */; };
 		97298811FEDFE21DCB4F4492 /* Outbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 724B18FE994A9E3118418BDF /* Outbox.swift */; };
+		97615135F01D81B7D0941B36 /* VideoSendKeeper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E06F8FFC2B5DB96D2F42F2B /* VideoSendKeeper.swift */; };
 		98951A0C68CF1E7E963539CC /* DeviceOnlyUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6D56FA74C00E534B957B96F /* DeviceOnlyUITests.swift */; };
 		98F1C24B88DD320D01538463 /* ImageAspectStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9166A20FFC2B637533597918 /* ImageAspectStore.swift */; };
 		9B5616C5F64A844602390C55 /* SendReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E70DFCEC2883172B2091C7E /* SendReconciler.swift */; };
@@ -194,6 +195,7 @@
 		17F73295390535AC4ACBB238 /* SendReconcilerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendReconcilerTests.swift; sourceTree = "<group>"; };
 		1844F89694E24ADE859479B3 /* ShareAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareAPI.swift; sourceTree = "<group>"; };
 		1A0CCA78DE13690C59CEDA13 /* LibraryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryUITests.swift; sourceTree = "<group>"; };
+		1E06F8FFC2B5DB96D2F42F2B /* VideoSendKeeper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSendKeeper.swift; sourceTree = "<group>"; };
 		22282622C7A5BEAAEE8961CE /* AudioCue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCue.swift; sourceTree = "<group>"; };
 		2C8A47AFF41FA54C75E6E2C6 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		2F5D77D567C8A9BD447614D1 /* ProfileViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileViewModel.swift; sourceTree = "<group>"; };
@@ -391,6 +393,7 @@
 				C1E6668CAA39F95F09DE9EE5 /* SendRequestBuilder.swift */,
 				1362835E26761C1143D9AC4F /* SendTransport.swift */,
 				7AC459FB1AA49EC0525C0C76 /* VideoCompressor.swift */,
+				1E06F8FFC2B5DB96D2F42F2B /* VideoSendKeeper.swift */,
 			);
 			path = Send;
 			sourceTree = "<group>";
@@ -831,6 +834,7 @@
 				BE17F4E08A9013771FDE6A47 /* TranscriptStore.swift in Sources */,
 				398B5A1A34560D1CC2DC71C1 /* UnreadStore.swift in Sources */,
 				927A3B403B545009CDB50392 /* VideoCompressor.swift in Sources */,
+				97615135F01D81B7D0941B36 /* VideoSendKeeper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -953,7 +957,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1163,7 +1167,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;

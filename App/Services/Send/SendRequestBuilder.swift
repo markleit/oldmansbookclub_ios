@@ -2,8 +2,8 @@ import Foundation
 
 // #204 — the HTTP request for each step of a send, built as plain data so it's unit-tested
 // (SendRequestBuilderTests) against the API's contract: snake_case JSON for text, forwards and
-// media-by-URL; the file itself as the body for voice and photo (PR 1's one-request send); a blob
-// PUT for video's upload. Every message carries `client_id` (dedup) and `sent_at` (tap time).
+// media-by-URL; the file itself as the body for voice and photo (PR 1's one-request send); for a
+// video, its reservation and then a blob PUT (design v2). Every message carries `client_id` (dedup) and `sent_at` (tap time).
 enum SendRequestBuilder {
 
     /// What one step of a send is.
@@ -11,7 +11,7 @@ enum SendRequestBuilder {
         /// Create the message. `bodyFile` nil means the body is `jsonBody` (written to a file by
         /// the engine for a background task); non-nil means upload that media file as the body.
         case post
-        /// Upload a video's bytes to its blob (the SAS upload link) before posting it.
+        /// Upload a video's bytes to its reserved blob; the server creates the message when it lands.
         case blobUpload(mediaUrl: String)
     }
 
@@ -66,7 +66,24 @@ enum SendRequestBuilder {
                      bodyFile: nil)
     }
 
-    /// The blob upload for a video (SAS link from /media/upload-url — no Authorization header).
+    /// A video's reservation (#204 design v2): its message without the file, which then goes
+    /// straight to storage on the create-only link the server answers with. The server creates the
+    /// message when that upload lands.
+    static func reserveVideo(_ item: SendItem, baseURL: URL, token: String, deviceId: String?) -> Built {
+        let path = baseURL.appendingPathComponent("books/\(item.bookId.uuidString.lowercased())/messages/video")
+        var json: [String: Any] = [
+            "client_id": item.id.uuidString.lowercased(),
+            "sent_at": sentAtFormatter.string(from: item.sentAt),
+        ]
+        if let parent = item.parentMessageId { json["parent_message_id"] = parent.uuidString.lowercased() }
+        if let deviceId { json["device_id"] = deviceId }
+        var request = authorized(URLRequest(url: path), token: token)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return Built(request: request, jsonBody: try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]),
+                     bodyFile: nil)
+    }
+
+    /// The blob upload for a video (the reservation's create-only link — no Authorization header).
     static func blobUpload(uploadUrl: URL, fileURL: URL, contentType: String) -> Built {
         var request = URLRequest(url: uploadUrl)
         request.httpMethod = "PUT"

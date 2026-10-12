@@ -42,18 +42,28 @@ protocol SignInStore: Sendable {
     func accessToken() -> String?
     func refreshToken() -> String?
     func saveAccessToken(_ token: String)
+    /// #204 design v2 — the week-long, send-only token (TokenStore.sendToken).
+    func sendToken() -> String?
+    func saveSendToken(_ token: String)
 }
 
 /// The app's own keychain items (TokenStore), via the keychain group both targets share.
 struct KeychainSignInStore: SignInStore {
     func accessToken() -> String? { read(SharedContainer.keychainTokenAccount) }
     func refreshToken() -> String? { read(SharedContainer.keychainRefreshAccount) }
+    func sendToken() -> String? { read(SharedContainer.keychainSendAccount) }
 
     /// Updates the existing item only. If there's no item the user isn't signed in, and creating
     /// one from here would be wrong — sign-in belongs to the app.
     func saveAccessToken(_ token: String) {
         let attributes: [CFString: Any] = [kSecValueData: Data(token.utf8)]
         SecItemUpdate(query(SharedContainer.keychainTokenAccount) as CFDictionary, attributes as CFDictionary)
+    }
+
+    /// Updates the existing item only, like the access token: the app creates it at sign-in.
+    func saveSendToken(_ token: String) {
+        let attributes: [CFString: Any] = [kSecValueData: Data(token.utf8)]
+        SecItemUpdate(query(SharedContainer.keychainSendAccount) as CFDictionary, attributes as CFDictionary)
     }
 
     private func query(_ account: String) -> [CFString: Any] {
@@ -109,6 +119,23 @@ actor SignInSession {
         return try await refresh()
     }
 
+    /// What the share sheet's uploads carry (#204 design v2): the week-long send token, so an upload
+    /// iOS holds for days still arrives authorized. Renewed when it has under a day left; if that
+    /// can't happen right now, it goes while it's still valid. A server that issues none (older
+    /// than design v2) gets the access token, as before.
+    func sendToken() async throws -> String {
+        guard let send = store.sendToken() else { return try await accessToken() }
+        if !JWTExpiry.needsRefresh(send, now: now(), leeway: Self.sendTokenFreshness) { return send }
+        do {
+            let access = try await refresh()
+            return store.sendToken() ?? access
+        } catch SignInError.unreachable where !JWTExpiry.needsRefresh(send, now: now()) {
+            return send
+        }
+    }
+
+    static let sendTokenFreshness: TimeInterval = 24 * 3600
+
     /// The server refused `rejected` (401). If the stored token has changed since — the app or
     /// another request already refreshed — use that; otherwise refresh.
     func tokenAfterRejection(of rejected: String) async throws -> String {
@@ -145,6 +172,7 @@ actor SignInSession {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let access = json["access_token"] as? String else { throw SignInError.unreachable }
         store.saveAccessToken(access)
+        if let send = json["send_token"] as? String { store.saveSendToken(send) }
         return access
     }
 }

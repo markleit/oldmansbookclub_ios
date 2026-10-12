@@ -62,11 +62,6 @@ enum SendPolicy {
 
     // MARK: When to send
 
-    /// Which items to hand to the transport now (#204 decision 2, the shared clock): with no
-    /// recent failures, everything that's ready goes at once, in parallel (order comes from each
-    /// message's tap time, not from posting order). While backing off, only the OLDEST ready item
-    /// goes, as a probe — if the server's down, ten waiting photos cost one request per tick, not
-    /// ten — and when the probe lands the clock resets and everything else follows.
     /// A book's unsent messages, for its Library row (PR 7): "N unsent", red if any was refused.
     struct UnsentSummary: Equatable {
         var count = 0
@@ -74,33 +69,47 @@ enum SendPolicy {
     }
 
     static func unsent(in items: [SendItem], bookId: UUID) -> UnsentSummary {
-        let mine = items.filter { $0.bookId == bookId }
+        // A video whose upload has landed is the server's to create (design v2): not unsent.
+        let mine = items.filter { $0.bookId == bookId && $0.serverCreates != true }
         return UnsentSummary(count: mine.count, anyRefused: mine.contains { $0.status == .refused })
     }
 
     enum TokenChoice: Equatable { case useStored, refresh }
 
-    /// Which token a send hands to iOS. One with plenty of time left is used as is; one about to
-    /// expire is refreshed first — but only with a network. Offline a refresh can only wait, and a
-    /// hand-over that's waiting when the phone locks never reaches iOS (2.2 (3) device pass: ten
-    /// photos sat on the phone until it was opened). So offline the stored token goes, expired or
-    /// not: if the server refuses it when iOS sends, that 401 wakes the app to refresh and resend.
+    /// Whether a send's token is renewed first (APIClient.sendToken). One with plenty of time left —
+    /// the week-long send token, nearly always — is used as is; one near its end is renewed first,
+    /// but only with a network: offline a renewal can only fail, so the one we have goes.
     static func tokenChoice(expiresIn: TimeInterval?, minRemaining: TimeInterval, hasNetwork: Bool) -> TokenChoice {
         if let expiresIn, expiresIn > minRemaining { return .useStored }
         return hasNetwork ? .refresh : .useStored
     }
 
-    static func itemsToSubmit(_ items: [SendItem], clock: RetryClock, now: Date, isOffline: Bool) -> [UUID] {
-        guard !isOffline, clock.isDue(now: now) else { return [] }
-        let ready = items
-            .filter { (item: SendItem) -> Bool in item.status == .queued || item.status == .waiting }
-            .sorted { (a: SendItem, b: SendItem) -> Bool in
-                a.sentAt != b.sentAt ? a.sentAt < b.sentAt : a.id.uuidString < b.id.uuidString
-            }
-        guard clock.isBackingOff else { return ready.map(\.id) }
-        let probeInFlight = items.contains { (item: SendItem) -> Bool in item.status == .inFlight }
-        guard !probeInFlight, let probe = ready.first else { return [] }
-        return [probe.id]
+    /// Which items get a carrier now (#204 design v2). Everything `.queued` — a new message, or one
+    /// whose next step is ready — at once, whatever the network or the clock: iOS holds the carrier
+    /// until both allow, with the app asleep. A video whose upload has landed is the server's to
+    /// create; its post only confirms it, so that waits for the app to be open. Anything `.waiting`
+    /// couldn't have a carrier (no token yet, a video offline): it's tried again when the clock is
+    /// due — while backing off only the oldest, as a probe.
+    static func itemsToSubmit(_ items: [SendItem], clock: RetryClock, now: Date, isAppActive: Bool) -> [UUID] {
+        let ordered = inTapOrder(items)
+        let queued = ordered.filter { $0.status == .queued && (isAppActive || $0.serverCreates != true) }
+        guard clock.isDue(now: now) else { return queued.map(\.id) }
+        let waiting = ordered.filter { $0.status == .waiting }
+        return (queued + (clock.isBackingOff ? Array(waiting.prefix(1)) : waiting)).map(\.id)
+    }
+
+    /// The fast path's retries (the app is open): what iOS holds but is failing also goes directly
+    /// when the clock is due — while backing off only the oldest, as a probe; when it lands the clock
+    /// resets and the rest follow.
+    static func directRetries(_ items: [SendItem], clock: RetryClock) -> [UUID] {
+        let failing = inTapOrder(items).filter { $0.status == .inFlight && $0.firstFailureAt != nil }
+        return (clock.isBackingOff ? Array(failing.prefix(1)) : failing).map(\.id)
+    }
+
+    private static func inTapOrder(_ items: [SendItem]) -> [SendItem] {
+        items.sorted { (a: SendItem, b: SendItem) -> Bool in
+            a.sentAt != b.sentAt ? a.sentAt < b.sentAt : a.id.uuidString < b.id.uuidString
+        }
     }
 }
 

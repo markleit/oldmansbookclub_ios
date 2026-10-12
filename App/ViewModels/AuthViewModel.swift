@@ -168,6 +168,7 @@ final class AuthViewModel: ObservableObject {
         TokenStore.shared.save(
             token: response.accessToken,
             refreshToken: response.refreshToken,
+            sendToken: response.sendToken,
             userId: response.user.id,
             displayName: response.user.displayName,
             nickname: response.user.nickname,

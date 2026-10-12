@@ -131,6 +131,8 @@ final class APIClient {
     struct AuthResponse: Decodable {
         let accessToken: String
         let refreshToken: String
+        /// #204 design v2 — absent from a server older than it.
+        let sendToken: String?
         let user: UserResponse
     }
 
@@ -847,26 +849,30 @@ final class APIClient {
         case unavailable
     }
 
-    /// A token that's good for at least `minRemaining` more seconds, refreshing first if not. A
-    /// send handed to iOS's background transfer can sit with iOS for a long time before it goes,
-    /// so it must not leave with a token about to expire.
-    func sendToken(validFor minRemaining: TimeInterval) async -> SendToken {
-        guard let token = TokenStore.shared.token else { return .signedOut }
+    /// The token every send carries (#204 design v2): the week-long send token, so a message that
+    /// waits days with iOS for the network still arrives authorized. Renewed first when it has
+    /// less than a day left (every access-token refresh renews it anyway), and only with a network
+    /// — offline a refresh can only fail, and the one we have is still good for most of a week. A
+    /// server that issues no send token (older than #204 design v2) gets the access token, with
+    /// the 10 minutes' freshness that one needs.
+    func sendToken() async -> SendToken {
+        let sendToken = TokenStore.shared.sendToken
+        guard let token = sendToken ?? TokenStore.shared.token else { return .signedOut }
+        let minRemaining: TimeInterval = sendToken != nil ? 24 * 3600 : 600
         switch SendPolicy.tokenChoice(expiresIn: JWTExpiry.expiresAt(token)?.timeIntervalSinceNow,
                                       minRemaining: minRemaining,
                                       hasNetwork: NetworkReachability.shared.hasNetworkPath) {
         case .useStored:
             return .token(token)
         case .refresh:
-            // A refresh that fails only for now still hands over the token we have, for the same
-            // reason (SendPolicy.tokenChoice).
+            // A refresh that fails only for now still sends with the token we have (tokenChoice).
             return await refreshedSendToken(orElse: token)
         }
     }
 
     /// The server refused `rejected` (401). Use a newer stored token if one exists; else refresh.
     func sendToken(afterRejecting rejected: String) async -> SendToken {
-        if let current = TokenStore.shared.token, current != rejected,
+        if let current = TokenStore.shared.sendToken ?? TokenStore.shared.token, current != rejected,
            let expiry = JWTExpiry.expiresAt(current), expiry.timeIntervalSinceNow > 60 {
             return .token(current)
         }
@@ -878,7 +884,7 @@ final class APIClient {
     private func refreshedSendToken(orElse fallback: String?) async -> SendToken {
         guard TokenStore.shared.refreshToken != nil else { return .signedOut }
         switch await attemptRefresh() {
-        case .refreshed: return TokenStore.shared.token.map { .token($0) } ?? .signedOut
+        case .refreshed: return (TokenStore.shared.sendToken ?? TokenStore.shared.token).map { .token($0) } ?? .signedOut
         case .transient: return fallback.map { .token($0) } ?? .unavailable
         case .rejected: handleAuthFailure(); return .signedOut
         }
@@ -934,6 +940,7 @@ final class APIClient {
                 let response = try await self.refresh(refreshToken: rt)
                 TokenStore.shared.token = response.accessToken
                 TokenStore.shared.refreshToken = response.refreshToken
+                TokenStore.shared.sendToken = response.sendToken
                 return .refreshed
             } catch RefreshError.rejected {
                 return .rejected
@@ -954,6 +961,7 @@ final class APIClient {
     private func handleAuthFailure() {
         TokenStore.shared.token = nil
         TokenStore.shared.refreshToken = nil
+        TokenStore.shared.sendToken = nil
         onUnauthorized?()
     }
 

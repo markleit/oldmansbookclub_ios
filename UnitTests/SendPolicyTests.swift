@@ -104,31 +104,48 @@ final class SendPolicyTests: XCTestCase {
 
     func testWithNoRecentFailuresEverythingReadyGoesAtOnce() {
         let items = [item(3), item(1), item(2, .waiting), item(4, .inFlight), item(5, .refused)]
-        let ids = SendPolicy.itemsToSubmit(items, clock: RetryClock(), now: t0, isOffline: false)
+        let ids = SendPolicy.itemsToSubmit(items, clock: RetryClock(), now: t0, isAppActive: true)
         // Parallel, not in a line — the order here is only the tap order of what's ready.
-        XCTAssertEqual(ids, [items[1].id, items[2].id, items[0].id])
+        XCTAssertEqual(ids, [items[1].id, items[0].id, items[2].id])
     }
 
-    func testWhileBackingOffOnlyTheOldestGoesAsAProbe() {
+    func testCarrierEveryNewMessageGetsItsCarrierAtOnceEvenWhileBackingOff() {
+        // Design v2: the carrier waits for the clock with iOS (held until it's due), so a message
+        // never waits on the phone for one — whatever the clock, and with the app asleep.
+        var clock = RetryClock()
+        clock.recordFailure(now: t0, timing: timing, jitter: 0)
+        let items = [item(1), item(2)]
+        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0, isAppActive: false), items.map(\.id))
+    }
+
+    func testWhileBackingOffOnlyTheOldestMessageWithNoCarrierGoesAsAProbe() {
         var clock = RetryClock()
         clock.recordFailure(now: t0, timing: timing, jitter: 0)
         let items = (1...10).map { item($0, .waiting) }
-        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0, isOffline: false), [],
+        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0, isAppActive: true), [],
                        "nothing before the clock is due")
-        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0.addingTimeInterval(1), isOffline: false),
+        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0.addingTimeInterval(1), isAppActive: true),
                        [items[0].id], "ten waiting photos cost one request per tick, not ten")
     }
 
-    func testNoSecondProbeWhileOneIsInFlight() {
+    func testWhileBackingOffOnlyTheOldestFailingMessageIsRetriedDirectly() {
         var clock = RetryClock()
+        var failing = (1...3).map { item($0, .inFlight) }
+        for i in failing.indices { failing[i].firstFailureAt = t0 }
+        let fine = item(0, .inFlight)   // with iOS, not failing: nothing to retry
+        XCTAssertEqual(SendPolicy.directRetries(failing + [fine], clock: clock), failing.map(\.id),
+                       "not backing off: everything failing goes")
         clock.recordFailure(now: t0, timing: timing, jitter: 0)
-        let items = [item(1, .inFlight), item(2, .waiting)]
-        XCTAssertEqual(SendPolicy.itemsToSubmit(items, clock: clock, now: t0.addingTimeInterval(5), isOffline: false), [])
+        XCTAssertEqual(SendPolicy.directRetries(failing + [fine], clock: clock), [failing[0].id],
+                       "backing off: one probe, the oldest")
     }
 
-    func testTheClockSubmitsNothingWithNoNetwork() {
-        // The engine hands these to iOS instead, which waits for the network (SendEngineTests).
-        XCTAssertEqual(SendPolicy.itemsToSubmit([item(1)], clock: RetryClock(), now: t0, isOffline: true), [])
+    func testAVideoTheServerCreatesIsConfirmedOnlyWithTheAppOpen() {
+        var uploaded = item(1)
+        uploaded.serverCreates = true
+        XCTAssertEqual(SendPolicy.itemsToSubmit([uploaded], clock: RetryClock(), now: t0, isAppActive: false), [],
+                       "nothing for iOS to carry: the server already has the video")
+        XCTAssertEqual(SendPolicy.itemsToSubmit([uploaded], clock: RetryClock(), now: t0, isAppActive: true), [uploaded.id])
     }
 
     // MARK: - The Library's "N unsent" (U11, B5)
@@ -144,6 +161,13 @@ final class SendPolicyTests: XCTestCase {
         XCTAssertEqual(SendPolicy.unsent(in: items + [on(book, .refused)], bookId: book), .init(count: 4, anyRefused: true),
                        "red when the server refused one")
         XCTAssertEqual(SendPolicy.unsent(in: [], bookId: book).count, 0, "nothing shown")
+    }
+
+    func testB5AVideoTheServerCreatesIsNotUnsent() {
+        var uploaded = SendItem(id: UUID(), bookId: UUID(), clubId: UUID(), kind: .video, sentAt: t0, status: .queued)
+        uploaded.serverCreates = true
+        XCTAssertEqual(SendPolicy.unsent(in: [uploaded], bookId: uploaded.bookId).count, 0)
+        XCTAssertNil(SendReminder.basis(for: [uploaded]), "and no 'waiting to send' reminder for it")
     }
 
     // MARK: - Which token goes to iOS (W3; 2.2 (3) device pass)

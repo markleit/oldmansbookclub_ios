@@ -8,10 +8,17 @@ import Foundation
 // `confirmations`. This replaces the send machinery that lived in BookViewModel — a per-chat queue,
 // two watchdogs, several retry passes and their guards — which stopped the moment you left the chat.
 //
-// Each message: saved to the Outbox → handed to iOS's background transfer at tap time (and sent
-// directly too when that's faster) → delivered, or retried on ONE shared clock (1, 2, 4, 8, 15,
-// 30 s, then every 60 s, no limit) for anything that can pass, or refused with the server's reason.
-// The rules are SendPolicy's; this class applies them.
+// Design v2 (#204, 2026-10-12): three mechanisms, each with one job.
+// - THE CARRIER: every unsent message always has one complete request with iOS's background
+//   transfer, handed over at the tap while the app is in front, carrying the week-long send token.
+//   iOS sends it when there's a network — app asleep, phone locked. A video's carrier is its upload
+//   to a reserved blob; the server creates the message when the upload lands. A carrier that fails
+//   for a passing reason is replaced at once, held by iOS until the shared clock is due.
+// - THE FAST PATH: while the app is open it also sends directly, and retries directly on ONE shared
+//   clock (1, 2, 4, 8, 15, 30 s, then every 60 s, no limit). Whichever copy lands first wins.
+// - CONTINUED PROCESSING (iOS 26+, VideoSendKeeper): a video's compression and reservation keep
+//   going after the user leaves — a speed-up; if iOS ends it, the next run finishes the job.
+// A refusal stops with the server's reason. The rules are SendPolicy's; this class applies them.
 
 /// A message the server confirmed, for whichever chat is showing it.
 struct SendConfirmation {
@@ -31,14 +38,15 @@ struct SendEnvironment {
     var baseURL: () -> URL
     var deviceId: () -> String?
     var myUserId: () -> UUID?
-    /// Tokens: `validFor` refreshes first if the stored one expires sooner; `afterRejecting`
-    /// refreshes after a 401.
-    var token: (_ validFor: TimeInterval) async -> APIClient.SendToken
+    /// The token a send carries — the week-long send token (APIClient.sendToken); after a 401, a
+    /// renewed one.
+    var token: () async -> APIClient.SendToken
     var tokenAfterRejection: () async -> APIClient.SendToken
-    /// A video's blob upload link: (SAS upload URL, the blob's plain URL).
-    var uploadLink: (_ clubId: UUID, _ ext: String) async throws -> (URL, String)
-    /// Compresses a picked video (PR 5). Default: can't, so the original is sent.
-    var compressVideo: (_ source: URL) async -> VideoCompression = { _ in .unsupported }
+    /// Compresses a picked video (PR 5), reporting how far along it is (0–1). Default: can't, so the
+    /// original is sent.
+    var compressVideo: (_ source: URL, _ progress: @escaping (Double) -> Void) async -> VideoCompression = { _, _ in .unsupported }
+    /// Continued processing for a video's work (VideoSendKeeper). Default: none.
+    var videoWork: (VideoWork) -> Void = { _ in }
     /// Run `action` after `delay` seconds; returns a cancel function.
     var schedule: (_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) -> () -> Void
     /// Keep the saved chat in step when a message is confirmed with no chat open (A2).
@@ -66,8 +74,8 @@ final class SendEngine: ObservableObject {
     private var copies: [UUID: Int] = [:]
     /// The latest post request per in-flight item, so it can also go direct (nudge, network back).
     private var builtPosts: [UUID: (SendTaskKey, SendRequestBuilder.Built)] = [:]
-    /// Submissions not yet with iOS: getting a token, or a video's upload link. Leaving the foreground
-    /// waits for these (appWillResignActive).
+    /// Carriers still being built: getting a token, or a video compressing and reserving. Leaving the
+    /// foreground, and a background wake, wait for these (whenHandedOver).
     private var handingOver: [UUID: (attempt: Int, task: Task<Void, Never>)] = [:]
     /// 401s being answered: the token refresh, then handing the message back to iOS.
     private var refreshing: [UUID: Task<Void, Never>] = [:]
@@ -81,6 +89,8 @@ final class SendEngine: ObservableObject {
     private var deletedBooks: [UUID: UUID] = [:]
     private var cancelWake: (() -> Void)?
     private var started = false
+    /// Videos iOS is keeping going after the user left (continued processing), until it ends.
+    private var keptAlive: Set<UUID> = []
 
     init(outbox: Outbox, transport: SendTransport, environment: SendEnvironment, timing: SendTiming = .current) {
         self.outbox = outbox
@@ -98,6 +108,11 @@ final class SendEngine: ObservableObject {
         started = true
         transport.onBackgroundResult = { [weak self] key, response in
             self?.handle(key, response, direct: false)
+        }
+        transport.onBackgroundProgress = { [weak self] key, sent, total in
+            // A video's upload: the last quarter of its "Sending video" progress.
+            guard case .blobUpload = key.step, total > 0 else { return }
+            self?.env.videoWork(.progress(key.itemId, 0.75 + 0.25 * Double(sent) / Double(total)))
         }
         let taken = outbox.migrateLegacy()
         if taken > 0 { SendLog.note("migrated legacy", nil, "items=\(taken)") }
@@ -145,11 +160,18 @@ final class SendEngine: ObservableObject {
     /// `compress`: a picked video, compressed after it's queued (PR 5) — the composer is free at once.
     func enqueueMedia(_ kind: SendItem.Kind, bookId: UUID, clubId: UUID, fileName: String, contentType: String,
                       durationSeconds: Int?, replyTo: Message?, compress: Bool = false) -> SendItem {
-        enqueue(SendItem(id: UUID(), bookId: bookId, clubId: clubId, kind: kind,
-                         sentAt: outbox.nextSentAt(now: env.now()), fileName: fileName, contentType: contentType,
-                         durationSeconds: durationSeconds, parentMessageId: replyTo?.id,
-                         parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview),
-                         compressPending: compress ? true : nil))
+        let item = SendItem(id: UUID(), bookId: bookId, clubId: clubId, kind: kind,
+                            sentAt: outbox.nextSentAt(now: env.now()), fileName: fileName, contentType: contentType,
+                            durationSeconds: durationSeconds, parentMessageId: replyTo?.id,
+                            parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview),
+                            compressPending: compress ? true : nil)
+        // A video's work outlasts the tap: ask iOS to keep it going if the user leaves. Only now —
+        // Apple allows it only in response to the user's action, with the app in front.
+        if kind == .video, env.isAppActive() {
+            keptAlive.insert(item.id)
+            env.videoWork(.start(item.id))
+        }
+        return enqueue(item)
     }
 
     @discardableResult
@@ -191,6 +213,8 @@ final class SendEngine: ObservableObject {
         SendLog.note("deleted", id)
         transport.cancelBackground(itemId: id)
         deletedBooks[id] = item.bookId
+        handingOver[id]?.task.cancel()   // a video still compressing stops now
+        endVideoWork(item, success: false)
         forget(item, fileGrace: 0)
         publish()
     }
@@ -212,33 +236,40 @@ final class SendEngine: ObservableObject {
         publish()
     }
 
-    /// The app is about to leave the foreground (Home, lock, another app). Anything not with iOS
-    /// right now — waiting on the clock, or not yet sent — is handed over, so it goes without the app
-    /// being reopened. Started now, while the app is still in the foreground, so iOS treats it as
-    /// user-initiated. `done` runs once every hand-over has reached iOS (or failed) — a token refresh
-    /// can come first, so the caller keeps the app awake until then.
+    /// The app is about to leave the foreground (Home, lock, another app). Nothing is handed over
+    /// here: every unsent message already has its carrier with iOS (design v2) — except one whose
+    /// carrier is still being built (a token being renewed; a video compressing or reserving). `done`
+    /// runs once those are with iOS, so the caller keeps the app awake until then (iOS's ~30 s; a
+    /// video also has continued processing).
     func appWillResignActive(done: @escaping () -> Void = {}) {
-        for item in outbox.items where item.status == .queued || item.status == .waiting {
-            handToIOS(item.id, "leaving foreground: handing to iOS")
-        }
-        // Everything on its way to iOS — just handed over above, or started earlier and still
-        // getting its token or upload link (2.2 (3): a hand-over waiting on a token when the
-        // phone locked never reached iOS).
-        if !handingOver.isEmpty { SendLog.note("leaving foreground: waiting for \(handingOver.count) hand-over(s)") }
+        if !handingOver.isEmpty { SendLog.note("leaving foreground: waiting for \(handingOver.count) carrier(s) being built") }
         updateReminder(rearm: true)
         whenHandedOver(done)
     }
 
-    /// Calls `done` once nothing is on its way to iOS: no hand-over still getting its token or
-    /// upload link, and no 401 still refreshing its token. The caller keeps the app awake until
-    /// then — leaving the foreground, and a background wake (iOS may suspend the app as soon as
-    /// it's told the wake is handled, and a 401 still has to refresh and hand the message back).
+    /// iOS ended a video's continued processing (expired, or the user cancelled it). Its compression
+    /// stops; it starts again the next time the app runs. A video past compressing carries on: its
+    /// reservation is one quick request, and its upload is with iOS.
+    func videoWorkEnded(_ id: UUID) {
+        keptAlive.remove(id)
+        guard outbox.item(id)?.compressPending == true, let work = handingOver[id] else { return }
+        SendLog.note("compression stopped until the app runs again", id)
+        work.task.cancel()
+    }
+
+    /// Calls `done` once nothing is on its way to iOS: no carrier still being built, and no 401
+    /// still renewing its token. The caller keeps the app awake until then — leaving the
+    /// foreground, and a background wake (iOS may suspend the app as soon as it's told the wake is
+    /// handled, and a refused carrier still has to be replaced).
     func whenHandedOver(_ done: @escaping () -> Void) {
         Task {
             // In rounds: a refresh ends in a new hand-over. Bounded, so a bookkeeping slip can't
             // keep the app awake forever.
             for _ in 0..<10 {
-                let pending = handingOver.values.map(\.task) + Array(refreshing.values)
+                // Not a video still compressing: that can take minutes, more than a wake or iOS's
+                // ~30 s allows — continued processing keeps it going, or the next run does.
+                let building = handingOver.filter { outbox.item($0.key)?.compressPending != true }
+                let pending = building.values.map(\.task) + Array(refreshing.values)
                 if pending.isEmpty { break }
                 for task in pending { await task.value }
             }
@@ -321,40 +352,34 @@ final class SendEngine: ObservableObject {
     func pump(_ reason: String) {
         let now = env.now()
         clock.clearRateLimit(now: now)
-        if !env.hasNetwork() {
-            // No network: hand everything not yet with iOS to it anyway. iOS's background transfer
-            // waits for the network itself and sends the moment it's back — with the app suspended
-            // and the phone locked. (Holding it here instead meant nothing went until the app was
-            // opened again: found on the 2.2 (1) device pass, airplane mode turned off while locked.)
+        let online = env.hasNetwork()
+        if !online {
             isOffline = true
-            for item in outbox.items where item.status == .queued || item.status == .waiting {
-                handToIOS(item.id, "offline: handing to iOS")
-            }
-        } else {
-            if isOffline {
-                // The network is back but no "network back" event said so (the backup check found
-                // it): do what the event does — fresh clock, and what iOS holds also goes directly.
-                SendLog.note("network back (found by \(reason))")
-                isOffline = false
-                clock.reset()
-                for item in outbox.items where item.status == .inFlight { sendDirectIfPossible(item.id) }
-            }
-            let ids = SendPolicy.itemsToSubmit(outbox.items, clock: clock, now: now, isOffline: false)
-            if !ids.isEmpty { SendLog.note("pump", nil, "reason=\(reason) items=\(ids.count)") }
-            for id in ids { submit(id) }
-            // In flight with iOS but already failing directly: retry directly on the same clock.
-            if clock.isDue(now: now) {
-                for item in outbox.items where item.status == .inFlight && item.firstFailureAt != nil {
-                    sendDirectIfPossible(item.id)
-                }
-            }
+        } else if isOffline {
+            // The network is back but no "network back" event said so (the backup check found it):
+            // do what the event does — fresh clock, and what iOS holds also goes directly.
+            SendLog.note("network back (found by \(reason))")
+            isOffline = false
+            clock.reset()
+            for item in outbox.items where item.status == .inFlight { sendDirectIfPossible(item.id) }
+        }
+        // The carrier invariant: whatever can have a carrier gets one now — online or not, backing
+        // off or not. iOS holds it until there's a network and the clock is due, app asleep or not.
+        let ids = SendPolicy.itemsToSubmit(outbox.items, clock: clock, now: now, isAppActive: env.isAppActive())
+        if !ids.isEmpty { SendLog.note("pump", nil, "reason=\(reason) items=\(ids.count)") }
+        let notBefore = clock.nextDue(after: now)
+        for id in ids { submit(id, notBefore: notBefore) }
+        // The fast path: what iOS holds but is failing also goes directly on the clock while the
+        // app is open (sendDirectIfPossible) — only the oldest while backing off, as a probe.
+        if online, clock.isDue(now: now) {
+            for id in SendPolicy.directRetries(outbox.items, clock: clock) { sendDirectIfPossible(id) }
         }
         scheduleWake()
         publish()
     }
 
-    /// `notBefore`: iOS holds the background copy until then (see `handToIOS`). Returns the work of
-    /// building and handing over the request, nil if there was nothing to submit.
+    /// `notBefore`: iOS holds the carrier until then (the retry clock). Returns the work of building
+    /// it and handing it over, nil if there was nothing to submit.
     @discardableResult
     private func submit(_ id: UUID, notBefore: Date? = nil) -> Task<Void, Never>? {
         guard let item = outbox.item(id), item.status == .queued || item.status == .waiting else { return nil }
@@ -369,42 +394,45 @@ final class SendEngine: ObservableObject {
         return task
     }
 
-    /// Give a message to iOS's background transfer when the app can't send it itself: no network
-    /// (iOS waits for it), or the app is leaving the foreground or suspended (its timers don't run).
-    /// iOS then sends it with the app suspended and the phone locked. The retry clock goes with it,
-    /// so a server that's down isn't hit again sooner than the backoff allows.
-    @discardableResult
-    private func handToIOS(_ id: UUID, _ why: String) -> Task<Void, Never>? {
-        SendLog.note(why, id)
-        return submit(id, notBefore: clock.nextDue(after: env.now()))
-    }
-
     private func send(_ id: UUID, attempt: Int, notBefore: Date?) async {
-        // A video is compressed first: it takes a while, and needs no token or network.
+        // A video is compressed first: it takes a while, and needs no token or network — but it needs
+        // the app running: in front, or kept going for this video (continued processing).
         if outbox.item(id)?.compressPending == true {
+            guard env.isAppActive() || keptAlive.contains(id) else {
+                return couldNotBuild(id, attempt: attempt, "compresses when the app is open")
+            }
             guard await compressVideo(id, attempt: attempt) else { return }
         }
-        // A video's upload link has to come from the server, so with no network it can't be
-        // handed to iOS at all: it waits (no hand-back, which would only fail again at once) for
-        // the network and the app. Asking anyway would wait for the network inside the hand-over —
-        // the stall 2.2 (3) found with tokens.
+        // A video's upload goes to a blob the server reserves, so with no network it can't have a
+        // carrier at all: it waits for the network and the app.
         if let item = outbox.item(id), item.kind == .video, item.mediaUrl == nil, !env.hasNetwork() {
-            return fail(id, attempt: attempt, .offline, handBack: false)
+            isOffline = true
+            return couldNotBuild(id, attempt: attempt, "offline: a video's upload is reserved first")
         }
         let token: String
-        // No token means nothing to hand to iOS: these wait (no hand-back, which would only fail
-        // again at once) for sign-in, the network, or the app being opened.
-        switch await env.token(timing.tokenFreshness) {
+        // No token: no carrier yet. It waits for sign-in or a renewed token, on the clock.
+        switch await env.token() {
         case .token(let t): token = t
-        case .signedOut: return fail(id, attempt: attempt, .transient("signed out"), handBack: false)
-        case .unavailable: return fail(id, attempt: attempt, .transient("token refresh unavailable"), handBack: false)
+        case .signedOut: return couldNotBuild(id, attempt: attempt, "signed out")
+        case .unavailable: return couldNotBuild(id, attempt: attempt, "token renewal unavailable")
         }
         guard let item = outbox.item(id), item.attempts == attempt else { return }
         if item.kind == .video && item.mediaUrl == nil {
-            await uploadVideo(item, attempt: attempt, notBefore: notBefore)
+            await reserveAndUpload(item, attempt: attempt, token: token, notBefore: notBefore)
         } else {
             post(item, attempt: attempt, token: token, notBefore: notBefore)
         }
+    }
+
+    /// A carrier can't be built yet (no token, a video offline or not yet compressed): the message
+    /// waits on the clock, and on whatever it's waiting for (sign-in, the network, the app).
+    private func couldNotBuild(_ id: UUID, attempt: Int, _ why: String) {
+        guard let item = outbox.item(id), item.attempts == attempt else { return }
+        copies[id] = nil
+        markWaiting(id, because: why, now: env.now())
+        endVideoWork(item, success: false)
+        scheduleWake()
+        publish()
     }
 
     private func post(_ item: SendItem, attempt: Int, token: String, notBefore: Date? = nil) {
@@ -420,7 +448,7 @@ final class SendEngine: ObservableObject {
             bodyFile = file
         } else {
             do { bodyFile = try outbox.writeRequestBody(built.jsonBody ?? Data(), for: item.id, attempt: attempt) }
-            catch { return fail(item.id, attempt: attempt, .transient("couldn't write the request"), handBack: false) }
+            catch { return couldNotBuild(item.id, attempt: attempt, "couldn't write the request") }
         }
         builtPosts[item.id] = (key, built)
         transport.submitBackground(key, request: built.request, bodyFile: bodyFile, notBefore: notBefore)
@@ -428,7 +456,8 @@ final class SendEngine: ObservableObject {
         SendLog.note("submit bg", item.id, "attempt=\(attempt) kind=\(item.kind.rawValue)"
                      + (notBefore.map { " notBefore=+\(Int($0.timeIntervalSince(env.now())))s" } ?? ""))
 
-        // A hand-over that waits out the retry clock (see `handToIOS`) goes only via iOS, then.
+        // A carrier held until the retry clock is due goes only via iOS then; the fast path retries
+        // directly on that same clock (pump).
         guard notBefore == nil, env.isAppActive() else { return }
         if built.bodyFile == nil {
             // Small JSON: also straight away, directly — never slower than before this engine.
@@ -455,7 +484,7 @@ final class SendEngine: ObservableObject {
         directInFlight.insert(id)
         Task {
             defer { directInFlight.remove(id) }
-            guard case .token(let token) = await env.token(timing.tokenFreshness),
+            guard case .token(let token) = await env.token(),
                   let current = outbox.item(id), current.status == .inFlight else { return }
             if current.mediaUrl == nil, let name = current.fileName, !outbox.fileExists(name) { return }
             let built = SendRequestBuilder.post(current, baseURL: env.baseURL(), token: token,
@@ -489,7 +518,10 @@ final class SendEngine: ObservableObject {
             return false
         }
         SendLog.note("compressing video", id)
-        let result = await env.compressVideo(outbox.fileURL(original))
+        // Compressing is the first 70% of its "Sending video" progress.
+        let result = await env.compressVideo(outbox.fileURL(original)) { [weak self] fraction in
+            Task { @MainActor in self?.env.videoWork(.progress(id, 0.7 * fraction)) }
+        }
         guard let current = outbox.item(id), current.attempts == attempt, current.status == .inFlight else {
             if case .compressed(let url) = result { try? FileManager.default.removeItem(at: url) }
             return false   // deleted, or moved on, while compressing
@@ -509,8 +541,10 @@ final class SendEngine: ObservableObject {
             sending = original
         case .interrupted:
             SendLog.note("video compression interrupted, will start again", id)
-            outbox.update(id) { $0.status = .queued }
+            outbox.update(id) { $0.status = .waiting }
             copies[id] = nil
+            endVideoWork(current, success: false)
+            scheduleWake()
             publish()
             return false
         }
@@ -525,28 +559,42 @@ final class SendEngine: ObservableObject {
         return true
     }
 
-    private func uploadVideo(_ item: SendItem, attempt: Int, notBefore: Date?) async {
+    /// The server's answer to a video reservation (POST /books/{id}/messages/video).
+    private struct VideoReservation: Decodable {
+        let uploadUrl: String?
+        let mediaUrl: String?
+        let message: Message?
+    }
+
+    /// A video's carrier (design v2): reserve its message — everything that can refuse it is checked
+    /// then — and hand iOS one upload to the reserved blob. When the upload lands, the server
+    /// creates the message itself, so nothing after the hand-over needs the app.
+    private func reserveAndUpload(_ item: SendItem, attempt: Int, token: String, notBefore: Date?) async {
         guard let fileName = item.fileName, outbox.fileExists(fileName) else {
             return refuse(item.id, "This message's file is missing from your phone, so it can't be sent.")
         }
-        let link: (URL, String)
-        do {
-            link = try await env.uploadLink(item.clubId, "mp4")
-        } catch {
-            let response: SendResponse
-            if case APIError.serverError(let status) = error {
-                response = SendResponse(status: status)
-            } else {
-                response = SendResponse(error: error)
-            }
-            return fail(item.id, attempt: attempt, response.verdict)
+        let reserve = SendRequestBuilder.reserveVideo(item, baseURL: env.baseURL(), token: token, deviceId: env.deviceId())
+        let response = await transport.sendDirect(reserve.request, body: reserve.jsonBody, bodyFile: nil)
+        guard let current = outbox.item(item.id), current.attempts == attempt, current.status == .inFlight else { return }
+        guard response.verdict == .delivered else {
+            // No reservation, no carrier: a refusal stops it; anything else waits on the clock (a
+            // 401 renews the token and tries again).
+            return fail(item.id, attempt: attempt, response.verdict, replace: false)
         }
-        let built = SendRequestBuilder.blobUpload(uploadUrl: link.0, fileURL: outbox.fileURL(fileName),
+        let reservation = response.body.flatMap { try? APIClient.decoder.decode(VideoReservation.self, from: $0) }
+        if let message = reservation?.message {
+            return delivered(current, message, via: "reservation")   // a copy of this send already got through
+        }
+        guard let link = reservation?.uploadUrl.flatMap(URL.init(string:)), let mediaUrl = reservation?.mediaUrl else {
+            return fail(item.id, attempt: attempt, .transient("unreadable reservation"), replace: false)
+        }
+        env.videoWork(.progress(item.id, 0.75))
+        let built = SendRequestBuilder.blobUpload(uploadUrl: link, fileURL: outbox.fileURL(fileName),
                                                   contentType: item.contentType ?? "video/mp4")
-        let key = SendTaskKey(itemId: item.id, attempt: attempt, step: .blobUpload(mediaUrl: link.1))
+        let key = SendTaskKey(itemId: item.id, attempt: attempt, step: .blobUpload(mediaUrl: mediaUrl))
         transport.submitBackground(key, request: built.request, bodyFile: outbox.fileURL(fileName), notBefore: notBefore)
         copies[item.id, default: 0] += 1
-        SendLog.note("submit bg", item.id, "attempt=\(attempt) step=blob")
+        SendLog.note("submit bg", item.id, "attempt=\(attempt) step=blob" + (env.isAppActive() ? "" : " from the background"))
     }
 
     // MARK: - Results
@@ -579,18 +627,29 @@ final class SendEngine: ObservableObject {
             delivered(item, message, via: via)
 
         case (.blobUpload(let mediaUrl), .delivered):
-            SendLog.note("blob uploaded", id)
-            outbox.update(id) { $0.mediaUrl = mediaUrl; $0.status = .queued }
-            submit(id)
+            // The server creates the message from the upload (design v2). With the app open its
+            // post confirms it at once (the server answers with the message it made); otherwise
+            // it's confirmed when the app next runs, or by the live echo.
+            SendLog.note("blob uploaded", id, "the server creates the message")
+            outbox.update(id) { $0.mediaUrl = mediaUrl; $0.serverCreates = true; $0.status = .queued }
+            copies[id] = nil
+            endVideoWork(item, success: true)
+            pump("blob uploaded")
+
+        case (.blobUpload, .refused(let why)):
+            // Storage, not the server, refused the upload: its link ran out (a week waiting), or
+            // this is a repeat of an upload that already landed (create-only). Neither is the
+            // message's fault — a fresh reservation either answers that it's sent or gives a new link.
+            fail(id, attempt: key.attempt, .transient("upload refused by storage: \(why)"), direct: direct)
 
         default:
             fail(id, attempt: key.attempt, verdict, direct: direct)
         }
     }
 
-    /// `handBack`: in the background, give a passing failure straight back to iOS (false when there's
-    /// no request to give it — no token, or the request couldn't be written).
-    private func fail(_ id: UUID, attempt: Int, _ verdict: SendVerdict, direct: Bool = false, handBack: Bool = true) {
+    /// `replace`: a passing failure gets a new carrier at once, held by iOS until the clock is due
+    /// (false when there's no carrier to replace — a video's reservation failed).
+    private func fail(_ id: UUID, attempt: Int, _ verdict: SendVerdict, direct: Bool = false, replace: Bool = true) {
         guard let item = outbox.item(id) else { return }
         // A newer attempt is already out: an older one failing changes nothing.
         guard item.attempts == attempt else { return }
@@ -630,22 +689,21 @@ final class SendEngine: ObservableObject {
             SendLog.note("rate limited", id, "retryAfter=\(retryAfter.map { String(Int($0)) } ?? "-")")
             clock.recordRateLimit(now: now, retryAfter: retryAfter, timing: timing)
             transport.cancelBackground(itemId: id)
-            markWaiting(id, because: "rate limited", now: now)
-            handBackIfSuspended(id)   // with Retry-After as its start time
+            copies[id] = 0
+            passingFailure(id, "rate limited", now: now, replace: replace)   // held until Retry-After
         case .offline:
             isOffline = true
             if (copies[id] ?? 0) > 0 {
                 // iOS's copy waits for the network itself; the bubble still shows "waiting".
                 noteCopyFailure(id, "offline", now: now)
             } else {
-                markWaiting(id, because: "offline", now: now)
-                if handBack { handBackIfSuspended(id) }
+                passingFailure(id, "offline", now: now, replace: replace)
             }
         case .refreshAuth:
-            // A second 401 straight after refreshing: treat like any passing failure.
-            if !transientFailure(id, "token refused again", now: now, handBack: handBack) { return }
+            // A second 401 straight after renewing: treat like any passing failure.
+            passingFailure(id, "token refused again", now: now, replace: replace)
         case .transient(let why):
-            if !transientFailure(id, why, now: now, handBack: handBack) { return }
+            passingFailure(id, why, now: now, replace: replace)
         }
         scheduleWake()
         publish()
@@ -664,29 +722,27 @@ final class SendEngine: ObservableObject {
         if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
     }
 
-    private func transientFailure(_ id: UUID, _ why: String, now: Date, handBack: Bool = true) -> Bool {
-        if (copies[id] ?? 0) > 0 {
-            noteCopyFailure(id, why, now: now)
-            return true
-        }
+    /// A failure that can pass. While another copy is still out it only counts as failing. When
+    /// the carrier itself failed, it's replaced at once — held by iOS until the clock is due — so the
+    /// message always has one (design v2). Replaced from the background, iOS treats the new one as
+    /// discretionary and may hold it longer: its rule, which no app can change.
+    private func passingFailure(_ id: UUID, _ why: String, now: Date, replace: Bool) {
+        if (copies[id] ?? 0) > 0 { return noteCopyFailure(id, why, now: now) }
         // One round of failures moves the clock once: several messages failing together (the server
         // is down) mustn't escalate the backoff for each of them.
         if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
         markWaiting(id, because: why, now: now)
-        if handBack { handBackIfSuspended(id) }
-        return true
-    }
-
-    /// In the background the retry clock can't run (the app is suspended between wakes), so a
-    /// passing failure goes straight back to iOS — starting when the clock says — rather than
-    /// waiting for the app to be opened.
-    private func handBackIfSuspended(_ id: UUID) {
-        guard !env.isAppActive() else { return }
-        handToIOS(id, "background: handing back to iOS")
+        guard replace else {
+            if let item = outbox.item(id) { endVideoWork(item, success: false) }
+            return
+        }
+        SendLog.note("replacing carrier", id, env.isAppActive() ? "" : "from the background")
+        submit(id, notBefore: clock.nextDue(after: now))
     }
 
     private func delivered(_ item: SendItem, _ message: Message, via: String) {
         SendLog.note("sent", item.id, "via=\(via) attempts=\(item.attempts)")
+        endVideoWork(item, success: true)
         transport.cancelBackground(itemId: item.id)   // the other copy, if still out
         forget(item, fileGrace: 10)
         clock.reset()
@@ -697,6 +753,7 @@ final class SendEngine: ObservableObject {
 
     private func refuse(_ id: UUID, _ reason: String) {
         SendLog.note("refused", id, reason)
+        if let item = outbox.item(id) { endVideoWork(item, success: false) }
         transport.cancelBackground(itemId: id)
         outbox.update(id) { $0.status = .refused; $0.refusedReason = reason }
         copies[id] = nil
@@ -712,6 +769,13 @@ final class SendEngine: ObservableObject {
             if $0.firstFailureAt == nil { $0.firstFailureAt = now }
         }
         builtPosts[id] = nil
+    }
+
+    /// A video's work is over (uploaded, sent, refused, deleted) or stopped until the app runs
+    /// again: release its continued processing, if it has one.
+    private func endVideoWork(_ item: SendItem, success: Bool) {
+        guard item.kind == .video, keptAlive.remove(item.id) != nil else { return }
+        env.videoWork(.finish(item.id, success: success))
     }
 
     private func forget(_ item: SendItem, fileGrace: TimeInterval) {
