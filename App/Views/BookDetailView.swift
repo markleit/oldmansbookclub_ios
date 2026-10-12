@@ -1647,7 +1647,7 @@ struct BunnySpeedIcon: View {
 
 // Vertical 1–4× speed slider shown in a popover anchored to the bunny, with + (faster, top) and
 // − (slower, bottom) buttons. The slider is free-flowing (#61) for getting close fast; the
-// buttons step a quarter at a time for dialing in a particular speaker's speed (#190). Applies
+// buttons step 0.05× at a time for dialing in a particular speaker's speed (#190). Applies
 // the rate live (persisted via AudioPlayerService). Custom track for reliable vertical drag.
 struct VerticalSpeedSlider: View {
     let rate: Float
@@ -1710,19 +1710,21 @@ struct VerticalSpeedSlider: View {
     }
 }
 
-// #190 — the speed buttons move a quarter at a time and land on the quarter grid: from a slider
-// value between quarters (2.3×) the first tap goes to the next quarter in that direction
-// (+ → 2.5×, − → 2.25×). Clamped to 1–4×.
+// #190 — the speed buttons move 0.05× a tap (2.2: was 0.25×, too coarse for matching a
+// speaker) and land on the 0.05 grid the slider already rounds to: from a value between steps
+// (2.32×) the first tap goes to the next step in that direction (+ → 2.35×, − → 2.3×). Clamped to
+// 1–4×. Counted in whole steps and divided once, so every value is exactly the decimal it shows
+// (3 taps from 1× is 1.15, not 1.1500000000000001).
 enum SpeedStep {
-    static let step = 0.25
+    static let stepsPerX = 20.0   // 0.05× a tap
     static let range = 1.0...4.0
 
     static func up(_ value: Double) -> Double {
-        min(range.upperBound, (floor(value / step + 1e-6) + 1) * step)
+        min(range.upperBound, (floor(value * stepsPerX + 1e-6) + 1) / stepsPerX)
     }
 
     static func down(_ value: Double) -> Double {
-        max(range.lowerBound, (ceil(value / step - 1e-6) - 1) * step)
+        max(range.lowerBound, (ceil(value * stepsPerX - 1e-6) - 1) / stepsPerX)
     }
 }
 
