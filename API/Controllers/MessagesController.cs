@@ -27,6 +27,7 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
     // below — voice and photo in a single request).
     [HttpPost("~/books/{bookId}/messages")]
     [Consumes("application/json")]
+    [AcceptsSendToken]
     public async Task<ActionResult<MessageDto>> SendMessage(Guid bookId, [FromBody] SendMessageRequest request)
     {
         try
@@ -62,6 +63,7 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
     [Consumes("audio/mp4", "image/jpeg")]
     [RequestSizeLimit(MessageSendService.MaxMediaFileRequestBytes)]
     [NoMinimumUploadSpeed]   // a batch of photos queues on one connection — see the attribute
+    [AcceptsSendToken]
     public async Task<ActionResult<MessageDto>> SendMediaFile(Guid bookId,
         [FromQuery(Name = "client_id")] Guid? clientId,
         [FromQuery(Name = "duration_seconds")] int? durationSeconds,
@@ -79,6 +81,25 @@ public class MessagesController(AppDbContext db, BlobService blob, MessageSendSe
             return Ok(await messageSend.SendMediaFileAsync(UserId, sender, bookId,
                 Request.ContentType, Request.ContentLength, Request.Body, durationSeconds,
                 cid, parentMessageId, deviceId, HttpContext.RequestAborted, sentAt?.UtcDateTime));
+        }
+        catch (MessageSendException ex)
+        {
+            return Refused(ex);
+        }
+    }
+
+    // #204 design v2 — reserve a video message and get the link to upload its file to. When the
+    // upload lands, the server creates the message itself (MessageSendService.ReserveVideoAsync).
+    [HttpPost("~/books/{bookId}/messages/video")]
+    [AcceptsSendToken]
+    public async Task<ActionResult<VideoReservation>> ReserveVideo(Guid bookId, [FromBody] ReserveVideoRequest request)
+    {
+        try
+        {
+            if (request.ClientId == Guid.Empty) throw new MessageSendException("client_id is required.");
+            var sender = await messageSend.LoadSenderContextAsync(UserId);
+            return Ok(await messageSend.ReserveVideoAsync(UserId, sender, bookId, request.ClientId,
+                request.ParentMessageId, request.DeviceId, request.SentAt));
         }
         catch (MessageSendException ex)
         {

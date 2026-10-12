@@ -324,6 +324,50 @@ namespace BookClubApi.Migrations
                     b.ToTable("MessageReactions");
                 });
 
+            modelBuilder.Entity("BookClubApi.Models.PendingVideo", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("BookId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("ClientId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<string>("MediaUrl")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<Guid?>("ParentMessageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SenderId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaUrl")
+                        .IsUnique();
+
+                    b.HasIndex("SenderId", "ClientId")
+                        .IsUnique();
+
+                    b.ToTable("PendingVideos");
+                });
+
             modelBuilder.Entity("BookClubApi.Models.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -653,6 +697,17 @@ namespace BookClubApi.Migrations
                     b.Navigation("Message");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("BookClubApi.Models.PendingVideo", b =>
+                {
+                    b.HasOne("BookClubApi.Models.User", "Sender")
+                        .WithMany()
+                        .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Sender");
                 });
 
             modelBuilder.Entity("BookClubApi.Models.RefreshToken", b =>

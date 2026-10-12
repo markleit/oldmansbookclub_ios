@@ -99,6 +99,37 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | T11 | Video: compressed after it's queued (from the original — kept until sent — if interrupted); can't compress → the original; too large after compressing → refused with the reason; offline → compressed, then waits for the network without asking for an upload link; a failed upload gets a fresh link | E: `testU9…` (6), `testAVideoUploadsItsBlobThenPostsTheURL`; H: `testH14…`; O: `testASentVideoTakesBothItsOriginalAndItsCompressedCopyWithIt`, `testTheLaunchSweepKeepsAVideosOriginalWhileItsUnsent` | Covered (PR 5); compression with the app suspended / long videos: **Device** (needs the app awake — iOS limit; ~30 s grace on leaving) |
 | T12 | Old clients keep working against the new server | API: `The_json_send_is_unchanged_alongside_the_file_send`, `No_tap_time_means_sent_when_received…`; **Device** M13 after each deploy | Covered |
 
+## Send token (design v2, server)
+
+What a message handed to iOS carries so it can wait for the network without the app awake to
+refresh an hour-long access token (#204 design v2, 2026-10-12). The app side lands in the v2 app PR.
+
+| # | Requirement | Tests | Status |
+|---|---|---|---|
+| K1 | Signing in and refreshing each hand out a send token lasting 7 days; the access token is unchanged (no scope, 1 h) | API: `SendTokenTests.K1_…` | Covered |
+| K2 | It sends every kind: JSON (text, video post, forward), the file body (voice, photo), a video reservation | API: `K2_…` | Covered |
+| K3 | It does nothing else: no reading, no account calls, no upload links, no live connection | API: `K3_…` (each checked against the access token too) | Covered |
+| K4 | Signing out on that phone ends it at once | API: `K4_…` | Covered |
+| K5 | Deleting the account ends it | — | **Gap**: account deletion itself fails (#244) |
+
+## Video without the app (design v2, server)
+
+The app reserves a video once it's compressed and uploads the file straight to storage; storage's
+"file landed" report (Azure Event Grid → `/storage/events`) makes the server create the message.
+Nothing after the upload needs the app.
+
+| # | Requirement | Tests | Status |
+|---|---|---|---|
+| V1 | Reserving gives an upload link that lasts as long as the send token; no message yet | API: `ReservedVideoTests.V1_…` | Covered |
+| V2 | When the upload lands, the server creates the message: tap time, reply, one push skipping the sender's phone | API: `V2_…` | Covered |
+| V3 | The report and the app's own post make one message, whichever comes first | API: `V3_…`, `V4_…` | Covered |
+| V4 | A report is not trusted: the file must really be in storage; a report of a file nobody reserved changes nothing | API: `V5_…`, `V6_…` | Covered |
+| V5 | Reserving again reuses the file; once sent, it returns the message and nothing to upload | API: `V7_…` | Covered |
+| V6 | Everything that can refuse a send refuses before the upload; a refusal on landing (too large) is told to the app when it posts | API: `V8_…`, `V9_…` | Covered |
+| V7 | One send counts once against the limit (reservation, re-reservation, its own post) | API: `V10_…` | Covered |
+| V8 | The upload link can't replace a file that has landed (create-only) | Checked against Azure dev storage (403 `UnauthorizedBlobOverwrite`, 2026-10-12); not reachable from CI | **Manual** |
+| V9 | Event Grid's subscription handshake is answered | API: `V11_…`; the real subscription: **Device** M-video after deploy | Covered |
+
 ## Voice recording (#213)
 
 | # | Requirement | Tests | Status |

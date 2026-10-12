@@ -303,28 +303,56 @@ public class AuthController(
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    // #204 design v2 — the week-long, send-only token that rides on a message handed to iOS (see
+    // SendToken). `session` is the refresh token it belongs to, so signing out ends it.
+    // Configurable for the same reason as the access token: a dev server can expire it in minutes.
+    private string GenerateSendToken(User user, Guid session)
+    {
+        var key = new SymmetricSecurityKey(
+            Encoding.UTF8.GetBytes(config["Jwt:Secret"]
+                ?? throw new InvalidOperationException("Jwt:Secret not configured")));
+
+        var claims = new[]
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new Claim(SendToken.ScopeClaim, SendToken.Scope),
+            new Claim(SendToken.SessionClaim, session.ToString())
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: config["Jwt:Issuer"],
+            audience: config["Jwt:Audience"],
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(config.GetValue("Jwt:SendTokenMinutes", SendToken.Lifetime.TotalMinutes)),
+            signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     // Issues a 90-day opaque refresh token. We persist only its SHA-256 hash so a DB
     // compromise doesn't expose live sessions; the raw token is returned to the client once.
-    private async Task<string> IssueRefreshTokenAsync(Guid userId)
+    private async Task<(string Raw, Guid Id)> IssueRefreshTokenAsync(Guid userId)
     {
         var raw = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             .Replace('+', '-').Replace('/', '_').TrimEnd('=');
         var hash = Sha256Hex(raw);
-        db.RefreshTokens.Add(new RefreshToken
+        var row = new RefreshToken
         {
             UserId = userId,
             TokenHash = hash,
             ExpiresAt = DateTime.UtcNow.AddDays(90)
-        });
+        };
+        db.RefreshTokens.Add(row);
         await db.SaveChangesAsync();
-        return raw;
+        return (raw, row.Id);
     }
 
     private async Task<AuthResponse> BuildAuthResponse(User user)
     {
         var access = GenerateJwt(user);
-        var refresh = await IssueRefreshTokenAsync(user.Id);
-        return new AuthResponse(access, refresh, await BuildUserDto(user));
+        var (refresh, session) = await IssueRefreshTokenAsync(user.Id);
+        return new AuthResponse(access, refresh, await BuildUserDto(user), GenerateSendToken(user, session));
     }
 
     private static string Sha256Hex(string input)
@@ -360,7 +388,8 @@ public class AuthController(
         await db.SaveChangesAsync();
 
         var access = GenerateJwt(existing.User);
-        return Ok(new AuthResponse(access, request.RefreshToken, await BuildUserDto(existing.User)));
+        return Ok(new AuthResponse(access, request.RefreshToken, await BuildUserDto(existing.User),
+            GenerateSendToken(existing.User, existing.Id)));
     }
 
     [Authorize]

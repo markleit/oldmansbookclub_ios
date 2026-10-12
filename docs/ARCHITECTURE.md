@@ -109,6 +109,7 @@ preset list and the `.dev`-app isolation this enables.
 | `MessagesController` | `/messages`, `/books/{id}/messages` | Send/list/save/report messages, transcripts |
 | `ChatHub` | SignalR (`/hubs/chat`) | Real-time messaging |
 | `MediaController` | `/media` | SAS URL generation for blob uploads |
+| `StorageEventsController` | `/storage/events` | Azure Event Grid webhook: a reserved video's file landed → create its message (#204) |
 | `NotificationsController` | `/notifications` | APNs device token registration |
 | `AdminController` | `/admin` | Join requests, member management, reports, user deletion |
 | `FeedbackController` | `/feedback` | In-app feedback → GitHub issues (admin-only) |
@@ -167,6 +168,15 @@ server having revoked a token the client still holds, forcing a sign-out on the 
 the token's hash (SHA-256) is persisted, so a DB compromise doesn't expose live sessions. Trade-off:
 no reuse-detection for a stolen refresh token — accepted for this app's threat model.
 
+**Send token (#204 design v2).** Sign-in and refresh also return `send_token`: a JWT with
+`scope: send`, valid 7 days (`Jwt:SendTokenMinutes` overrides it), carrying the id of the refresh
+token it came with (`sid`). The app attaches it to a message it hands to iOS's background transfer,
+so a message waiting days for the network can't arrive with an expired access token. It's
+accepted only by endpoints marked `[AcceptsSendToken]` (the two sends and the video reservation)
+and only while that refresh token is live, so signing out ends it at once
+(`SendToken.ValidateAsync`, on `JwtBearerEvents.OnTokenValidated`). Access tokens carry no scope
+and behave as before, so older clients are unaffected.
+
 ### User states
 
 ```
@@ -210,8 +220,20 @@ iOS sender                    API (MessagesController →          iOS receivers
 
 | Body | Used for | Notes |
 |---|---|---|
-| `application/json` | Text; video (`media_url` from `/media/upload-url` + a blob PUT); forwards (`forward_message_id`); every pre-2.2 client | `SendMessageRequest` |
+| `application/json` | Text; video (`media_url` from a reservation or `/media/upload-url`, after a blob PUT); forwards (`forward_message_id`); every pre-2.2 client | `SendMessageRequest` |
 | `audio/mp4` / `image/jpeg` — the file itself | Voice and photo in **one request** (`client_id`, `duration_seconds`, `parent_message_id`, `device_id` in the query) | The server stores the blob and creates the message, so the app can hand the whole send to iOS's background transfer. Every refusal happens before the bytes are stored. Video isn't accepted this way: up to 100 MB is too much to proxy through App Service (~230 s request limit). |
+
+**Video without the app (#204 design v2).** A video is too big to pass through App Service, so
+its file goes straight to storage. The app first reserves the message —
+`POST /books/{id}/messages/video` with `client_id`, `parent_message_id`, `device_id`, `sent_at` —
+and gets a create-only upload link valid as long as the send token (or, if a copy of this send
+already got through, the message and no link). Every refusal (membership, rate limit) happens
+here, before a byte is uploaded. When the blob lands, Event Grid posts a `BlobCreated` event to
+`/storage/events`; the server checks the file really is in storage and creates the message exactly
+as the app's post would (tap time, reply, push), then drops the reservation (`PendingVideos`). The
+app may still post the video itself when it's running; whichever comes first creates the message,
+deduplicated by `client_id`. Older clients use `/media/upload-url` and post; their uploads have no
+reservation, so their events are ignored.
 
 **Two times per message (#204).** `sent_at` is when the sender tapped Send: 2.2+ clients stamp it
 (JSON field or query param), and the server clamps it to `[received − 7 days, received]` (older
@@ -273,12 +295,36 @@ All user-generated media is stored in Azure Blob Storage (`oldmansbookclubstore`
 
 | Container | Access | Content |
 |-----------|--------|---------|
-| `club-media` | Private (SAS) | Voice messages, chat photos |
+| `club-media` | Private (SAS) | Voice messages, chat photos, videos |
 | `avatars` | Public | Profile avatar images |
 
-Upload flow: iOS requests a SAS upload URL from the API → uploads directly to blob storage → sends the blob URL via SignalR message.
+Upload flows (#204): voice and photo go as the body of the send itself (the server stores the
+blob). A video goes straight to blob storage on a reservation's create-only upload link (~7 days),
+and the server creates its message when storage reports the file landed (see Real-time Chat).
+Older clients get a 60-minute write link from `/media/upload-url` and post the blob URL.
 
-Read access for `club-media` uses time-limited user delegation SAS URLs (10 min upload, 7 day read).
+Read access for `club-media` uses time-limited user delegation SAS URLs (7 day read).
+
+**Event Grid subscription (production, one-time setup).** The "file landed" report comes from an
+Event Grid system topic on `oldmansbookclubstore` (East US — the topic must be in the storage
+account's region), subscribed to `BlobCreated` for `club-media/*.mp4` and delivered to the API's
+`/storage/events`. The endpoint must be deployed first: creating the subscription runs Event Grid's
+validation handshake against it.
+
+```bash
+az provider register --namespace Microsoft.EventGrid   # once per subscription
+az eventgrid system-topic create -g oldmansbookclub-rg -n oldmansbookclubstore-events -l eastus \
+  --topic-type microsoft.storage.storageaccounts \
+  --source $(az storage account show -n oldmansbookclubstore --query id -o tsv)
+az eventgrid system-topic event-subscription create -g oldmansbookclub-rg \
+  --system-topic-name oldmansbookclubstore-events -n reserved-videos \
+  --endpoint https://oldmansbookclub-api.azurewebsites.net/storage/events \
+  --included-event-types Microsoft.Storage.BlobCreated \
+  --subject-begins-with /blobServices/default/containers/club-media/ --subject-ends-with .mp4
+```
+
+Dev has no subscription (a laptop isn't reachable from Event Grid): there a video completes by the
+app's own post, and the API tests post events to `/storage/events` directly.
 
 ---
 
