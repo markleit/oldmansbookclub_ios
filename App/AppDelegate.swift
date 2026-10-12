@@ -104,7 +104,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         completionHandler: @escaping () -> Void
     ) {
         if identifier == URLSessionSendTransport.sessionIdentifier {
-            SendEngine.liveTransport.setSystemCompletionHandler(completionHandler, for: identifier)
+            // iOS may suspend the app as soon as this handler is called. A refused token (401)
+            // still has to be refreshed and the message handed back to iOS, so the handler is
+            // called only once nothing is on its way to iOS (#204, M9).
+            SendEngine.liveTransport.setSystemCompletionHandler({
+                MainActor.assumeIsolated {
+                    SendEngine.shared.whenHandedOver { completionHandler() }
+                }
+            }, for: identifier)
         } else {
             BackgroundUploadService.shared.setBackgroundCompletionHandler(completionHandler, for: identifier)
         }

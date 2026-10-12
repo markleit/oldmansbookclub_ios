@@ -58,6 +58,8 @@ final class SendEngineTests: XCTestCase {
     private var network = true
     private var tokenCalls: [TimeInterval] = []
     private var tokenResult: APIClient.SendToken = .token("tok")
+    /// When set, getting a token waits here (a refresh that takes a while).
+    private var tokenGate: (() async -> Void)?
     private var rejections = 0
     private var tokenAfterRejectionResult: APIClient.SendToken = .token("fresh-token")
     /// When set, a token refresh waits here until the test resumes it.
@@ -92,7 +94,11 @@ final class SendEngineTests: XCTestCase {
             baseURL: { URL(string: "https://api.test")! },
             deviceId: { "device-1" },
             myUserId: { [unowned self] in self.me },
-            token: { [unowned self] validFor in self.tokenCalls.append(validFor); return self.tokenResult },
+            token: { [unowned self] validFor in
+                self.tokenCalls.append(validFor)
+                if let gate = self.tokenGate { await gate() }
+                return self.tokenResult
+            },
             tokenAfterRejection: { [unowned self] in
                 self.rejections += 1
                 if let gate = self.refreshGate { await gate() }
@@ -520,6 +526,52 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).notBefore, now.addingTimeInterval(1),
                        "iOS keeps to the backoff — the server isn't hit again early")
         XCTAssertEqual(transport.direct.count, directBefore, "no direct copy skipping the backoff")
+    }
+
+    func testW3LeavingTheAppWaitsForAHandOverStillGettingItsToken() async throws {
+        // 2.2 (3) device pass: offline, ten photos were on their way to iOS but still getting a
+        // token when the phone locked. Leaving the app didn't wait for them, the app was suspended
+        // mid-wait, and iOS never had them — nothing went until the app was opened.
+        var release: CheckedContinuation<Void, Never>?
+        tokenGate = { await withCheckedContinuation { release = $0 } }
+        network = false
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        XCTAssertEqual(transport.background.count, 0, "still getting its token")
+
+        var handedOver = false
+        engine.appWillResignActive { handedOver = true }
+        await settle()
+        XCTAssertFalse(handedOver, "the app must stay awake until iOS has it")
+
+        release?.resume()
+        await settle()
+        XCTAssertEqual(transport.background.count, 1, "with iOS")
+        XCTAssertTrue(handedOver)
+    }
+
+    func testM9AfterA401WhileSuspendedTheWakeLastsUntilTheMessageIsBackWithIOS() async throws {
+        // The token expired while the phone was offline and locked. iOS sends, the server refuses
+        // the token, and iOS wakes the app — which it may suspend as soon as the wake is reported
+        // handled. Before that the app must refresh the token and hand the message back.
+        var release: CheckedContinuation<Void, Never>?
+        refreshGate = { await withCheckedContinuation { release = $0 } }
+        appActive = false
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        transport.finish(0, status(401))
+        var handled = false
+        engine.whenHandedOver { handled = true }
+        await settle()
+        XCTAssertFalse(handled, "still refreshing the token: the wake mustn't end yet")
+
+        release?.resume()
+        await settle()
+        XCTAssertEqual(transport.background.count, 2, "back with iOS, with a fresh token")
+        XCTAssertTrue(handled)
     }
 
     func testLeavingTheAppWithNothingWaitingReportsDoneAtOnce() async throws {

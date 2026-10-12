@@ -849,11 +849,16 @@ final class APIClient {
     /// so it must not leave with a token about to expire.
     func sendToken(validFor minRemaining: TimeInterval) async -> SendToken {
         guard let token = TokenStore.shared.token else { return .signedOut }
-        if let expiry = JWTExpiry.expiresAt(token), expiry.timeIntervalSinceNow > minRemaining { return .token(token) }
-        // Couldn't refresh right now (typically: no network)? Hand over the token we have rather than
-        // nothing: a send queued offline must still go to iOS's background transfer. If it has
-        // expired by the time iOS sends it, the 401 wakes the app, which refreshes and resends.
-        return await refreshedSendToken(orElse: token)
+        switch SendPolicy.tokenChoice(expiresIn: JWTExpiry.expiresAt(token)?.timeIntervalSinceNow,
+                                      minRemaining: minRemaining,
+                                      hasNetwork: NetworkReachability.shared.hasNetworkPath) {
+        case .useStored:
+            return .token(token)
+        case .refresh:
+            // A refresh that fails only for now still hands over the token we have, for the same
+            // reason (SendPolicy.tokenChoice).
+            return await refreshedSendToken(orElse: token)
+        }
     }
 
     /// The server refused `rejected` (401). Use a newer stored token if one exists; else refresh.
