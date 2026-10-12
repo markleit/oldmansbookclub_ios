@@ -204,9 +204,15 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "a passing failure should become a quiet clock, not red")
         XCTAssertFalse(indicator("failedSendIndicator").exists, "never red for a passing failure")
 
+        // B5 (PR 7): the Library says so too.
+        goBack()
+        let unsent = indicator("unsentCount")
+        XCTAssertTrue(unsent.waitForExistence(timeout: 5), "the book's row should say it has an unsent message")
+        XCTAssertEqual(unsent.label, "1 unsent")
+
         try setServerDown(false)
         XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "while it's down")
-        XCTAssertTrue(waitForDisappearance(indicator("waitingSendIndicator"), timeout: 15))
+        XCTAssertTrue(waitForDisappearance(unsent, timeout: 15), "the Library's count clears once it's sent")
     }
 
     func testServerErrorsAreRetriedAutomatically() throws {
@@ -262,6 +268,12 @@ final class HermeticSendUITests: HermeticTestCase {
         let attempts = try requests(matching: "/messages")
         Thread.sleep(forTimeInterval: 3)
         XCTAssertEqual(try requests(matching: "/messages"), attempts, "a refusal is never retried")
+
+        // B5 (PR 7): the Library row turns red.
+        goBack()
+        XCTAssertTrue(indicator("unsentRefused").waitForExistence(timeout: 5), "the book's row should show it in red")
+        openCurrentBook()
+        XCTAssertTrue(refused.waitForExistence(timeout: 10))
 
         refused.tap()
         // A menu's text row may be exposed as a button or as text — match the label either way.

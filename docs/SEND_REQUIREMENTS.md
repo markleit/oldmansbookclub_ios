@@ -52,7 +52,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | B2 | Waiting: quiet clock when offline or still retrying after ~30 s; **never red** | P: `testOfflineShowsWaitingStraightAway`, `testHandedToIOSWithNoNetworkShowsWaiting`; H: `testWhenTheServerIsDownItShowsWaiting…`, `testServerErrorsAreRetriedAutomatically` | Covered |
 | B3 | Waiting menu: "Will send automatically", **Send now**, **Delete** | H: `testSendNowTriesImmediately…` (menu wording, Delete offered, Send now), `testB3AWaitingMessageDeletedFromItsMenuNeverArrives`; E: `testDeletingAnUnsentMessageCancelsIt` | Covered |
 | B4 | Couldn't send: red with the server's reason, content kept, **Copy** (text), **Delete**; only on a permanent refusal | E: `testARefusalShowsTheReasonAndIsNeverRetried`; H: `testARefusedMessageShowsTheReasonAndCanBeDeleted` (reason, Copy, Delete); P: `testOtherClientErrorsAreRefused…` | Covered |
-| B5 | Library: "N unsent", red if any refused | — | **PR 7** |
+| B5 | Library: "N unsent", red if any refused | P: `testB5ABooksUnsentCountsSendingWaitingAndRefusedAndOnlyItsOwn`; H: `testWhenTheServerIsDown…` (count, clears when sent), `testARefusedMessage…` (red) | Covered (PR 7) |
 
 ## Walking away
 
@@ -63,7 +63,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | W3 | **Signal returns while locked → sends** — including when the sign-in token is about to expire | E: `testOfflineAtTapIsHandedToIOSAndShowsWaiting`, `testAMessageHandedOverOfflineIsSentByIOSWithNoHelpFromTheApp` (#226), `testW3LeavingTheAppWaitsForAHandOverStillGettingItsToken`; P: `testOfflineTheStoredTokenGoesAtOnceEvenIfExpired` | Covered (logic); **Device** M5 (2.2 (3) found the expiring-token case: the hand-over waited on a refresh offline, the phone locked, nothing went until opened) |
 | W4 | Server back while locked → sends | E: `testLeavingTheAppHandsIOSWhatsWaitingOnTheClock`, `testAFailureWhileSuspendedGoesStraightBackToIOSOnTheBackoff` (#226) | Covered (logic); **Device** M6 |
 | W5 | iOS kills the app / reboot → sends when iOS wakes it or it's next opened | H: `testMessagesQueuedWhenTheAppWasKilledGoOnRelaunchWithoutOpeningTheChat`; E: `testOnRelaunch…` (3) | Covered (relaunch); the iOS wake itself: **Device** M8 |
-| W6 | Force-quit → a reminder 10 min after the oldest unsent; cancelled when sent; not while open | — | **PR 7** |
+| W6 | Force-quit → a reminder 10 min after the oldest unsent; cancelled when sent; not while open | `SendReminderTests` (10 min after the oldest; refused don't count; overdue → a minute out; wording; not shown while open); E: `testU10TheReminderIsSetWhenSomethingsUnsentAndMovesAsItSends`, `…OnlyTouchedWhenWhatsUnsentChanges`, `…LeavingTheAppReArms…` | Covered (PR 7); the notification itself after a real force-quit: **Device** M7 (`-sendReminderAfter 60` shortens it) |
 | W7 | App update mid-send: 2.1's queues taken over; 2.1's in-flight transfers recognised, nothing sent twice (D3) | O: `testEverything21HadQueuedIsTakenOverInSendOrder`, `testALegacyMediaItemWhoseFileWasPurgedIsDropped` | Partial — each message arrives once (server dedup), but a 2.1 photo/voice upload still in flight at upgrade can upload twice (one unused blob); 2.1 transfer results untested. Decision pending; **Device** M12 |
 
 ## Retry schedule and responses

@@ -64,6 +64,8 @@ final class SendEngineTests: XCTestCase {
     /// Videos handed to the compressor, and what it does: by default a smaller copy.
     private var compressed: [URL] = []
     private var compressGate: (() async -> Void)?
+    /// Every reminder the engine set (nil = cancelled), in order.
+    private var reminders: [ReminderPlan?] = []
     private var compression: (URL) -> VideoCompression = { source in
         let out = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
         try? Data([1]).write(to: out)
@@ -127,7 +129,8 @@ final class SendEngineTests: XCTestCase {
                 self.wakes.append((delay, action, false))
                 return { [weak self] in self?.wakes[index].cancelled = true }
             },
-            cacheConfirmed: { [unowned self] book, message in self.cached.append((book, message)) })
+            cacheConfirmed: { [unowned self] book, message in self.cached.append((book, message)) },
+            reminder: { [unowned self] plan in self.reminders.append(plan) })
         let engine = SendEngine(outbox: box ?? outbox(), transport: transport, environment: env, timing: timing)
         engine.confirmations.sink { [unowned self] in self.confirmations.append($0) }.store(in: &subscriptions)
         return engine
@@ -894,6 +897,54 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(post["media_url"] as? String, "https://blob.test/v.mp4")
         XCTAssertEqual(post["type"] as? String, "Video")
         XCTAssertEqual(post["client_id"] as? String, item.id.uuidString.lowercased())
+    }
+
+    // MARK: - U10: the force-quit reminder follows what's unsent (PR 7)
+
+    func testU10TheReminderIsSetWhenSomethingsUnsentAndMovesAsItSends() async throws {
+        let engine = await started(makeEngine())
+        let first = engine.enqueueText(bookId: book, clubId: club, body: "1", replyTo: nil)
+        await settle()
+        XCTAssertEqual(reminders.last, ReminderPlan(fireAt: now.addingTimeInterval(600), count: 1))
+
+        now = now.addingTimeInterval(120)
+        let second = engine.enqueueText(bookId: book, clubId: club, body: "2", replyTo: nil)
+        await settle()
+        XCTAssertEqual(reminders.last??.count, 2)
+
+        transport.finish(0, delivered(first.id))
+        await settle()
+        XCTAssertEqual(reminders.last, ReminderPlan(fireAt: second.sentAt.addingTimeInterval(600), count: 1),
+                       "moves to the oldest still unsent")
+
+        transport.finish(1, delivered(second.id))
+        await settle()
+        XCTAssertEqual(reminders.last, .some(nil), "cancelled once everything's sent")
+    }
+
+    func testU10TheReminderIsOnlyTouchedWhenWhatsUnsentChanges() async throws {
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "1", replyTo: nil)
+        await settle()
+        let set = reminders.count
+
+        engine.pump("retry clock"); engine.chatOpened(); engine.appBecameActive()
+        await settle()
+
+        XCTAssertEqual(reminders.count, set, "no churn of notification requests")
+    }
+
+    func testU10LeavingTheAppReArmsAReminderThatFellDueWhileItWasOpen() async throws {
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        engine.enqueueText(bookId: book, clubId: club, body: "1", replyTo: nil)
+        await settle()
+
+        now = now.addingTimeInterval(3600)   // overdue, and not shown: the app was open
+        engine.appWillResignActive()
+        await settle()
+
+        XCTAssertEqual(reminders.last??.fireAt, now.addingTimeInterval(60))
     }
 
     // MARK: - U9: video compressed after it's queued (PR 5)

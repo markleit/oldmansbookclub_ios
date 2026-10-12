@@ -67,6 +67,17 @@ enum SendPolicy {
     /// message's tap time, not from posting order). While backing off, only the OLDEST ready item
     /// goes, as a probe — if the server's down, ten waiting photos cost one request per tick, not
     /// ten — and when the probe lands the clock resets and everything else follows.
+    /// A book's unsent messages, for its Library row (PR 7): "N unsent", red if any was refused.
+    struct UnsentSummary: Equatable {
+        var count = 0
+        var anyRefused = false
+    }
+
+    static func unsent(in items: [SendItem], bookId: UUID) -> UnsentSummary {
+        let mine = items.filter { $0.bookId == bookId }
+        return UnsentSummary(count: mine.count, anyRefused: mine.contains { $0.status == .refused })
+    }
+
     enum TokenChoice: Equatable { case useStored, refresh }
 
     /// Which token a send hands to iOS. One with plenty of time left is used as is; one about to
