@@ -183,17 +183,22 @@ public class UserDevice
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
 }
 
-// #204 design v2 — a video message its sender has sent whose file is still on its way to
-// storage. The app reserves it, and gets the upload link, once the video is compressed; the server
-// creates the message itself when storage reports the file landed, so nothing after the upload
-// needs the app — the step a locked phone couldn't take. Deleted once the message exists.
+// #204 design v2 — a video upload the server is expecting: the server creates the message itself
+// when storage reports the file landed, so nothing after the upload needs the app — the step a
+// locked phone couldn't take. Deleted once the message exists. Two kinds:
+// - a RESERVATION: a sent video's message, details known (BookId, ClientId, …);
+// - a SLOT: an upload link fetched in advance (ClientId null), so a video sent offline can be
+//   handed to iOS at once. Its message's details travel with the upload as blob metadata.
 public class PendingVideo
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public Guid SenderId { get; set; }
     public User Sender { get; set; } = null!;
-    public Guid BookId { get; set; }
-    public Guid ClientId { get; set; }
+    public Guid? ClubId { get; set; }
+    public Guid? BookId { get; set; }
+    public Guid? ClientId { get; set; }
+    // A slot's sign-in (the send token's refresh token id): signing out drops what it would create.
+    public Guid? SessionId { get; set; }
     // The plain blob URL the upload link points at, and the message's MediaUrl once created.
     [Required, MaxLength(512)] public string MediaUrl { get; set; } = "";
     public Guid? ParentMessageId { get; set; }

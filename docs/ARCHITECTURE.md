@@ -242,7 +242,15 @@ here, before a byte is uploaded. When the blob lands, Event Grid posts a `BlobCr
 `/storage/events`; the server checks the file really is in storage and creates the message exactly
 as the app's post would (tap time, reply, push), then drops the reservation (`PendingVideos`). The
 app may still post the video itself when it's running; whichever comes first creates the message,
-deduplicated by `client_id`. Older clients use `/media/upload-url` and post; their uploads have no
+deduplicated by `client_id`.
+
+**Upload slots** (`POST /media/video-slots?clubId=&count=`) are the same thing fetched in advance,
+so a video sent with no network can be handed to iOS at the tap: each a create-only link to a new
+blob, good for 7 days, at most 10 unexpired per user. A slot has no message yet — the app sends the
+message's details with the upload as blob metadata (`x-ms-meta-bookid`, `clientid`, `sentat`,
+`parentid`, `deviceid`), and the server creates the message from them when the blob lands, after
+checking the book is in the slot's club (and, when saving, that the sender is a member). Slots
+fetched with the send token belong to its sign-in: signing out drops what they'd create. Older clients use `/media/upload-url` and post; their uploads have no
 reservation, so their events are ignored.
 
 **Two times per message (#204).** `sent_at` is when the sender tapped Send: 2.2+ clients stamp it

@@ -67,15 +67,21 @@ public sealed class FakeBlobService() : BlobService(TestEnvironment)
         return Task.FromResult(mediaUrl.Split('?')[0] + "?sig=fake-create");
     }
 
-    private readonly HashSet<string> _landed = [];
+    private readonly Dictionary<string, IDictionary<string, string>> _landed = [];
 
-    /// A test puts a file "in storage" — what the app's upload would have done — before telling
-    /// the server it landed. Nothing else is in storage, so a report of anything else is false.
-    public void Land(string mediaUrl) { lock (_landed) _landed.Add(mediaUrl.Split('?')[0]); }
-
-    public override Task<bool> BlobExistsAsync(string storedUrl)
+    /// A test puts a file "in storage" — what the app's upload would have done, with whatever
+    /// metadata it sent — before telling the server it landed. Nothing else is in storage, so a
+    /// report of anything else is false.
+    public void Land(string mediaUrl, IDictionary<string, string>? metadata = null)
     {
-        lock (_landed) return Task.FromResult(_landed.Contains(storedUrl.Split('?')[0]));
+        lock (_landed)
+            _landed[mediaUrl.Split('?')[0]] = new Dictionary<string, string>(
+                metadata ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    public override Task<IDictionary<string, string>?> GetBlobMetadataAsync(string storedUrl)
+    {
+        lock (_landed) return Task.FromResult(_landed.GetValueOrDefault(storedUrl.Split('?')[0]));
     }
 
     /// A file stored by the one-request voice/photo send (#204), as the server handed it over.

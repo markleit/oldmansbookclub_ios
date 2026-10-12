@@ -12,7 +12,7 @@ namespace BookClubApi.Controllers;
 [ApiController]
 [Route("[controller]")]
 [EnableRateLimiting("media")]
-public class MediaController(BlobService blobService, AppDbContext db) : ControllerBase
+public class MediaController(BlobService blobService, AppDbContext db, MessageSendService messageSend) : ControllerBase
 {
     private Guid UserId => Guid.Parse(User.FindFirst("sub")!.Value);
 
@@ -25,6 +25,24 @@ public class MediaController(BlobService blobService, AppDbContext db) : Control
 
         var (uploadUrl, mediaUrl) = await blobService.GenerateUploadUrlAsync(clubId, ext);
         return new UploadUrlResponse(uploadUrl, mediaUrl);
+    }
+
+    // #204 design v2 — upload slots fetched in advance (MessageSendService.IssueVideoSlotsAsync).
+    // Accepts the send token, whose sign-in the slots then belong to.
+    [HttpPost("video-slots")]
+    [AcceptsSendToken]
+    public async Task<ActionResult<VideoSlotsResponse>> GetVideoSlots([FromQuery] Guid clubId, [FromQuery] int count = 3)
+    {
+        try
+        {
+            var sender = await messageSend.LoadSenderContextAsync(UserId);
+            Guid? session = Guid.TryParse(User.FindFirst(SendToken.SessionClaim)?.Value, out var sid) ? sid : null;
+            return new VideoSlotsResponse(await messageSend.IssueVideoSlotsAsync(UserId, sender, clubId, count, session));
+        }
+        catch (MessageSendException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 
     [HttpPost("avatar-upload-url")]

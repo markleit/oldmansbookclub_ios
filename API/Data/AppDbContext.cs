@@ -215,7 +215,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         // storage reports the upload landed.
         modelBuilder.Entity<PendingVideo>()
             .HasIndex(p => new { p.SenderId, p.ClientId })
-            .IsUnique();
+            .IsUnique()
+            .HasFilter("[ClientId] IS NOT NULL");   // slots have none
 
         modelBuilder.Entity<PendingVideo>()
             .HasIndex(p => p.MediaUrl)
