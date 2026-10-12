@@ -29,7 +29,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | S3 | App open, good signal: arrives in ~1–2 s | H: `testATextReachesTheServerWithinTwoSecondsOfTappingSend` (< 2.5 s), `testS3APhotoReachesTheServerWithinSecondsWithTheAppOpen` (< 5 s: iOS first, direct after 3 s) | Covered; voice: **PR 8** (needs the test recorder) |
 | S5 | **Ten photos sent at once all arrive on the first try**, even when some wait their turn on the phone's one connection | API (real web server): `BatchUploadTests.A_photo_that_waits_its_turn_for_eight_seconds_still_arrives`, `…Ten_photos_sent_at_once_over_one_slow_connection_all_arrive_the_first_time` | Covered by #231 (found 2026-10-11: the server cut 2 of 9 off); **Device**: M5 with 10 photos, zero 408s in the server log |
 | S6 | A photo is sent at 2048 px on its long side (~1 MB), from the chat and the share sheet | `PhotoUploadTests` (chat path) | Covered by #231 (chat); share sheet uses the same constant, untested — **PR 10** |
-| S4 | Storage full at tap: an error, no bubble (D4) | — | **PR 8** — photo/video show the error (untested); voice currently loses the take silently (found 2026-10-11): fix + tests for all three with PR 8's test recorder |
+| S4 | Storage full at tap: an error, no bubble (D4) | — | Partial — photo/video show the error (as before); voice was silent and now shows it too (PR 8); untested — needs a full disk |
 
 ## Order and time
 
@@ -100,5 +100,14 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | T12 | Old clients keep working against the new server | API: `The_json_send_is_unchanged_alongside_the_file_send`, `No_tap_time_means_sent_when_received…`; **Device** M13 after each deploy | Covered |
 
 ## Voice recording (#213)
-All rows (pause/resume within 15 s, hold-to-talk, leaving the chat sends the take, stop reasons
-logged): **PR 8**, with U13/H17 and device rows R1–R9.
+
+| # | Requirement | Tests | Status |
+|---|---|---|---|
+| C1 | Declined call, Siri, alarm: paused; over within 15 s → resumes into the same message (chirp, "Recording resumed") | `RecordingTakeTests.testR1ADeclinedCallWithin15sResumesIntoTheSameMessage` | Covered (PR 8); the real interruption: **Device** R1, R5 |
+| C2 | Call answered, or over 15 s → sends what was recorded | `testR2R3AnAnsweredCallOrOneOver15sSendsWhatWasRecorded` | Covered (PR 8); **Device** R2, R3 |
+| C3 | Hold-to-talk resumes only if still held; lifted → sends | `testR4HoldToTalkLiftedDuringTheInterruptionSendsWithoutResuming` | Covered (PR 8); **Device** R4 |
+| C4 | Leaving the chat mid-recording sends the take | `testC8LeavingTheChatSendsTheTake` (take); the chat's close calls it (`BookViewModel.disconnect`) | Covered (PR 8); **Device** R8 (tap-to-talk + Back) — a UI test needs a microphone CI doesn't have |
+| C5 | Home, lock, playing a bubble → sends the take, as before | `testEveryWayATakeEndsIsLogged` (each reason ends it once) | Covered; **Device** R9 |
+| C6 | Notification sounds, AirPods/CarPlay route changes don't stop it | — | **Device** R6, R7, CarPlay checklist |
+| C7 | The send log records why each recording ended | `testEveryWayATakeEndsIsLogged` | Covered (PR 8) |
+| C8 | Under half a second → dropped; can't resume → what was recorded is sent; ends once | `testUnderHalfASecondIsDropped`, `testWhenItCantResumeWhatWasRecordedIsSent`, `testAnEndedTakeEndsOnce` | Covered (PR 8) |
