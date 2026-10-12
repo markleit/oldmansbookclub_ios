@@ -20,8 +20,9 @@ extension SendEngine {
             tokenAfterRejection: {
                 await APIClient.shared.sendToken(afterRejecting: TokenStore.shared.sendToken ?? TokenStore.shared.token ?? "")
             },
-            compressVideo: { await VideoCompressor.compress($0, progress: $1) },
-            videoWork: { VideoSendKeeper.shared.apply($0) },
+            compressVideo: { await VideoCompressor.compress($0) },
+            fetchSlots: { await APIClient.shared.videoSlots(clubId: $0, count: $1) },
+            slotClubs: { TokenStore.shared.clubId.map { [$0] } ?? [] },
             schedule: { delay, action in
                 let task = Task { @MainActor in
                     try? await Task.sleep(for: .seconds(delay))
@@ -53,8 +54,7 @@ extension SendEngine {
         }
         // Leaving the foreground: every unsent message already has its carrier with iOS; the app is
         // kept awake (iOS's ~30 s) only for a carrier still being built — a token being renewed, a
-        // video compressing or reserving (which also has continued processing, iOS 26+).
-        VideoSendKeeper.shared.onEnded = { SendEngine.shared.videoWorkEnded($0) }
+        // video with no slot reserving.
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil,
                                                queue: .main) { _ in
             MainActor.assumeIsolated {

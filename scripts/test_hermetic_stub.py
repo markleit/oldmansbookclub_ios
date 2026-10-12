@@ -154,6 +154,21 @@ class StubTests(unittest.TestCase):
         second = self.request("POST", book, {"client_id": cid})[2]
         self.assertEqual(first["media_url"], second["media_url"])
 
+    def test_a_slot_upload_becomes_its_message_from_its_own_details(self):
+        _, _, body = self.request("POST", "/media/video-slots?clubId=11111111-1111-1111-1111-111111111111&count=2")
+        self.assertEqual(len(body["slots"]), 2)
+        slot = body["slots"][0]
+        cid = str(uuid.uuid4())
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("PUT", "/" + slot["upload_url"].split("/", 3)[3], body=b"\x00" * 10, headers={
+            "Content-Type": "video/mp4", "x-ms-meta-clientid": cid, "x-ms-meta-sentat": "2026-10-12T19:06:57.000Z",
+            "x-ms-meta-bookid": "66666666-6666-6666-6666-666666666666"})
+        conn.getresponse().read()
+        conn.close()
+        record = self.sent()[0]
+        self.assertEqual((record["via"], record["type"], record["client_id"], record["sent_at"], record["media_url"]),
+                         ("landed", "Video", cid, "2026-10-12T19:06:57.000Z", slot["media_url"]))
+
     # ---- scripted trouble --------------------------------------------------------------------
 
     def test_scripted_responses_are_used_in_order_then_normal_handling_resumes(self):

@@ -83,16 +83,31 @@ enum SendRequestBuilder {
                      bodyFile: nil)
     }
 
-    /// The blob upload for a video (the reservation's create-only link — no Authorization header).
-    static func blobUpload(uploadUrl: URL, fileURL: URL, contentType: String) -> Built {
+    /// The blob upload for a video (a slot's or reservation's create-only link — no Authorization
+    /// header). `metadata` rides along as x-ms-meta-* headers: a slot's message details.
+    static func blobUpload(uploadUrl: URL, fileURL: URL, contentType: String, metadata: [String: String] = [:]) -> Built {
         var request = URLRequest(url: uploadUrl)
         request.httpMethod = "PUT"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
+        for (key, value) in metadata { request.setValue(value, forHTTPHeaderField: "x-ms-meta-\(key)") }
         if let size = try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int {
             request.setValue(String(size), forHTTPHeaderField: "Content-Length")
         }
         return Built(request: request, jsonBody: nil, bodyFile: fileURL)
+    }
+
+    /// A slot upload's message details (MessageSendService.SlotMetadata on the server): the server
+    /// creates the message from them when the upload lands.
+    static func slotMetadata(_ item: SendItem, deviceId: String?) -> [String: String] {
+        var metadata = [
+            "bookid": item.bookId.uuidString.lowercased(),
+            "clientid": item.id.uuidString.lowercased(),
+            "sentat": sentAtFormatter.string(from: item.sentAt),
+        ]
+        if let parent = item.parentMessageId { metadata["parentid"] = parent.uuidString.lowercased() }
+        if let deviceId { metadata["deviceid"] = deviceId }
+        return metadata
     }
 
     private static func authorized(_ request: URLRequest, token: String) -> URLRequest {

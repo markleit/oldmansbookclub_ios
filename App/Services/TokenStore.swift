@@ -182,6 +182,8 @@ final class TokenStore {
         token = nil
         refreshToken = nil
         sendToken = nil
+        // #204 design v2 — upload slots belong to the sign-in (the server drops what they'd create).
+        VideoSlots.removeAll(in: Outbox.defaultDirectory())
         userId = nil
         // displayName intentionally kept — Apple only sends it on first auth,
         // so we preserve it as a fallback for re-login on the same device

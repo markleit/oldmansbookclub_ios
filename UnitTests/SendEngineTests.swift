@@ -18,7 +18,6 @@ final class SendEngineTests: XCTestCase {
 
     final class FakeTransport: SendTransport {
         var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)?
-        var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)?
         var background: [(key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)] = []
         var direct: [URLRequest] = []
         /// The client id of each direct JSON send, in order.
@@ -77,8 +76,10 @@ final class SendEngineTests: XCTestCase {
     private var tokenResult: APIClient.SendToken = .token("tok")
     /// When set, getting a token waits here (a refresh that takes a while).
     private var tokenGate: (() async -> Void)?
-    /// Everything the engine told continued processing (design v2).
-    private var videoWork: [VideoWork] = []
+    /// Slot top-ups the engine asked for: (club, how many). The fake server hands out `slotSupply`.
+    private var slotFetches: [(club: UUID, count: Int)] = []
+    private var slotSupply = 0
+    private var knownClubs: [UUID] = []
     /// Videos handed to the compressor, and what it does: by default a smaller copy.
     private var compressed: [URL] = []
     private var compressGate: (() async -> Void)?
@@ -106,7 +107,9 @@ final class SendEngineTests: XCTestCase {
         cached = []
         wakes = []
         tokenCalls = 0
-        videoWork = []
+        slotFetches = []
+        slotSupply = 0
+        knownClubs = []
     }
 
     override func tearDown() async throws {
@@ -134,13 +137,16 @@ final class SendEngineTests: XCTestCase {
                 if let gate = self.refreshGate { await gate() }
                 return self.tokenAfterRejectionResult
             },
-            compressVideo: { [unowned self] source, progress in
+            compressVideo: { [unowned self] source in
                 self.compressed.append(source)
-                progress(0.5)
                 if let gate = self.compressGate { await gate() }
                 return self.compression(source)
             },
-            videoWork: { [unowned self] in self.videoWork.append($0) },
+            fetchSlots: { [unowned self] club, count in
+                self.slotFetches.append((club, count))
+                return (0..<min(count, self.slotSupply)).map { _ in self.slot(fetchedAt: self.now) }
+            },
+            slotClubs: { [unowned self] in self.knownClubs },
             schedule: { [unowned self] delay, action in
                 let index = self.wakes.count
                 self.wakes.append((delay, action, false))
@@ -1244,72 +1250,126 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.reservations.count, 2, "reserved again")
     }
 
-    // MARK: - Continued processing for a video (design v2)
+    // MARK: - Upload slots (design v2): a video complete at the tap, offline or not
 
-    func testCPAVideoAsksIOSToKeepItsWorkGoingAtTheTapAndReleasesItOnceUploaded() async throws {
-        let engine = await started(makeEngine())
-        let item = try queueVideo(engine)
-        await settle()
-
-        XCTAssertEqual(videoWork.first, .start(item.id), "asked for at the tap, with the app in front")
-        XCTAssertTrue(videoWork.contains(.progress(item.id, 0.35)), "compressing reports progress")
-        XCTAssertTrue(videoWork.contains(.progress(item.id, 0.75)), "reserved")
-        XCTAssertFalse(videoWork.contains { if case .finish = $0 { return true }; return false }, "still uploading")
-
-        transport.onBackgroundProgress?(try XCTUnwrap(transport.background.first).key, 50, 100)
-        XCTAssertEqual(videoWork.last, .progress(item.id, 0.875), "the upload is the last quarter")
-
-        transport.finish(0, SendResponse(status: 201))
-        await settle()
-        XCTAssertEqual(videoWork.last, .finish(item.id, success: true))
+    private func slot(fetchedAt: Date, expiresIn: TimeInterval = 7 * 24 * 3600) -> VideoSlot {
+        let blob = UUID().uuidString.lowercased()
+        return VideoSlot(uploadUrl: "https://blob.test/\(blob).mp4?sig=create", mediaUrl: "https://blob.test/\(blob).mp4",
+                         fetchedAt: fetchedAt, expiresAt: fetchedAt.addingTimeInterval(expiresIn))
     }
 
-    func testCPWhenIOSEndsItTheCompressionStopsAndStartsAgainOnlyWithTheAppOpen() async throws {
-        var release: CheckedContinuation<Void, Never>?
-        compressGate = { await withCheckedContinuation { release = $0 } }
-        compression = { _ in Task.isCancelled ? .interrupted : .unsupported }   // like the real export
+    private func stockSlots(_ slots: [VideoSlot], club: UUID? = nil) {
+        var store = VideoSlots(directory: root.appendingPathComponent("Outbox"))
+        store.add(slots, clubId: club ?? self.club, now: now)
+    }
+
+    private func queueReadyVideo(_ engine: SendEngine) throws -> SendItem {
+        let name = try engine.files.importData(Data(repeating: 7, count: 64), extension: "mp4")
+        return engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: name, contentType: "video/mp4",
+                                   durationSeconds: nil, replyTo: nil)
+    }
+
+    func testVSAVideoSentOfflineWithASlotIsHandedToIOSAtTheTap() async throws {
+        // The 2.2 (6) device test: offline, the video had to wait for the network to be reserved,
+        // reached iOS only from the background, and went when the app was opened.
+        let old = slot(fetchedAt: now.addingTimeInterval(-3 * 3600)), newest = slot(fetchedAt: now.addingTimeInterval(-60))
+        stockSlots([old, newest])
+        network = false
         let engine = await started(makeEngine())
-        let item = try queueVideo(engine)
+        let item = try queueReadyVideo(engine)
         await settle()
-        XCTAssertEqual(compressed.count, 1)
 
-        appActive = false
-        engine.videoWorkEnded(item.id)   // expired, or cancelled by the user
-        release?.resume()
+        let upload = try XCTUnwrap(transport.background.first, "handed to iOS at the tap, with no network")
+        XCTAssertEqual(upload.request.url?.absoluteString, newest.uploadUrl, "the newest slot")
+        XCTAssertNil(upload.notBefore)
+        XCTAssertEqual(upload.request.value(forHTTPHeaderField: "x-ms-meta-clientid"), item.id.uuidString.lowercased())
+        XCTAssertEqual(upload.request.value(forHTTPHeaderField: "x-ms-meta-bookid"), book.uuidString.lowercased())
+        XCTAssertEqual(upload.request.value(forHTTPHeaderField: "x-ms-meta-deviceid"), "device-1")
+        XCTAssertNotNil(upload.request.value(forHTTPHeaderField: "x-ms-meta-sentat"), "tap time: the server orders by it")
+        XCTAssertEqual(transport.reservations.count, 0, "nothing needed from the server")
+        XCTAssertEqual(tokenCalls, 0, "no token either: the slot is the permission")
+        XCTAssertEqual(engine.items.first?.status, .inFlight)
+        XCTAssertEqual(VideoSlots(directory: root.appendingPathComponent("Outbox")).all()[club], [old], "used up")
+    }
+
+    func testVSAVideoWithNoSlotLeftIsReservedOnlineAndWaitsOffline() async throws {
+        let engine = await started(makeEngine())
+        _ = try queueReadyVideo(engine)
         await settle()
-        XCTAssertEqual(engine.items.first?.status, .waiting)
+        XCTAssertEqual(transport.reservations.count, 1, "online: reserved, as before")
+        XCTAssertEqual(transport.background.count, 1)
 
-        compressGate = nil
-        compression = { _ in .unsupported }
-        engine.pump("retry clock")
+        network = false
+        let offline = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent("offline"))))
+        _ = try queueReadyVideo(offline)
         await settle()
-        XCTAssertEqual(compressed.count, 1, "not restarted with the app suspended and nothing keeping it going")
+        XCTAssertEqual(offline.items.first?.status, .waiting, "offline with none left: it waits for the network and the app")
+    }
 
-        appActive = true
+    func testVSARetryReusesTheVideosSlotAndAStorageRefusalDropsItForAReservation() async throws {
+        stockSlots([slot(fetchedAt: now), slot(fetchedAt: now.addingTimeInterval(-10))])
+        let engine = await started(makeEngine())
+        _ = try queueReadyVideo(engine)
+        await settle()
+        let first = try XCTUnwrap(transport.background.first).request.url
+
+        transport.finish(0, SendResponse(status: 503))
+        await settle()
+        XCTAssertEqual(transport.background[safe: 1]?.request.url, first, "the same blob, not a second slot")
+
+        transport.finish(1, SendResponse(status: 403))   // a repeat of one that landed, or a week-old link
+        await settle()
+        XCTAssertEqual(transport.reservations.count, 1, "its slot dropped: reserved, which says it's sent or gives a new link")
+        XCTAssertNotEqual(engine.items.first?.status, .refused)
+    }
+
+    func testVSSlotsAreToppedUpToThreeAtLaunchOnReturningOnAChatAndAfterOneIsUsed() async throws {
+        knownClubs = [club]
+        slotSupply = 3
+        let engine = await started(makeEngine())
+        await settle()
+        XCTAssertEqual(slotFetches.map(\.count), [3], "at launch, for the club the app knows")
+        XCTAssertEqual(VideoSlots(directory: root.appendingPathComponent("Outbox")).all()[club]?.count, 3)
+
+        _ = try queueReadyVideo(engine)
+        await settle()
+        XCTAssertEqual(slotFetches.last?.count, 1, "the one used is replaced")
+
+        let other = UUID()
+        engine.chatOpened(clubId: other)
+        await settle()
+        XCTAssertEqual(slotFetches.last?.club, other, "a chat in another club tops up its club")
+
         engine.appBecameActive()
         await settle()
-        XCTAssertEqual(compressed.count, 2, "started again with the app open")
-        XCTAssertEqual(transport.background.count, 1)
+        XCTAssertEqual(slotFetches.count, 3, "nothing missing: no request")
     }
 
-    func testCPLeavingTheAppOrAWakeDoesntWaitForAVideoStillCompressing() async throws {
-        compressGate = { await withCheckedContinuation { _ in } }   // a long video
+    func testVSOnlyOnlineAndOldSlotsGoOnlyWhenFreshOnesArrive() async throws {
+        knownClubs = [club]
+        let old = slot(fetchedAt: now.addingTimeInterval(-2 * 24 * 3600))
+        stockSlots([old])
+        network = false
         let engine = await started(makeEngine())
-        _ = try queueVideo(engine)
         await settle()
+        XCTAssertTrue(slotFetches.isEmpty, "offline: no top-up")
 
-        var done = false
-        engine.appWillResignActive { done = true }
+        network = true
+        slotSupply = 0   // the server can't hand any out right now
+        engine.appBecameActive()
         await settle()
-        XCTAssertTrue(done, "compressing can outlast iOS's ~30 s and a wake: continued processing (or the next run) has it")
+        XCTAssertEqual(slotFetches.last?.count, 3, "a day-old slot doesn't count as fresh")
+        XCTAssertEqual(VideoSlots(directory: root.appendingPathComponent("Outbox")).all()[club], [old],
+                       "a failed top-up keeps it: still good for days")
+
+        slotSupply = 3
+        engine.appBecameActive()
+        await settle()
+        let kept = VideoSlots(directory: root.appendingPathComponent("Outbox")).all()[club] ?? []
+        XCTAssertEqual(kept.count, 3)
+        XCTAssertFalse(kept.contains(old), "swapped for fresh ones")
     }
 
-    func testCPNotAskedForAMessageThatIsntAVideo() async throws {
-        let engine = await started(makeEngine())
-        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
-        await settle()
-        XCTAssertEqual(videoWork, [])
-    }
     func testAMessageWhoseFileIsGoneIsRefusedNotSilentlyDropped() async throws {
         let engine = await started(makeEngine())
         let name = try engine.files.importData(Data([1]), extension: "jpg")

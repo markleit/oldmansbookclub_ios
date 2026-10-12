@@ -355,9 +355,10 @@ final class HermeticSendUITests: HermeticTestCase {
 
     // MARK: - H14: video (PR 5)
 
-    func testH14AVideoLeavesTheComposerFreeAtOnceAndArrivesWhenReady() throws {
-        // Compressed after it's queued: tapping Send frees the chat straight away (it used to
-        // show a spinner for the whole compression), then the video goes on its own.
+    func testH14AVideoIsPreparedBeforeSendThenGoesAtTheTap() throws {
+        // #204 design v2: the picked video is compressed in the composer — Send waits for it — so
+        // a sent video is complete at the tap and goes like a photo: on a slot fetched in advance,
+        // its message created by the server when the upload lands.
         try setMessages([])
         launch()
         openCurrentBook()
@@ -377,13 +378,15 @@ final class HermeticSendUITests: HermeticTestCase {
         }
         XCTAssertTrue(picked.waitForExistence(timeout: 20), "the picked video didn't reach the composer")
 
-        app.buttons["sendButton"].tap()
-        // The mic is back (an image with a press gesture in hold-to-talk mode, so any element).
-        XCTAssertTrue(indicator("micButton").waitForExistence(timeout: 2),
-                      "the composer should be free at once — the video is compressed after it's queued")
+        // Send appears once it's ready (the 1 s sample compresses in a moment).
+        let send = app.buttons["sendButton"]
+        XCTAssertTrue(send.waitForExistence(timeout: 30), "Send never came — the video wasn't made ready")
+        send.tap()
+        XCTAssertTrue(indicator("micButton").waitForExistence(timeout: 2), "the composer is free once it's sent")
 
         let sent = try waitForSent(1, timeout: 60)
         XCTAssertEqual(sent.first?["type"] as? String, "Video", "Stub saw: \(trail())")
+        XCTAssertEqual(sent.first?["via"] as? String, "landed", "created from the upload's own details (a slot)")
     }
 
     // MARK: - H13: a batch keeps the order it was sent in

@@ -31,7 +31,16 @@ final class BookViewModel: ObservableObject {
     // #201 — up to 10 photos picked for one send (or one video in pendingVideo, never both).
     @Published var pendingImages: [UIImage] = []
     static let maxPendingPhotos = 10
-    @Published var pendingVideo: URL?
+    @Published var pendingVideo: URL? {
+        didSet { if pendingVideo != oldValue { prepareVideo() } }
+    }
+    // #204 design v2 — the picked video is made ready (checked, compressed) in the composer, before
+    // Send (VideoPreparation). `videoProgress` is non-nil while that's under way; Send waits for
+    // `preparedVideo`.
+    @Published private(set) var videoProgress: Double?
+    @Published private(set) var preparedVideo: URL?
+    private var preparedIsCopy = false
+    private var preparing: Task<Void, Never>?
     @Published var isRecording = false {
         didSet {
             guard isRecording != oldValue else { return }
@@ -299,7 +308,7 @@ final class BookViewModel: ObservableObject {
             // so replacing `messages` here can't hide one — the #189 "sent text vanishes" case.
             messages = cached
         }
-        engine.chatOpened()
+        engine.chatOpened(clubId: book.clubId)
         isOffline = false
         isLoadingMessages = !hasCachedState
         reachedBeginning = false
@@ -531,28 +540,18 @@ final class BookViewModel: ObservableObject {
     }
 
     func sendVideo() async {
-        guard let videoUrl = pendingVideo, TokenStore.shared.userId != nil else { return }
-        // Consume the pending video up front, before any await. The duration load below suspends
-        // (and compression did, before #204 PR 5 moved it to the engine), and leaving pendingVideo set
-        // across that window let a second invocation clear the guard above and send the same
-        // recording again as an independent message (observed on device: two videos, distinct
-        // clientIds and blobs, ~9s apart, so server-side clientId dedup couldn't catch it).
-        // sendPhotos is immune to this the same way: it clears pendingImages before its first await.
+        guard let videoUrl = pendingVideo, let ready = preparedVideo, TokenStore.shared.userId != nil else { return }
+        // Consume the pending video up front: a second tap must not send it again (observed on
+        // device before: two videos, distinct client ids, ~9 s apart). The prepared file is taken
+        // first, so clearing the composer doesn't delete it.
+        let isCopy = preparedIsCopy
+        preparedVideo = nil
         pendingVideo = nil
 
-        // Duration isn't affected by compression, so it's checked at once, against the source.
-        let duration = (try? await AVURLAsset(url: videoUrl).load(.duration))?.seconds ?? 0
-        if duration > 300 {
-            errorMessage = "Video is too long (max 5 minutes). Please trim it and try again."
-            return
-        }
-
-        // #204 PR 5 — queued at once; the engine compresses it before the upload, so the composer
-        // is free immediately (it used to show a spinner for the whole compression). Too large
-        // even after compressing comes back as a red bubble with the reason.
-        guard let fileName = try? engine.files.importFile(at: videoUrl, extension: "mp4", move: false) else {
-            // Couldn't stage the file (disk full) — hand the pending video back so the send
-            // button stays live and the user can try again.
+        // Ready means checked and compressed (VideoPreparation): queued now, it's complete — the
+        // engine hands it to iOS at once.
+        guard let fileName = try? engine.files.importFile(at: ready, extension: "mp4", move: isCopy) else {
+            // Couldn't stage the file (disk full) — hand the video back so Send stays live.
             pendingVideo = videoUrl
             errorMessage = "Your phone's storage is full, so the video couldn't be queued."
             return
@@ -560,7 +559,47 @@ final class BookViewModel: ObservableObject {
         let reply = replyingTo
         replyingTo = nil
         engine.enqueueMedia(.video, bookId: book.id, clubId: book.clubId, fileName: fileName,
-                            contentType: "video/mp4", durationSeconds: nil, replyTo: reply, compress: true)
+                            contentType: "video/mp4", durationSeconds: nil, replyTo: reply)
+    }
+
+    /// Starts making the picked video ready (or clears what was made for one no longer picked).
+    /// Interrupted — the app left the foreground — it starts again when the app's back.
+    private func prepareVideo() {
+        preparing?.cancel()
+        preparing = nil
+        if let old = preparedVideo, preparedIsCopy { try? FileManager.default.removeItem(at: old) }
+        preparedVideo = nil
+        videoProgress = nil
+        guard let source = pendingVideo else { return }
+        videoProgress = 0
+        preparing = Task { [weak self] in
+            let outcome = await VideoPreparation.prepare(source) { fraction in
+                Task { @MainActor [weak self] in
+                    if self?.pendingVideo == source, self?.videoProgress != nil { self?.videoProgress = fraction }
+                }
+            }
+            guard let self else { return }
+            guard !Task.isCancelled, self.pendingVideo == source else {
+                if case .ready(let url, true) = outcome { try? FileManager.default.removeItem(at: url) }
+                return
+            }
+            self.preparing = nil
+            switch outcome {
+            case .ready(let url, let compressed):
+                self.preparedVideo = url
+                self.preparedIsCopy = compressed
+                self.videoProgress = nil
+            case .refused(let reason):
+                self.errorMessage = reason
+                self.pendingVideo = nil
+            case .interrupted:
+                self.preparing = Task { [weak self] in
+                    for await _ in NotificationCenter.default.notifications(named: UIApplication.didBecomeActiveNotification) { break }
+                    guard let self, !Task.isCancelled, self.pendingVideo == source else { return }
+                    self.prepareVideo()
+                }
+            }
+        }
     }
 
     func toggleRecording() async {
@@ -923,6 +962,7 @@ final class BookViewModel: ObservableObject {
     func disconnect() {
         // Leaving the chat mid-recording sends the take — it used to be lost (#213).
         finalizeRecording(.leftChat)
+        preparing?.cancel()   // a picked video not sent is dropped with the composer
         networkMonitor?.cancel()
         networkMonitor = nil
         stopLifecycleObservers()

@@ -870,6 +870,26 @@ final class APIClient {
         }
     }
 
+    /// #204 design v2 — upload slots for a club, fetched in advance (SendEngine.topUpSlots). With the
+    /// send token, so they belong to this sign-in. Empty when that can't happen now.
+    func videoSlots(clubId: UUID, count: Int) async -> [VideoSlot] {
+        guard case .token(let token) = await sendToken(),
+              let url = URL(string: baseURL.absoluteString + "/media/video-slots?clubId=\(clubId.uuidString.lowercased())&count=\(count)")
+        else { return [] }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        struct Response: Decodable {
+            struct Slot: Decodable { let uploadUrl: String; let mediaUrl: String; let expiresAt: Date }
+            let slots: [Slot]
+        }
+        guard let (data, response) = try? await session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let decoded = try? Self.decoder.decode(Response.self, from: data) else { return [] }
+        let now = Date()
+        return decoded.slots.map { VideoSlot(uploadUrl: $0.uploadUrl, mediaUrl: $0.mediaUrl, fetchedAt: now, expiresAt: $0.expiresAt) }
+    }
+
     /// The server refused `rejected` (401). Use a newer stored token if one exists; else refresh.
     func sendToken(afterRejecting rejected: String) async -> SendToken {
         if let current = TokenStore.shared.sendToken ?? TokenStore.shared.token, current != rejected,

@@ -60,8 +60,6 @@ struct SendResponse {
 protocol SendTransport: AnyObject {
     /// Results of background tasks — including ones started by a previous run of the app.
     var onBackgroundResult: ((SendTaskKey, SendResponse) -> Void)? { get set }
-    /// An upload's progress while the app is running: (bytes sent, bytes in all).
-    var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)? { get set }
     /// `notBefore`: iOS holds the transfer until then — the retry clock, kept while the app is
     /// suspended and can't run it.
     func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?)
@@ -88,7 +86,6 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         }
     }
     private var earlyResults: [(SendTaskKey, SendResponse)] = []
-    var onBackgroundProgress: ((SendTaskKey, Int64, Int64) -> Void)?
     /// iOS's "done with this wake" handlers, per background session.
     private var systemCompletionHandlers: [String: () -> Void] = [:]
 
@@ -142,9 +139,6 @@ final class URLSessionSendTransport: NSObject, SendTransport {
                 guard let self else { return }
                 if let handler = self.onBackgroundResult { handler(key, response) } else { self.earlyResults.append((key, response)) }
             }
-        }
-        delegate.progress = { [weak self] key, sent, total in
-            Task { @MainActor in self?.onBackgroundProgress?(key, sent, total) }
         }
         delegate.finishedEvents = { [weak self] in
             Task { @MainActor in self?.systemCompletionHandlers.removeValue(forKey: identifier)?() }
@@ -234,20 +228,9 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     /// The session delegate — called on the session's own serial queue.
     private final class Delegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var deliver: ((SendTaskKey, SendResponse) -> Void)?
-        var progress: ((SendTaskKey, Int64, Int64) -> Void)?
         var finishedEvents: (() -> Void)?
         private var buffers: [Int: Data] = [:]
-        private var lastProgress: [Int: Date] = [:]
 
-        func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
-                        totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-            // At most twice a second: it only feeds a progress bar.
-            let now = Date()
-            if let last = lastProgress[task.taskIdentifier], now.timeIntervalSince(last) < 0.5 { return }
-            lastProgress[task.taskIdentifier] = now
-            guard let key = task.taskDescription.flatMap(SendTaskKey.init(taskDescription:)) else { return }
-            progress?(key, totalBytesSent, totalBytesExpectedToSend)
-        }
 
         func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
             buffers[dataTask.taskIdentifier, default: Data()].append(data)
@@ -255,7 +238,6 @@ final class URLSessionSendTransport: NSObject, SendTransport {
 
         func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
             let body = buffers.removeValue(forKey: task.taskIdentifier)
-            lastProgress[task.taskIdentifier] = nil
             guard let key = task.taskDescription.flatMap(SendTaskKey.init(taskDescription:)) else { return }
             let http = task.response as? HTTPURLResponse
             deliver?(key, SendResponse(status: http?.statusCode, body: body, error: error,
