@@ -252,7 +252,14 @@ final class SendEngine: ObservableObject {
                 handToIOS(item.id, "offline: handing to iOS")
             }
         } else {
-            isOffline = false
+            if isOffline {
+                // The network is back but no "network back" event said so (the backup check found
+                // it): do what the event does — fresh clock, and what iOS holds also goes directly.
+                SendLog.note("network back (found by \(reason))")
+                isOffline = false
+                clock.reset()
+                for item in outbox.items where item.status == .inFlight { sendDirectIfPossible(item.id) }
+            }
             let ids = SendPolicy.itemsToSubmit(outbox.items, clock: clock, now: now, isOffline: false)
             if !ids.isEmpty { SendLog.note("pump", nil, "reason=\(reason) items=\(ids.count)") }
             for id in ids { submit(id) }

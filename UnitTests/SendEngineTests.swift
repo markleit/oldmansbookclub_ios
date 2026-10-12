@@ -574,6 +574,154 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(engine.items.first?.status, .waiting)
     }
 
+    // MARK: - Requirements, as agreed (docs/SEND_REQUIREMENTS.md)
+    //
+    // Each test is written from its row's wording, not from the code: the ID in the name points at
+    // the row. Added after the 2.2 (1) device pass found a row (W3) whose test mirrored the code.
+
+    func testS1EveryKindIsOnDiskBeforeAnythingIsSent() async throws {
+        var notOnDisk: [UUID] = []
+        transport.onSubmit = { [unowned self] key in
+            if Outbox(directory: self.root.appendingPathComponent("Outbox")).item(key.itemId) == nil {
+                notOnDisk.append(key.itemId)
+            }
+        }
+        let engine = await started(makeEngine())
+
+        var sent: [UUID] = []
+        for kind in [SendItem.Kind.voice, .photo, .video] {
+            let file = try engine.files.importData(Data([1, 2, 3]), extension: kind == .voice ? "m4a" : kind == .photo ? "jpg" : "mp4")
+            sent.append(engine.enqueueMedia(kind, bookId: book, clubId: club, fileName: file, contentType: "x/y",
+                                            durationSeconds: nil, replyTo: nil).id)
+        }
+        await settle()
+
+        XCTAssertEqual(Set(transport.background.map(\.key.itemId)), Set(sent), "each kind was handed over")
+        XCTAssertEqual(notOnDisk, [], "a force-quit at the moment of sending must not lose any kind of message")
+    }
+
+    func testO2ATextAfterAVideoGoesImmediatelyWithoutWaitingForTheVideo() async throws {
+        let engine = await started(makeEngine())
+        let file = try engine.files.importData(Data(repeating: 7, count: 64), extension: "mp4")
+        let video = engine.enqueueMedia(.video, bookId: book, clubId: club, fileName: file, contentType: "video/mp4",
+                                        durationSeconds: nil, replyTo: nil)
+        await settle()
+        XCTAssertEqual(transport.background.count, 1, "the video's upload is under way")
+
+        let text = engine.enqueueText(bookId: book, clubId: club, body: "after the video", replyTo: nil)
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 1]).key.itemId, text.id, "the text didn't wait for the video")
+        XCTAssertEqual(transport.direct.count, 1, "and went directly too, as any text does")
+        transport.finish(1, delivered(text.id))
+        await settle()
+        XCTAssertEqual(engine.items.map(\.id), [video.id], "the text is sent while the video is still uploading")
+        XCTAssertLessThan(video.sentAt, text.sentAt, "the video keeps the earlier tap time, so the chat shows it above the text")
+    }
+
+    func testR2APassingFailureIsRetriedWithNoLimit() async throws {
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+
+        for round in 1...20 {
+            transport.finish(transport.background.count - 1, status(503))
+            await settle()
+            XCTAssertEqual(engine.items.first?.status, .waiting, "round \(round): never given up on, never red")
+            now = now.addingTimeInterval(61)   // past the longest gap
+            engine.pump("retry clock")
+            await settle()
+        }
+
+        XCTAssertEqual(transport.background.count, 21, "twenty failures later it's still being tried")
+    }
+
+    func testR4EachGoodNewsTriggerSendsAWaitingMessageAtOnce() async throws {
+        let triggers: [(name: String, fire: (SendEngine) -> Void)] = [
+            ("network back", { $0.networkBecameReachable() }),
+            ("app opened", { $0.appBecameActive() }),
+            ("chat opened", { $0.chatOpened() }),
+            ("another request succeeded", { $0.serverReachable() }),
+            ("Send now", { engine in engine.items.first.map { engine.sendNow($0.id) } }),
+        ]
+        for trigger in triggers {
+            transport = FakeTransport()
+            transport.directResponse = { _ in SendResponse(status: 503) }
+            let engine = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent(trigger.name))))
+            engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+            await settle()
+            transport.finish(0, status(503))
+            await settle()
+            XCTAssertEqual(engine.items.first?.status, .waiting, trigger.name)
+
+            engine.pump("retry clock")   // control: the clock alone says not yet
+            await settle()
+            XCTAssertEqual(transport.background.count, 1, "\(trigger.name): the clock sent it early")
+
+            trigger.fire(engine)          // same instant: the trigger alone sends it
+            await settle()
+            XCTAssertEqual(transport.background.count, 2, "\(trigger.name) didn't send the waiting message at once")
+        }
+    }
+
+    func testR4BeingRelaunchedByIOSSendsWaitingMessagesAtOnce() async throws {
+        let box = outbox()
+        let first = await started(makeEngine(outbox: box))
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        first.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        transport.finish(0, status(503))
+        await settle()
+        XCTAssertEqual(first.items.first?.status, .waiting)
+
+        // The app was suspended and terminated; iOS relaunches it in the background (a transfer
+        // finished, or it's time for a fetch). A new run, the same outbox on disk.
+        transport = FakeTransport()
+        appActive = false
+        let relaunched = await started(makeEngine(outbox: Outbox(directory: root.appendingPathComponent("Outbox"))))
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 1, "sent at once on the wake, not when the app is next opened")
+        XCTAssertEqual(relaunched.items.first?.status, .inFlight)
+    }
+
+    func testR5WithTheAppOpenTheBackupCheckSendsEvenIfTheNetworkBackEventIsMissed() async throws {
+        // Airplane mode off, but the "network back" event never arrives (#203 saw that happen).
+        network = false
+        let engine = await started(makeEngine())
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        XCTAssertEqual(transport.direct.count, 0)
+
+        network = true
+        fireWakes(upTo: SendTiming().offlineCheck)
+        await settle()
+
+        XCTAssertEqual(transport.direct.count, 1, "within the backup check's minute, not left to iOS's schedule")
+    }
+
+    func testT8TheSendLogNamesEveryStepButNeverWhatWasWritten() async throws {
+        let secret = "do-not-log-\(UUID().uuidString)"
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }
+        let sent = engine.enqueueText(bookId: book, clubId: club, body: secret + " sent", replyTo: nil)
+        let refused = engine.enqueueText(bookId: book, clubId: club, body: secret + " refused", replyTo: nil)
+        await settle()
+        transport.finish(0, delivered(sent.id, body: secret + " sent"))
+        transport.finish(1, status(400, error: "Not a member of this club."))
+        await settle()
+
+        let log = SendLog.recent(limit: 1000)
+        XCTAssertFalse(log.contains(secret), "message text must never reach the log (it's attached to Feedback)")
+        let short = { (id: UUID) in "[\(id.uuidString.prefix(8))]" }
+        for (event, id) in [("queued text", sent.id), ("submit bg", sent.id), ("submit direct", sent.id),
+                            ("sent", sent.id), ("refused", refused.id)] {
+            XCTAssertTrue(log.contains("\(event) \(short(id))"), "no stable '\(event)' line for the message")
+        }
+    }
+
     // MARK: - U6: across launches, and other channels
 
     func testOnRelaunchATransferIOSStillHoldsIsWaitedForAndTheRestResent() async throws {

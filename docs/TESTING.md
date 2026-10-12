@@ -296,6 +296,15 @@ running against it.
 
 ## Adding tests
 
+**Start from the requirement, not the code.** Tests exist to prove the agreed behaviour works as
+stated; code coverage is secondary. For sending, every agreed behaviour is a row in
+`docs/SEND_REQUIREMENTS.md` with the tests that prove it; a PR that adds or changes a behaviour
+updates its row. Write the assertion from the row's wording. A test written alongside the code can
+end up asserting the code's mistake: 2.2 (1)'s offline test checked that nothing went to iOS while
+offline, then fed the app a "network back" event that a locked phone never delivers. CI was green
+and the agreed "signal returns while locked → sends" was broken. For any "while locked /
+backgrounded" behaviour, test with the app **not** in the foreground and **no** app-side trigger.
+
 **Validate a new test by breaking the code it covers.** A UI test once passed for a total
 voice/photo/video send outage because it asserted absence via a query that could never match. If
 deliberately breaking the behaviour does not turn the test red, the test is decoration — rewrite
@@ -320,6 +329,8 @@ it.
 | Compare the read marker by `SentAt` | `Reading_a_late_arrival_moves_the_marker_and_clears_it` |
 | Drop the `ReceivedAt = SentAt` backfill from the migration | `Existing_messages_get_their_sent_time_as_their_arrival_time` |
 | Return late arrivals without `include_late` | `Late_arrivals_outside_the_newest_page_come_back_only_when_asked_for` |
+| Offline: hold instead of handing to iOS; hand nothing over on leaving the app; no hand-back while suspended; backoff not passed to iOS | the `SendEngineTests` "Suspended" group |
+| Each requirement row in `docs/SEND_REQUIREMENTS.md` (S1, O2, R2, R4, R5, T8) | its `test<RowID>…` in `SendEngineTests` |
 
 When you break code to check a test, restore it with a **new** modification time (`touch` it) and do a
 `--no-incremental` build before trusting any later run: a restored file keeps its old mtime, so an
