@@ -24,7 +24,7 @@ later build that touches sending.
 | M3 | Send all four kinds, press Home at once | All arrive without reopening the app |
 | M4 | Send all four kinds, lock at once | All arrive while locked |
 | M5 | Open the app online. Airplane Mode on. Send 10 photos, a voice message and a video. Lock. Wait 10 s. Airplane Mode off | **Everything arrives without unlocking** — usually within seconds, sometimes a minute or more (iOS decides; L1). The video too (it uses an upload slot fetched while online) |
-| M5b | As M5, but use up the slots first: send 4 videos offline in a row, then lock, then Airplane Mode off | The first 3 go without the app (slots); the 4th waits until the app is opened (no slot left, can't reserve offline) — this is the stated gap, not a failure |
+| M5b | As M5, but use up the slots first: send 4 videos offline in a row, then lock, then Airplane Mode off | The first 3 go without the app (slots); the 4th may wait until the app is opened (no slot left, and it can't be reserved offline) — the stated gap, not a failure |
 | M6 | Turn Wi-Fi off and use cellular; repeat M4 with a video | Arrives over cellular |
 | M7 | Airplane Mode on, send a text, swipe the app away (force-quit). Wait 10 min | A notification says it'll send when you open the app. Open the app with the network back → it sends; no notification once everything's sent |
 | M8 | Airplane Mode on, send a text and a photo, restart the phone, unlock, Airplane Mode off — don't open the app | Both arrive (iOS kept them through the restart); if not within a few minutes, open the app → they go at once |
