@@ -432,9 +432,21 @@ final class HermeticChatUITests: HermeticTestCase {
         let confirm = app.buttons["Forward"].firstMatch
         XCTAssertTrue(confirm.waitForExistence(timeout: 5))
         confirm.tap()
-        XCTAssertTrue(app.alerts["Couldn't Forward"].waitForExistence(timeout: 30), "a failed forward wasn't reported")
-        app.alerts["Couldn't Forward"].buttons["OK"].tap()
+        XCTAssertTrue(app.staticTexts["Forwarded to Seed: Future Read"].waitForExistence(timeout: 5), "no confirmation it's on its way")
         XCTAssertTrue(app.navigationBars["Saved Messages"].exists, "forwarding should leave you in Saved Messages")
+
+        // H16 (#204 PR 9): sent like any message — the send endpoint, the saved message's id, and a
+        // client id so a retry is never a second copy. (It was a one-shot SignalR call.)
+        var sent: [[String: Any]] = []
+        let deadline = Date().addingTimeInterval(15)
+        while sent.isEmpty, Date() < deadline {
+            sent = try sentMessages()
+            if sent.isEmpty { Thread.sleep(forTimeInterval: 0.2) }
+        }
+        let forwarded = try XCTUnwrap(sent.first, "the forward never reached the server")
+        XCTAssertNotNil(forwarded["forward_message_id"] as? String)
+        XCTAssertNotNil(forwarded["client_id"] as? String)
+        XCTAssertEqual(forwarded["body"] as? String, "Forward me", "the forwarded copy takes the saved message's content")
     }
 
     /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved

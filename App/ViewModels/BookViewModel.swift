@@ -891,13 +891,11 @@ final class BookViewModel: ObservableObject {
 
     // #192 — forward a saved message to the chat the user picked (any book in their clubs; the
     // server checks membership). Saved Messages stays open and reports the outcome itself.
-    func forwardMessage(savedMessage: SavedMessage, to bookId: UUID) async -> Bool {
-        do {
-            try await ChatService.shared.forwardMessage(bookId: bookId, messageId: savedMessage.messageId)
-            return true
-        } catch {
-            return false
-        }
+    /// #204 PR 9 — a forward is sent like any message: queued at once with a client id, retried
+    /// until it's through, shown in the destination chat as sending. (It was a one-shot SignalR
+    /// call: no network, and it failed with an alert.) A refusal shows red in that chat.
+    func forwardMessage(savedMessage: SavedMessage, to book: Book) {
+        engine.enqueueForward(bookId: book.id, clubId: book.clubId, messageId: savedMessage.messageId)
     }
 
     // Reflect an "Edit Book" save locally — title, author and cover; keep the rest
