@@ -57,6 +57,39 @@ public class BlobService
         return (uploadUrl, plainUrl);
     }
 
+    /// #204 design v2 — where a reserved video will go: a new blob named like every other message
+    /// file (`{clubId}/{guid}.{ext}`). Only a name; nothing is created in storage.
+    public virtual string NewMediaBlobUrl(Guid clubId, string extension) =>
+        _client.GetBlobContainerClient(MediaContainer)
+            .GetBlobClient($"{clubId}/{Guid.NewGuid()}.{extension.ToLowerInvariant()}").Uri.ToString();
+
+    /// A create-only upload link for a reserved video's blob, valid as long as the send token, so
+    /// the upload can wait for the network as long as the message can. Create-only, so once the
+    /// file has landed nobody holding the link can replace it — Azure refuses the overwrite with
+    /// 403 UnauthorizedBlobOverwrite (checked against the dev account, 2026-10-12).
+    public virtual async Task<string> GenerateVideoUploadUrlAsync(string mediaUrl, TimeSpan validity)
+    {
+        var (container, blobName) = SplitBlobUrl(mediaUrl)
+            ?? throw new ArgumentException("Not a blob URL.", nameof(mediaUrl));
+        return await GenerateUserDelegationSasAsync(container, blobName, BlobSasPermissions.Create, validity);
+    }
+
+    /// #204 design v2 — whether a file has really landed. Throws on anything but "not found", so
+    /// a storage hiccup is retried by the caller rather than taken as "no file".
+    public virtual async Task<bool> BlobExistsAsync(string storedUrl)
+    {
+        if (SplitBlobUrl(storedUrl) is not { } blob) return false;
+        var exists = await _client.GetBlobContainerClient(blob.Container).GetBlobClient(blob.BlobName).ExistsAsync();
+        return exists.Value;
+    }
+
+    private static (string Container, string BlobName)? SplitBlobUrl(string storedUrl)
+    {
+        if (!Uri.TryCreate(storedUrl.Split('?')[0], UriKind.Absolute, out var uri)) return null;
+        var segments = uri.AbsolutePath.TrimStart('/').Split('/', 2);
+        return segments.Length < 2 ? null : (segments[0], segments[1]);
+    }
+
     private volatile bool _mediaContainerEnsured;
 
     /// #204 — store a message's file sent as the request body (the one-request voice/photo send)

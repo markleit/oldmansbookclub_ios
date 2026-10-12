@@ -55,6 +55,29 @@ public sealed class FakeBlobService() : BlobService(TestEnvironment)
 
     public override Task<long?> GetBlobSizeAsync(string storedUrl) => Task.FromResult(NextBlobSize);
 
+    public override string NewMediaBlobUrl(Guid clubId, string extension) =>
+        $"https://{Host}/club-media/{clubId}/{Guid.NewGuid()}.{extension}";
+
+    /// The validity the last video upload link was made with — what the app's upload can wait.
+    public TimeSpan? LastVideoUploadLinkValidity { get; private set; }
+
+    public override Task<string> GenerateVideoUploadUrlAsync(string mediaUrl, TimeSpan validity)
+    {
+        LastVideoUploadLinkValidity = validity;
+        return Task.FromResult(mediaUrl.Split('?')[0] + "?sig=fake-create");
+    }
+
+    private readonly HashSet<string> _landed = [];
+
+    /// A test puts a file "in storage" — what the app's upload would have done — before telling
+    /// the server it landed. Nothing else is in storage, so a report of anything else is false.
+    public void Land(string mediaUrl) { lock (_landed) _landed.Add(mediaUrl.Split('?')[0]); }
+
+    public override Task<bool> BlobExistsAsync(string storedUrl)
+    {
+        lock (_landed) return Task.FromResult(_landed.Contains(storedUrl.Split('?')[0]));
+    }
+
     /// A file stored by the one-request voice/photo send (#204), as the server handed it over.
     public sealed record StoredUpload(string Url, byte[] Bytes, string ContentType);
 
@@ -68,6 +91,8 @@ public sealed class FakeBlobService() : BlobService(TestEnvironment)
     {
         lock (_uploads) _uploads.Clear();
         lock (_deleted) _deleted.Clear();
+        lock (_landed) _landed.Clear();
+        LastVideoUploadLinkValidity = null;
     }
 
     /// Reads the stream to the end exactly as the real SDK would, so the server's size cap

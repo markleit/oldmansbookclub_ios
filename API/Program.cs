@@ -130,7 +130,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
                     ctx.Token = token;
                 return Task.CompletedTask;
-            }
+            },
+            // #204 — a send-only token is accepted only for sending, and only while signed in.
+            OnTokenValidated = SendToken.ValidateAsync
         };
     });
 
