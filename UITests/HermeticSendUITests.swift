@@ -305,9 +305,15 @@ final class HermeticSendUITests: HermeticTestCase {
         app.buttons["Delete"].tap()
         XCTAssertTrue(waitForDisappearance(app.staticTexts["changed my mind"], timeout: 5), "Delete didn't remove it")
 
+        // A new send resets the retry clock and sends everything still queued at once — so if the
+        // delete had only hidden the message, it would go out alongside this one. (Waiting a few
+        // seconds instead raced the backoff: the check passed when the next retry was later.)
         try setServerDown(false)
-        Thread.sleep(forTimeInterval: 5)   // several retry ticks at the fast timings
-        XCTAssertTrue(try sentMessages().isEmpty, "a deleted message was sent anyway. Stub saw: \(trail())")
+        send("still here")
+        XCTAssertEqual(try waitForSent(1, timeout: 15).first?["body"] as? String, "still here")
+        Thread.sleep(forTimeInterval: 2)   // anything sent with it has landed by now
+        XCTAssertEqual(try sentMessages().compactMap { $0["body"] as? String }, ["still here"],
+                       "a deleted message was sent anyway. Stub saw: \(trail())")
     }
 
     // MARK: - H13: a batch keeps the order it was sent in

@@ -40,7 +40,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | O5 | A late message still pushes, counts as unread, read marker by arrival | API: `SentTimeTests` (unread, marker, no rewind) | Covered (server); client read marker **PR 6** |
 | O6 | "↑ New message above" chip; late arrivals merged into the chat | — | **PR 6** |
 | O7 | `received_at` decodes in both Swift mirrors (`Message`, `ChatMessageDto`) | — | **PR 6** (was in PR 4's gate; slipped — the app doesn't read it yet) |
-| O8 | Equal tap times keep a stable order | API: `Messages_with_the_same_tap_time_always_come_back_in_the_same_order` | Covered; paging across equal times: #227 |
+| O8 | Equal tap times keep a stable order | API: `MessagesTests.Messages_with_the_same_SentAt_return_in_a_stable_deterministic_order` (#156) | Covered; paging across equal times: #227 |
 
 ## What the sender sees
 
