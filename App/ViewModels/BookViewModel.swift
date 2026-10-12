@@ -495,7 +495,7 @@ final class BookViewModel: ObservableObject {
 
         // Resize + encode off the main actor: ten full-size photos would otherwise hitch the UI.
         let encoded: [Data] = await Task.detached(priority: .userInitiated) {
-            images.compactMap { $0.resizedForUpload().jpegData(compressionQuality: 0.7) }
+            images.compactMap(PhotoUpload.jpeg)
         }.value
         if encoded.count < images.count {
             errorMessage = "\(images.count - encoded.count) photo(s) couldn't be prepared and weren't sent."
