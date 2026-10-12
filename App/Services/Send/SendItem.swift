@@ -50,6 +50,10 @@ struct SendItem: Codable, Identifiable, Equatable {
     var compressPending: Bool?
     /// The video as picked, kept until it's sent; `fileName` is then the compressed copy.
     var originalFileName: String?
+    /// From the share sheet (PR 10), whose upload iOS is carrying in this background session. The app
+    /// can't ask that session what it holds until iOS wakes it for it, so the item waits rather
+    /// than being started again.
+    var shareSession: String?
 
     var status: Status = .queued
     var attempts: Int = 0

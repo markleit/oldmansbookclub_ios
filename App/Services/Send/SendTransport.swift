@@ -86,15 +86,30 @@ final class URLSessionSendTransport: NSObject, SendTransport {
         }
     }
     private var earlyResults: [(SendTaskKey, SendResponse)] = []
-    private var systemCompletionHandler: (() -> Void)?
+    /// iOS's "done with this wake" handlers, per background session.
+    private var systemCompletionHandlers: [String: () -> Void] = [:]
+    /// One delegate per session: task numbers are only unique within a session.
     private let delegate = Delegate()
 
-    private lazy var background: URLSession = {
-        let config = URLSessionConfiguration.background(withIdentifier: Self.sessionIdentifier)
+    private lazy var background: URLSession = makeSession(Self.sessionIdentifier, delegate: delegate, shared: false)
+
+    /// The share sheet's sessions this run has joined (PR 10), each with its own delegate. Joined
+    /// only when iOS wakes the app for one — by then the extension that started it is gone.
+    private var shareSessions: [String: (session: URLSession, delegate: Delegate)] = [:]
+
+    private func joinShareSession(_ identifier: String) {
+        guard shareSessions[identifier] == nil else { return }
+        let delegate = Delegate()
+        shareSessions[identifier] = (makeSession(identifier, delegate: delegate, shared: true), delegate)
+    }
+
+    private func makeSession(_ identifier: String, delegate: Delegate, shared: Bool) -> URLSession {
+        let config = URLSessionConfiguration.background(withIdentifier: identifier)
         config.isDiscretionary = false          // a chat message, not a podcast download
         config.sessionSendsLaunchEvents = true  // relaunch the app to report a result
         config.allowsCellularAccess = true
         config.timeoutIntervalForRequest = 60
+        if shared { config.sharedContainerIdentifier = SharedContainer.appGroupId }
         delegate.deliver = { [weak self] key, response in
             Task { @MainActor in
                 guard let self else { return }
@@ -102,13 +117,13 @@ final class URLSessionSendTransport: NSObject, SendTransport {
             }
         }
         delegate.finishedEvents = { [weak self] in
-            Task { @MainActor in
-                self?.systemCompletionHandler?()
-                self?.systemCompletionHandler = nil
-            }
+            Task { @MainActor in self?.systemCompletionHandlers.removeValue(forKey: identifier)?() }
         }
         return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
-    }()
+    }
+
+    /// The sessions with tasks this app should know about.
+    private var joinedSessions: [URLSession] { [background] + shareSessions.values.map(\.session) }
 
     private let direct: URLSession = {
         let config = URLSessionConfiguration.default
@@ -122,9 +137,16 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     func activate() { _ = background }
 
     func setSystemCompletionHandler(_ handler: @escaping () -> Void, for identifier: String) {
-        guard identifier == Self.sessionIdentifier else { return }
-        systemCompletionHandler = handler
-        activate()
+        switch identifier {
+        case Self.sessionIdentifier:
+            systemCompletionHandlers[identifier] = handler
+            activate()
+        case _ where ShareInbox.isShareSession(identifier):
+            systemCompletionHandlers[identifier] = handler
+            joinShareSession(identifier)
+        default:
+            return
+        }
     }
 
     func submitBackground(_ key: SendTaskKey, request: URLRequest, bodyFile: URL, notBefore: Date?) {
@@ -155,16 +177,19 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func cancelBackground(itemId: UUID) {
-        background.getAllTasks { tasks in
-            for task in tasks where task.taskDescription.flatMap(SendTaskKey.init(taskDescription:))?.itemId == itemId {
-                task.cancel()
+        for session in joinedSessions {
+            session.getAllTasks { tasks in
+                for task in tasks where task.taskDescription.flatMap(SendTaskKey.init(taskDescription:))?.itemId == itemId {
+                    task.cancel()
+                }
             }
         }
     }
 
     func backgroundTaskKeys() async -> [SendTaskKey] {
-        let tasks: [URLSessionTask] = await withCheckedContinuation { cont in
-            background.getAllTasks { cont.resume(returning: $0) }
+        var tasks: [URLSessionTask] = []
+        for session in joinedSessions {
+            tasks += await withCheckedContinuation { cont in session.getAllTasks { cont.resume(returning: $0) } }
         }
         return tasks
             .filter { $0.state == .running || $0.state == .suspended }
@@ -172,7 +197,7 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     }
 
     func cancelAll() {
-        background.getAllTasks { $0.forEach { $0.cancel() } }
+        for session in joinedSessions { session.getAllTasks { $0.forEach { $0.cancel() } } }
     }
 
     /// The session delegate — called on the session's own serial queue.

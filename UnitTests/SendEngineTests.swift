@@ -132,6 +132,7 @@ final class SendEngineTests: XCTestCase {
             cacheConfirmed: { [unowned self] book, message in self.cached.append((book, message)) },
             reminder: { [unowned self] plan in self.reminders.append(plan) })
         let engine = SendEngine(outbox: box ?? outbox(), transport: transport, environment: env, timing: timing)
+        engine.shareInbox = nil   // not the simulator's real App Group inbox (share tests set their own)
         engine.confirmations.sink { [unowned self] in self.confirmations.append($0) }.store(in: &subscriptions)
         return engine
     }
@@ -945,6 +946,77 @@ final class SendEngineTests: XCTestCase {
         await settle()
 
         XCTAssertEqual(reminders.last??.fireAt, now.addingTimeInterval(60))
+    }
+
+    // MARK: - U16: messages from the share sheet (PR 10)
+
+    func testU16AShareSheetMessageIOSHasIsWaitedForAndItsResultConfirmsIt() async throws {
+        let inbox = root.appendingPathComponent("inbox")
+        var shared = try ShareInbox.add(.init(id: UUID(), bookId: book, clubId: club, kind: .photo, sentAt: now),
+                                        photo: Data([0xFF, 0xD8]), in: inbox)
+        shared.sessionIdentifier = ShareInbox.newSessionIdentifier()
+        try ShareInbox.save(shared, in: inbox)
+        let engine = makeEngine()
+        engine.shareInbox = inbox
+        transport.held = [SendTaskKey(itemId: shared.id, attempt: 1, step: .post)]
+        _ = await started(engine)
+        await settle()
+
+        XCTAssertEqual(engine.items.map(\.id), [shared.id], "it's an unsent message in the app now")
+        XCTAssertEqual(engine.items.first?.status, .inFlight)
+        XCTAssertEqual(transport.background.count, 0, "iOS has it — not sent a second time")
+        XCTAssertTrue(ShareInbox.entries(in: inbox).isEmpty, "taken out of the inbox")
+
+        transport.onBackgroundResult?(SendTaskKey(itemId: shared.id, attempt: 1, step: .post), delivered(shared.id))
+        await settle()
+        XCTAssertTrue(engine.items.isEmpty)
+        XCTAssertEqual(confirmations.map(\.clientId), [shared.id])
+    }
+
+    func testU16AShareSheetUploadInASessionNotYetJoinedIsWaitedForNotUploadedAgain() async throws {
+        // The app joins a share's session only when iOS wakes it with the results — one process at
+        // a time can hold a session, and the extension may still have it. Until then the message is
+        // with iOS: no second background upload (with the app open it also goes directly; dedup).
+        let inbox = root.appendingPathComponent("inbox")
+        var shared = try ShareInbox.add(.init(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now,
+                                              body: "shared"), photo: nil, in: inbox)
+        shared.sessionIdentifier = ShareInbox.newSessionIdentifier()
+        try ShareInbox.save(shared, in: inbox)
+        let engine = makeEngine()
+        engine.shareInbox = inbox
+        _ = await started(engine)   // transport.held is empty: this run can't see that session
+        await settle()
+
+        XCTAssertEqual(engine.items.first?.status, .inFlight, "still with iOS, not started again")
+        XCTAssertEqual(transport.background.count, 0)
+        XCTAssertEqual(transport.direct.count, 1, "and sent directly too, with the app open")
+    }
+
+    func testU16AShareSheetMessageNotHandedToIOSIsSentByTheApp() async throws {
+        // The sheet had no token to hand it over with (offline and it needed refreshing).
+        let inbox = root.appendingPathComponent("inbox")
+        let shared = try ShareInbox.add(.init(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now,
+                                              body: "from the share sheet"), photo: nil, in: inbox)
+        let engine = makeEngine()
+        engine.shareInbox = inbox
+        _ = await started(engine)
+        await settle()
+
+        XCTAssertEqual(try XCTUnwrap(transport.background[safe: 0]).key.itemId, shared.id)
+    }
+
+    func testU16TakingTheInboxTwiceDoesntDuplicate() async throws {
+        let inbox = root.appendingPathComponent("inbox")
+        let shared = ShareInbox.Entry(id: UUID(), bookId: book, clubId: club, kind: .text, sentAt: now, body: "once")
+        try ShareInbox.add(shared, photo: nil, in: inbox)
+        let engine = makeEngine()
+        engine.shareInbox = inbox
+        _ = await started(engine)
+        try ShareInbox.add(shared, photo: nil, in: inbox)   // written again before the record went
+        engine.appBecameActive()
+        await settle()
+
+        XCTAssertEqual(engine.items.filter { $0.id == shared.id }.count, 1)
     }
 
     // MARK: - U9: video compressed after it's queued (PR 5)

@@ -101,6 +101,8 @@ final class SendEngine: ObservableObject {
         }
         let taken = outbox.migrateLegacy()
         if taken > 0 { SendLog.note("migrated legacy", nil, "items=\(taken)") }
+        // Before asking iOS what it holds: the share sheet's uploads are among them (PR 10).
+        takeSharedMessages()
         isOffline = !env.hasNetwork()
 
         // Anything marked in flight by the last run: if iOS still holds a transfer for it, wait for
@@ -108,7 +110,12 @@ final class SendEngine: ObservableObject {
         let held = await transport.backgroundTaskKeys()
         for item in outbox.items where item.status == .inFlight {
             let count = held.filter { $0.itemId == item.id }.count
-            if count > 0 {
+            if count == 0, item.shareSession != nil {
+                // The share sheet's upload, in a session this run hasn't joined: iOS reports it
+                // through a wake. Waited for — and sent directly too while the app is open.
+                copies[item.id] = 1
+                sendDirectIfPossible(item.id)
+            } else if count > 0 {
                 copies[item.id] = count
                 // iOS still has it, but on its own schedule — with the app open, also send it
                 // directly (rebuilt: the request from the previous run died with it). Without this
@@ -239,7 +246,46 @@ final class SendEngine: ObservableObject {
         }
     }
 
+    /// Where the Share extension leaves messages (PR 10); injectable for tests.
+    var shareInbox: URL? = ShareInbox.defaultDirectory()
+
+    /// Messages queued in the share sheet join the outbox (PR 10): one the extension handed to iOS
+    /// is waited for (it's in flight; `start` checks iOS still has it), the rest are sent from here.
+    /// Called at launch, on coming to the foreground, and when iOS wakes the app with the share
+    /// sheet's results — before those results are read, so none arrives for a message not yet here.
+    func takeSharedMessages() {
+        guard let inbox = shareInbox else { return }
+        let entries = ShareInbox.entries(in: inbox)
+        guard !entries.isEmpty else { return }
+        for entry in entries {
+            defer { ShareInbox.remove(entry, in: inbox) }
+            guard outbox.item(entry.id) == nil else { continue }
+            var fileName: String?
+            if let name = entry.fileName {
+                // A copy: iOS may still be uploading from the inbox's file.
+                fileName = try? outbox.importFile(at: inbox.appendingPathComponent(name), extension: "jpg", move: false)
+                if fileName == nil { continue }
+            }
+            var item = SendItem(id: entry.id, bookId: entry.bookId, clubId: entry.clubId,
+                                kind: entry.kind == .photo ? .photo : .text, sentAt: entry.sentAt, body: entry.body,
+                                fileName: fileName, contentType: entry.kind == .photo ? "image/jpeg" : nil)
+            if let session = entry.sessionIdentifier {
+                item.status = .inFlight
+                item.attempts = 1
+                item.shareSession = session
+                copies[entry.id] = 1
+            }
+            outbox.add(item)
+            SendLog.note("from the share sheet", entry.id, entry.handedToIOS ? "with iOS" : "to send")
+            // With the app open it goes directly too, as any message iOS holds does (dedup by id).
+            if entry.handedToIOS { sendDirectIfPossible(entry.id) }
+        }
+        publish()
+        pump("share sheet")
+    }
+
     func appBecameActive() {
+        takeSharedMessages()
         clock.reset()
         pump("foreground")
     }
@@ -670,6 +716,7 @@ final class SendEngine: ObservableObject {
 
     private func forget(_ item: SendItem, fileGrace: TimeInterval) {
         outbox.remove(item.id, fileGrace: fileGrace)
+        if let inbox = shareInbox { ShareInbox.removeFiles(for: item.id, in: inbox) }   // PR 10
         copies[item.id] = nil
         builtPosts[item.id] = nil
         directInFlight.remove(item.id)
