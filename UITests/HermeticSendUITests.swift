@@ -208,7 +208,8 @@ final class HermeticSendUITests: HermeticTestCase {
         goBack()
         let unsent = indicator("unsentCount")
         XCTAssertTrue(unsent.waitForExistence(timeout: 5), "the book's row should say it has an unsent message")
-        XCTAssertEqual(unsent.label, "1 unsent")
+        // The row is one button, so it reads as one label: "<title>, <author>, 1 unsent, Discussion".
+        XCTAssertTrue(unsent.label.contains("1 unsent"), "the row says \(unsent.label)")
 
         try setServerDown(false)
         XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "while it's down")
