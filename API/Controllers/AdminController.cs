@@ -382,39 +382,9 @@ public class AdminController(AppDbContext db, IConfiguration config, Notificatio
         var sub = User.FindFirst("sub")?.Value;
         if (Guid.TryParse(sub, out var callerId) && callerId == id)
             return BadRequest("Cannot delete your own account.");
-        var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == id);
-        if (user is null) return NotFound();
+        if (!await db.Users.AnyAsync(u => u.Id == id)) return NotFound();
 
-        // Delete reports and saved messages that reference this user's messages
-        var messageIds = await db.Messages
-            .Where(m => m.SenderId == id)
-            .Select(m => m.Id)
-            .ToListAsync();
-
-        // All-or-nothing: a crash mid-way must not leave a half-deleted account.
-        // Must run inside the execution strategy, not a bare BeginTransactionAsync — the
-        // DbContext is configured with EnableRetryOnFailure, which refuses user-initiated
-        // transactions it didn't wrap itself (#153).
-        var strategy = db.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
-        {
-            await using var transaction = await db.Database.BeginTransactionAsync();
-            if (messageIds.Count > 0)
-            {
-                await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
-                await db.SavedMessages.Where(s => messageIds.Contains(s.MessageId)).ExecuteDeleteAsync();
-            }
-
-            await db.Reports.Where(r => r.ReporterId == id).ExecuteDeleteAsync();
-            await db.SavedMessages.Where(s => s.UserId == id).ExecuteDeleteAsync();
-            await db.Messages.Where(m => m.SenderId == id).ExecuteDeleteAsync();
-            await db.JoinRequests.Where(jr => jr.UserId == id).ExecuteDeleteAsync();
-            await db.BlockedUsers.Where(b => b.BlockerId == id || b.BlockedId == id).ExecuteDeleteAsync();
-            db.Memberships.RemoveRange(user.Memberships);
-            db.Users.Remove(user);
-            await db.SaveChangesAsync();
-            await transaction.CommitAsync();
-        });
+        await AccountDeletion.DeleteAsync(db, id);   // #244, #133
         return NoContent();
     }
 

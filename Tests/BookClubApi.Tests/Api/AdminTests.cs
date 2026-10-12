@@ -296,33 +296,8 @@ public class AdminTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.NotNull(await db.Messages.FindAsync(bystanderMessage.Id));
     }
 
-    // #153 (unconditional 500 for every user, via the EnableRetryOnFailure/transaction mismatch)
-    // is fixed. This second test still reproduces the narrower #133: the deletion order never
-    // clears MessageHeards or MessageReactions, which are DeleteBehavior.NoAction, so a user who
-    // has played a voice message or tapped a reaction still trips a foreign-key violation.
-    // Unskip when #133 is fixed.
-    [Fact(Skip = "Reproduces open bug #133.")]
-    public async Task Deleting_a_user_who_has_heard_or_reacted_to_a_message_succeeds()
-    {
-        // #133: the deletion order in AdminController.DeleteUser never clears MessageHeards or
-        // MessageReactions, and those relationships are DeleteBehavior.NoAction, so removing the
-        // user trips a foreign-key violation and the whole transaction rolls back. In practice
-        // that means any member who has ever played a voice message or tapped a reaction — which
-        // is all of them — cannot be deleted at all.
-        var club = await CreateClubAsync();
-        var book = await CreateBookAsync(club.Id, "The Road");
-        var admin = await CreateUserAsync("Admin", club.Id, isAdmin: true);
-        var doomed = await CreateUserAsync("Doomed", club.Id);
-        var other = await CreateUserAsync("Other", club.Id);
-
-        var voice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice);
-        await doomed.Client.PostAsync($"/books/{book.Id}/messages/{voice.Id}/heard", null);
-        await doomed.Client.PostAsJsonAsync($"/books/{book.Id}/messages/{voice.Id}/reactions", new { emoji = "👍" });
-
-        var response = await admin.Client.DeleteAsync($"/admin/users/{doomed.Id}");
-
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
-    }
+    // #133 (a user who'd heard or reacted couldn't be deleted) is fixed with #244: see
+    // AccountDeletionTests, which covers every kind of row a member can have, through both endpoints.
 
     // ---- join requests -----------------------------------------------------------------------
 

@@ -110,7 +110,7 @@ refresh an hour-long access token (#204 design v2, 2026-10-12). The app side lan
 | K2 | It sends every kind: JSON (text, video post, forward), the file body (voice, photo), a video reservation | API: `K2_…` | Covered |
 | K3 | It does nothing else: no reading, no account calls, no upload links, no live connection | API: `K3_…` (each checked against the access token too) | Covered |
 | K4 | Signing out on that phone ends it at once | API: `K4_…` | Covered |
-| K5 | Deleting the account ends it | — | **Gap**: account deletion itself fails (#244) |
+| K5 | Deleting the account ends it | API: `AccountDeletionTests.K5_deleting_the_account_ends_the_send_token` | Covered (#244) |
 
 ## Video without the app (design v2, server)
 
