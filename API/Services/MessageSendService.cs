@@ -139,18 +139,122 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         return dto;
     }
 
+    // The app's own post of a video, after its upload: every client before 2.2 design v2, and a
+    // current one that's running when its upload finishes (it needn't wait for storage's report).
     public async Task<MessageDto> SendVideoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
         Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt = null)
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
-        EnforceRateLimit(userId);
+        // A reserved video was counted against the limit when it was reserved.
+        var reserved = clientId is Guid cid && await db.PendingVideos.AnyAsync(p => p.SenderId == userId && p.ClientId == cid);
+        if (!reserved) EnforceRateLimit(userId);
+        return await CreateVideoAsync(userId, sender, bookId, mediaUrl, clientId, parentMessageId, senderDeviceToken, sentAt);
+    }
+
+    private async Task<MessageDto> CreateVideoAsync(Guid userId, SenderContext sender, Guid bookId, string mediaUrl,
+        Guid? clientId, Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt)
+    {
         await EnforceBlobSizeAsync(mediaUrl, MaxVideoBytes, "Video");
 
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Video,
             mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
+        if (clientId is Guid id)
+            await db.PendingVideos.Where(p => p.SenderId == userId && p.ClientId == id).ExecuteDeleteAsync();
         return dto;
+    }
+
+    /// #204 design v2 — how long a video's upload link lasts: as long as the send token that
+    /// reserved it, less a margin (a user-delegation SAS can't outlive 7 days from its key).
+    public static readonly TimeSpan VideoUploadLinkValidity = SendToken.Lifetime - TimeSpan.FromHours(1);
+
+    /// A reservation nobody uploaded to — the phone was lost, the app deleted — is dropped after this.
+    public static readonly TimeSpan PendingVideoMaxAge = SendToken.Lifetime + TimeSpan.FromDays(1);
+
+    // #204 design v2 — the first half of a video send. The app calls this once the video is
+    // compressed and gets a link to upload it straight to storage (too big to pass through App
+    // Service, see SendMediaFileAsync). It then hands that one upload to iOS; when storage
+    // reports the file landed, CompleteReservedVideoAsync creates the message. So once the upload
+    // is handed over, nothing needs the app — the post the app used to make afterwards waited on
+    // the app being awake, and a locked phone held it for minutes (2.2 (5)).
+    //
+    // Everything that can refuse a send is checked here, before a byte is uploaded. Calling it
+    // again for the same send (same client id) reuses the reservation with a fresh link, and
+    // counts once against the send limit.
+    public async Task<VideoReservation> ReserveVideoAsync(Guid userId, SenderContext sender, Guid bookId, Guid clientId,
+        Guid? parentMessageId, string? senderDeviceToken, DateTime? sentAt)
+    {
+        if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing)
+            return new VideoReservation(null, null, existing);
+
+        var pending = await db.PendingVideos.FirstOrDefaultAsync(p => p.SenderId == userId && p.ClientId == clientId);
+        if (pending is null)
+        {
+            EnforceRateLimit(userId);
+            var book = await ValidateSenderAndBookAsync(sender, bookId);
+            var stale = time.GetUtcNow().UtcDateTime - PendingVideoMaxAge;
+            await db.PendingVideos.Where(p => p.CreatedAt < stale).ExecuteDeleteAsync();
+
+            pending = new PendingVideo
+            {
+                SenderId = userId,
+                BookId = bookId,
+                ClientId = clientId,
+                MediaUrl = blob.NewMediaBlobUrl(book.ClubId, "mp4"),
+                ParentMessageId = parentMessageId,
+                DeviceId = senderDeviceToken,
+                SentAt = sentAt,
+                CreatedAt = time.GetUtcNow().UtcDateTime
+            };
+            db.PendingVideos.Add(pending);
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (IsUniqueClientIdViolation(ex))
+            {
+                // A concurrent reservation of the same send won: use its blob.
+                db.Entry(pending).State = EntityState.Detached;
+                pending = await db.PendingVideos.SingleAsync(p => p.SenderId == userId && p.ClientId == clientId);
+            }
+        }
+        else
+        {
+            await ValidateSenderAndBookAsync(sender, pending.BookId);
+        }
+
+        var uploadUrl = await blob.GenerateVideoUploadUrlAsync(pending.MediaUrl, VideoUploadLinkValidity);
+        return new VideoReservation(uploadUrl, pending.MediaUrl, null);
+    }
+
+    // #204 design v2 — the second half: storage reports a file landed (StorageEventsController).
+    // If it's a reserved video, create its message now, exactly as the sender's own post would —
+    // tap time, reply, the sender's device skipped for push. Anything else is ignored: a voice or
+    // photo file, an older client's video, a video whose message already exists (the app's own
+    // post got there first, which removed the reservation).
+    //
+    // The report isn't trusted: the file must really be in storage. A refusal (too large, no
+    // longer a member) has nobody to tell here; the app hears the same refusal, with its reason,
+    // when it posts the video itself. True when a reservation was settled.
+    public async Task<bool> CompleteReservedVideoAsync(string blobUrl)
+    {
+        var plainUrl = blobUrl.Split('?')[0];
+        var pending = await db.PendingVideos.AsNoTracking().FirstOrDefaultAsync(p => p.MediaUrl == plainUrl);
+        if (pending is null) return false;
+        if (!await blob.BlobExistsAsync(plainUrl)) return false;
+
+        try
+        {
+            var sender = await LoadSenderContextAsync(pending.SenderId);
+            await CreateVideoAsync(pending.SenderId, sender, pending.BookId, pending.MediaUrl, pending.ClientId,
+                pending.ParentMessageId, pending.DeviceId, pending.SentAt);
+        }
+        catch (MessageSendException)
+        {
+            await db.PendingVideos.Where(p => p.Id == pending.Id).ExecuteDeleteAsync();
+        }
+        return true;
     }
 
     // #204 — one request per voice/photo message: the file's bytes ARE the request body, and the

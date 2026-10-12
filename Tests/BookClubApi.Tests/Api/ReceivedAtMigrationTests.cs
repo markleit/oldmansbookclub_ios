@@ -33,7 +33,7 @@ public class ReceivedAtMigrationTests(TestAppFixture fixture) : IntegrationTestB
         try
         {
             await db.Database.MigrateAsync();
-            Assert.EndsWith(Target, (await db.Database.GetAppliedMigrationsAsync()).Last());
+            Assert.Contains(await db.Database.GetAppliedMigrationsAsync(), m => m.EndsWith(Target));
 
             var club = new Club { Name = "Club" };
             var user = new User { AppleSubject = "migration_test", DisplayName = "Mark", IsApproved = true };

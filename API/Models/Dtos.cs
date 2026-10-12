@@ -10,7 +10,8 @@ public record PublicClubDto(Guid Id, string Name, int MemberCount);
 public record JoinRequestDto(Guid Id, Guid UserId, string DisplayName, string? Email, Guid ClubId, string ClubName, DateTime CreatedAt);
 public record DevLoginRequest(string DisplayName);
 public record DemoLoginRequest(string Passphrase);
-public record AuthResponse(string AccessToken, string RefreshToken, UserDto User);
+// #204 design v2 — SendToken is new and additive (older clients ignore it): see Services/SendToken.
+public record AuthResponse(string AccessToken, string RefreshToken, UserDto User, string? SendToken = null);
 public record RefreshTokenRequest(string RefreshToken);
 
 public record UserDto(Guid Id, string DisplayName, string? Nickname, string? AvatarUrl, bool IsAdmin, bool IsClubAdmin, UserPreferencesDto Preferences);
@@ -94,6 +95,18 @@ public record SavedMessageDto(
 public record SendTextRequest(string Body);
 public record SendVoiceRequest(string MediaUrl, int DurationSeconds);
 public record UploadUrlResponse(string UploadUrl, string MediaUrl);
+
+// #204 design v2 — reserving a video message (POST /books/{bookId}/messages/video): the same
+// fields as a send, minus the file, which goes straight to storage. See MessageSendService.ReserveVideoAsync.
+public record ReserveVideoRequest(
+    Guid ClientId,
+    Guid? ParentMessageId,
+    string? DeviceId,
+    DateTime? SentAt = null);
+
+// Where to upload the video — or, when a copy of this send already got through, the message
+// itself and nothing to upload.
+public record VideoReservation(string? UploadUrl, string? MediaUrl, MessageDto? Message);
 public record RegisterDeviceRequest(string DeviceToken);
 public record SetRoleRequest(bool IsAdmin);
 public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, string? SenderName = null);

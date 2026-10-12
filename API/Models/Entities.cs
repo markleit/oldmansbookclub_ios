@@ -183,6 +183,25 @@ public class UserDevice
     public DateTime LastSeenAt { get; set; } = DateTime.UtcNow;
 }
 
+// #204 design v2 — a video message its sender has sent whose file is still on its way to
+// storage. The app reserves it, and gets the upload link, once the video is compressed; the server
+// creates the message itself when storage reports the file landed, so nothing after the upload
+// needs the app — the step a locked phone couldn't take. Deleted once the message exists.
+public class PendingVideo
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid SenderId { get; set; }
+    public User Sender { get; set; } = null!;
+    public Guid BookId { get; set; }
+    public Guid ClientId { get; set; }
+    // The plain blob URL the upload link points at, and the message's MediaUrl once created.
+    [Required, MaxLength(512)] public string MediaUrl { get; set; } = "";
+    public Guid? ParentMessageId { get; set; }
+    [MaxLength(512)] public string? DeviceId { get; set; }
+    public DateTime? SentAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class RefreshToken
 {
     public Guid Id { get; set; } = Guid.NewGuid();

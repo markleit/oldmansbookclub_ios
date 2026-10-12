@@ -19,6 +19,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MessageReaction> MessageReactions => Set<MessageReaction>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<PendingVideo> PendingVideos => Set<PendingVideo>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -208,6 +209,22 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne(rt => rt.User)
             .WithMany()
             .HasForeignKey(rt => rt.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // One reservation per send (a re-reservation reuses it), and found by its blob when
+        // storage reports the upload landed.
+        modelBuilder.Entity<PendingVideo>()
+            .HasIndex(p => new { p.SenderId, p.ClientId })
+            .IsUnique();
+
+        modelBuilder.Entity<PendingVideo>()
+            .HasIndex(p => p.MediaUrl)
+            .IsUnique();
+
+        modelBuilder.Entity<PendingVideo>()
+            .HasOne(p => p.Sender)
+            .WithMany()
+            .HasForeignKey(p => p.SenderId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
