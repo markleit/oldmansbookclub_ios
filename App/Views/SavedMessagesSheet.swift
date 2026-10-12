@@ -123,11 +123,9 @@ struct SavedMessagesSheet: View {
     }
 
     private func forward(_ saved: SavedMessage, to book: Book) async {
-        if await viewModel.forwardMessage(savedMessage: saved, to: book.id) {
-            toast = Toast(text: "Forwarded to \(book.title)", systemImage: "arrowshape.turn.up.right.fill")
-        } else {
-            errorMessage = "The message wasn't forwarded. Check your connection and try again."
-        }
+        // Queued and sent like any message (#204 PR 9) — it goes even with no signal right now.
+        viewModel.forwardMessage(savedMessage: saved, to: book)
+        toast = Toast(text: "Forwarded to \(book.title)", systemImage: "arrowshape.turn.up.right.fill")
     }
 }
 
