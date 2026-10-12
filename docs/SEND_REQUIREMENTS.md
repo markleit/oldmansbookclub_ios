@@ -25,7 +25,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | # | Requirement | Tests | Status |
 |---|---|---|---|
 | S1 | The bubble appears instantly; the message is on the phone before any network work | E: `testATextIsOnDiskBeforeAnythingIsSent`, `testS1EveryKindIsOnDiskBeforeAnythingIsSent` | Covered |
-| S2 | The composer is free immediately; video compressed after it's queued | — | **PR 5** |
+| S2 | The composer is free immediately; video compressed after it's queued | E: `testU9AVideoIsQueuedAtOnceAndCompressedBeforeItsUpload`; H: `testH14AVideoLeavesTheComposerFreeAtOnceAndArrivesWhenReady` (a 1 s sample clip, so it proves the path end to end, not the wait on a long video) | Covered (PR 5); long videos: **Device** (video rows of M1–M4) |
 | S3 | App open, good signal: arrives in ~1–2 s | H: `testATextReachesTheServerWithinTwoSecondsOfTappingSend` (< 2.5 s), `testS3APhotoReachesTheServerWithinSecondsWithTheAppOpen` (< 5 s: iOS first, direct after 3 s) | Covered; voice: **PR 8** (needs the test recorder) |
 | S5 | **Ten photos sent at once all arrive on the first try**, even when some wait their turn on the phone's one connection | API (real web server): `BatchUploadTests.A_photo_that_waits_its_turn_for_eight_seconds_still_arrives`, `…Ten_photos_sent_at_once_over_one_slow_connection_all_arrive_the_first_time` | Covered by #231 (found 2026-10-11: the server cut 2 of 9 off); **Device**: M5 with 10 photos, zero 408s in the server log |
 | S6 | A photo is sent at 2048 px on its long side (~1 MB), from the chat and the share sheet | `PhotoUploadTests` (chat path) | Covered by #231 (chat); share sheet uses the same constant, untested — **PR 10** |
@@ -96,7 +96,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | T8 | The send log records every step with stable names, **never message text** | E: `testT8TheSendLogNamesEveryStepButNeverWhatWasWritten` | Covered |
 | T9 | Forward through the engine | E: `testAForwardCarriesTheSavedMessageAndAClientId`; API: `ForwardTests` (5) | Partial — UI path **PR 9** |
 | T10 | Share extension through the outbox; app and extension never refresh at once | `SharedSignInTests` (token) | Partial — **PR 10** |
-| T11 | Video: compress after queue, fresh link on failure, too large → refused | E: `testAVideoUploadsItsBlobThenPostsTheURL` | Partial — **PR 5** |
+| T11 | Video: compressed after it's queued (from the original — kept until sent — if interrupted); can't compress → the original; too large after compressing → refused with the reason; offline → compressed, then waits for the network without asking for an upload link; a failed upload gets a fresh link | E: `testU9…` (6), `testAVideoUploadsItsBlobThenPostsTheURL`; H: `testH14…`; O: `testASentVideoTakesBothItsOriginalAndItsCompressedCopyWithIt`, `testTheLaunchSweepKeepsAVideosOriginalWhileItsUnsent` | Covered (PR 5); compression with the app suspended / long videos: **Device** (needs the app awake — iOS limit; ~30 s grace on leaving) |
 | T12 | Old clients keep working against the new server | API: `The_json_send_is_unchanged_alongside_the_file_send`, `No_tap_time_means_sent_when_received…`; **Device** M13 after each deploy | Covered |
 
 ## Voice recording (#213)

@@ -131,6 +131,7 @@ struct MessageInputView: View {
                 if let videoUrl = pendingVideo {
                     HStack {
                         VideoThumbnailView(url: videoUrl)
+                            .accessibilityIdentifier("pendingVideo")
                             .frame(width: 64, height: 64)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay {

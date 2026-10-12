@@ -37,6 +37,8 @@ struct SendEnvironment {
     var tokenAfterRejection: () async -> APIClient.SendToken
     /// A video's blob upload link: (SAS upload URL, the blob's plain URL).
     var uploadLink: (_ clubId: UUID, _ ext: String) async throws -> (URL, String)
+    /// Compresses a picked video (PR 5). Default: can't, so the original is sent.
+    var compressVideo: (_ source: URL) async -> VideoCompression = { _ in .unsupported }
     /// Run `action` after `delay` seconds; returns a cancel function.
     var schedule: (_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) -> () -> Void
     /// Keep the saved chat in step when a message is confirmed with no chat open (A2).
@@ -129,12 +131,14 @@ final class SendEngine: ObservableObject {
 
     /// `fileName` is already in the outbox (Outbox.importFile / importData).
     @discardableResult
+    /// `compress`: a picked video, compressed after it's queued (PR 5) — the composer is free at once.
     func enqueueMedia(_ kind: SendItem.Kind, bookId: UUID, clubId: UUID, fileName: String, contentType: String,
-                      durationSeconds: Int?, replyTo: Message?) -> SendItem {
+                      durationSeconds: Int?, replyTo: Message?, compress: Bool = false) -> SendItem {
         enqueue(SendItem(id: UUID(), bookId: bookId, clubId: clubId, kind: kind,
                          sentAt: outbox.nextSentAt(now: env.now()), fileName: fileName, contentType: contentType,
                          durationSeconds: durationSeconds, parentMessageId: replyTo?.id,
-                         parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview)))
+                         parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview),
+                         compressPending: compress ? true : nil))
     }
 
     @discardableResult
@@ -325,6 +329,17 @@ final class SendEngine: ObservableObject {
     }
 
     private func send(_ id: UUID, attempt: Int, notBefore: Date?) async {
+        // A video is compressed first: it takes a while, and needs no token or network.
+        if outbox.item(id)?.compressPending == true {
+            guard await compressVideo(id, attempt: attempt) else { return }
+        }
+        // A video's upload link has to come from the server, so with no network it can't be
+        // handed to iOS at all: it waits (no hand-back, which would only fail again at once) for
+        // the network and the app. Asking anyway would wait for the network inside the hand-over —
+        // the stall 2.2 (3) found with tokens.
+        if let item = outbox.item(id), item.kind == .video, item.mediaUrl == nil, !env.hasNetwork() {
+            return fail(id, attempt: attempt, .offline, handBack: false)
+        }
         let token: String
         // No token means nothing to hand to iOS: these wait (no hand-back, which would only fail
         // again at once) for sign-in, the network, or the app being opened.
@@ -412,6 +427,51 @@ final class SendEngine: ObservableObject {
             directInFlight.remove(id)
             handle(key, response, direct: true)
         }
+    }
+
+    /// Compresses a queued video in place (PR 5). False when it can't be sent now: refused (too
+    /// large, file gone), deleted meanwhile, or interrupted (the app was suspended mid-way — it
+    /// starts again from the original on the next try).
+    private func compressVideo(_ id: UUID, attempt: Int) async -> Bool {
+        guard let item = outbox.item(id), let original = item.fileName, outbox.fileExists(original) else {
+            refuse(id, "This message's file is missing from your phone, so it can't be sent.")
+            return false
+        }
+        SendLog.note("compressing video", id)
+        let result = await env.compressVideo(outbox.fileURL(original))
+        guard let current = outbox.item(id), current.attempts == attempt, current.status == .inFlight else {
+            if case .compressed(let url) = result { try? FileManager.default.removeItem(at: url) }
+            return false   // deleted, or moved on, while compressing
+        }
+        let sending: String
+        switch result {
+        case .compressed(let url):
+            if let name = try? outbox.importFile(at: url, extension: "mp4") {
+                sending = name
+                outbox.update(id) { $0.originalFileName = original; $0.fileName = name }
+            } else {
+                SendLog.note("couldn't keep the compressed video, sending the original", id)
+                sending = original
+            }
+        case .unsupported:
+            SendLog.note("video compression failed, sending the original", id)
+            sending = original
+        case .interrupted:
+            SendLog.note("video compression interrupted, will start again", id)
+            outbox.update(id) { $0.status = .queued }
+            copies[id] = nil
+            publish()
+            return false
+        }
+        let bytes = outbox.fileSize(sending)
+        if bytes > SendItem.maxVideoBytes {
+            refuse(id, "Video is too large (max 100 MB).")
+            return false
+        }
+        outbox.update(id) { $0.compressPending = nil }
+        publish()
+        SendLog.note("video ready", id, "bytes=\(bytes)")
+        return true
     }
 
     private func uploadVideo(_ item: SendItem, attempt: Int, notBefore: Date?) async {
@@ -528,7 +588,7 @@ final class SendEngine: ObservableObject {
                 noteCopyFailure(id, "offline", now: now)
             } else {
                 markWaiting(id, because: "offline", now: now)
-                handBackIfSuspended(id)
+                if handBack { handBackIfSuspended(id) }
             }
         case .refreshAuth:
             // A second 401 straight after refreshing: treat like any passing failure.

@@ -223,6 +223,9 @@ warm_photo_library() {
     local udid
     udid=$(xcrun simctl list devices available | sed -n "s/^ *$SIMULATOR (\([0-9A-F-]*\)).*/\1/p" | head -1)
     [[ -z "$udid" ]] && return 0
+    # #204 H14 — the sample library has photos only; the video test needs one clip. Adding it
+    # again on a reused simulator just leaves another copy, which the test doesn't mind.
+    xcrun simctl addmedia "$udid" scripts/fixtures/sample-video.mp4 >/dev/null 2>&1 || true
     xcrun simctl launch "$udid" com.apple.mobileslideshow >/dev/null 2>&1 || return 0
     sleep 8
     xcrun simctl terminate "$udid" com.apple.mobileslideshow >/dev/null 2>&1 || true

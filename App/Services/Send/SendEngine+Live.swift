@@ -23,6 +23,7 @@ extension SendEngine {
                 guard let url = URL(string: link.uploadUrl) else { throw URLError(.badURL) }
                 return (url, link.mediaUrl)
             },
+            compressVideo: { await VideoCompressor.compress($0) },
             schedule: { delay, action in
                 let task = Task { @MainActor in
                     try? await Task.sleep(for: .seconds(delay))

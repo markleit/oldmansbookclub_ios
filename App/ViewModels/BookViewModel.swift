@@ -516,43 +516,25 @@ final class BookViewModel: ObservableObject {
 
     func sendVideo() async {
         guard let videoUrl = pendingVideo, TokenStore.shared.userId != nil else { return }
-        // Consume the pending video up front, before any await. Everything below — the duration
-        // load, and especially compression — suspends for seconds, and leaving pendingVideo set
+        // Consume the pending video up front, before any await. The duration load below suspends
+        // (and compression did, before #204 PR 5 moved it to the engine), and leaving pendingVideo set
         // across that window let a second invocation clear the guard above and send the same
         // recording again as an independent message (observed on device: two videos, distinct
         // clientIds and blobs, ~9s apart, so server-side clientId dedup couldn't catch it).
         // sendPhotos is immune to this the same way: it clears pendingImages before its first await.
         pendingVideo = nil
 
-        // Duration isn't affected by compression, so check it against the source first —
-        // cheapest way to reject an obviously-too-long clip before spending time compressing it.
+        // Duration isn't affected by compression, so it's checked at once, against the source.
         let duration = (try? await AVURLAsset(url: videoUrl).load(.duration))?.seconds ?? 0
         if duration > 300 {
             errorMessage = "Video is too long (max 5 minutes). Please trim it and try again."
             return
         }
 
-        // #146 — compress before the size check and before queueing (mirrors sendPhotos'
-        // resizedForUpload): video was previously sent unencoded, so a normal phone-shot clip a
-        // few minutes long routinely exceeded the 100MB cap well before hitting the 5-minute
-        // duration cap. Falls back to the original file if compression fails for any reason
-        // (unsupported format, disk pressure) rather than blocking the send outright.
-        // Show a spinner while compressing. Without it the UI sits unchanged for seconds after
-        // the tap, which is precisely what invited a second tap and produced duplicate sends
-        // before pendingVideo was consumed up front.
-        isUploading = true
-        let compressedUrl = await compressedVideo(from: videoUrl) ?? videoUrl
-        isUploading = false
-
-        let attrs = try? FileManager.default.attributesOfItem(atPath: compressedUrl.path)
-        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-        if fileSize > 100 * 1024 * 1024 {
-            errorMessage = "Video is too large (max 100 MB)."
-            return
-        }
-
-        guard let fileName = try? engine.files.importFile(at: compressedUrl, extension: "mp4",
-                                                         move: compressedUrl != videoUrl) else {
+        // #204 PR 5 — queued at once; the engine compresses it before the upload, so the composer
+        // is free immediately (it used to show a spinner for the whole compression). Too large
+        // even after compressing comes back as a red bubble with the reason.
+        guard let fileName = try? engine.files.importFile(at: videoUrl, extension: "mp4", move: false) else {
             // Couldn't stage the file (disk full) — hand the pending video back so the send
             // button stays live and the user can try again.
             pendingVideo = videoUrl
@@ -562,45 +544,7 @@ final class BookViewModel: ObservableObject {
         let reply = replyingTo
         replyingTo = nil
         engine.enqueueMedia(.video, bookId: book.id, clubId: book.clubId, fileName: fileName,
-                            contentType: "video/mp4", durationSeconds: nil, replyTo: reply)
-    }
-
-    // #146 — HEVC 1080p, matching sendPhotos' "resize before upload" treatment for video.
-    // Caps resolution rather than targeting a bitrate directly: AVAssetExportSession doesn't
-    // upscale, so an already-small source passes through roughly unchanged, while a 1080p/4K
-    // phone recording — the common case that blew past the 100MB cap — gets meaningfully smaller.
-    //
-    // HEVC rather than the H.264 720p preset this started as. H.264 at 720p is roughly 3 Mbps,
-    // which is both visibly softer than the 4K/1080p source AND still ~110MB over a full
-    // 5-minute clip — i.e. it gave up real quality without reliably clearing the 100MB cap it
-    // was added for. HEVC is about twice as efficient, so 1080p at ~2.5 Mbps looks considerably
-    // better and lands nearer 94MB at the duration limit. Playback is unaffected: this is an
-    // iOS 16+ app using AVPlayer, and HEVC has been supported since iOS 11.
-    //
-    // Falls back to the H.264 preset if HEVC isn't available for this asset, and returns nil
-    // (caller then sends the original file) if neither can be built or the export fails.
-    private func compressedVideo(from url: URL) async -> URL? {
-        let asset = AVURLAsset(url: url)
-        let preset = AVAssetExportSession.exportPresets(compatibleWith: asset)
-            .contains(AVAssetExportPresetHEVC1920x1080)
-            ? AVAssetExportPresetHEVC1920x1080
-            : AVAssetExportPreset1920x1080
-        guard let export = AVAssetExportSession(asset: asset, presetName: preset) else { return nil }
-        let outputUrl = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString)
-            .appendingPathExtension("mp4")
-        export.outputURL = outputUrl
-        export.outputFileType = .mp4
-        // exportAsynchronously's completion-handler API, not the iOS 18+ `export(to:as:)` async
-        // method — deployment target here is iOS 16.
-        await withCheckedContinuation { continuation in
-            export.exportAsynchronously { continuation.resume() }
-        }
-        guard export.status == .completed else {
-            try? FileManager.default.removeItem(at: outputUrl)
-            return nil
-        }
-        return outputUrl
+                            contentType: "video/mp4", durationSeconds: nil, replyTo: reply, compress: true)
     }
 
     func toggleRecording() async {

@@ -66,7 +66,7 @@ final class Outbox {
         items.removeAll { $0.id == id }
         save()
         removeRequestBodies(for: id)
-        if let name = item.fileName {
+        for name in [item.fileName, item.originalFileName].compactMap({ $0 }) {
             let url = fileURL(name)
             if fileGrace <= 0 {
                 try? FileManager.default.removeItem(at: url)
@@ -124,6 +124,10 @@ final class Outbox {
         FileManager.default.fileExists(atPath: fileURL(name).path)
     }
 
+    func fileSize(_ name: String) -> Int64 {
+        ((try? FileManager.default.attributesOfItem(atPath: fileURL(name).path))?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
     /// Writes a background request's body to a file (attempt-numbered, so a retry never rewrites a
     /// file iOS may still be reading for the previous attempt).
     func writeRequestBody(_ data: Data, for id: UUID, attempt: Int) throws -> URL {
@@ -157,7 +161,7 @@ final class Outbox {
     /// Files and request bodies nothing refers to any more — left by a crash between removing an
     /// item and deleting its file.
     private func sweepOrphans() {
-        let referenced = Set(items.compactMap(\.fileName))
+        let referenced = Set(items.compactMap(\.fileName) + items.compactMap(\.originalFileName))
         for name in (try? FileManager.default.contentsOfDirectory(atPath: filesDirectory.path)) ?? []
         where !referenced.contains(name) {
             try? FileManager.default.removeItem(at: fileURL(name))

@@ -72,6 +72,37 @@ final class OutboxTests: XCTestCase {
         XCTAssertTrue(reopened.fileExists(kept))
     }
 
+    func testASentVideoTakesBothItsOriginalAndItsCompressedCopyWithIt() throws {
+        // U9: the original is kept until the video is sent (PR 5) — then both go.
+        let box = outbox()
+        let original = try box.importData(Data([1]), extension: "mp4")
+        let compressed = try box.importData(Data([2]), extension: "mp4")
+        var item = text("video")
+        item.fileName = compressed
+        item.originalFileName = original
+        box.add(item)
+
+        box.remove(item.id, fileGrace: 0)
+
+        XCTAssertFalse(box.fileExists(original))
+        XCTAssertFalse(box.fileExists(compressed))
+    }
+
+    func testTheLaunchSweepKeepsAVideosOriginalWhileItsUnsent() throws {
+        let box = outbox()
+        let original = try box.importData(Data([1]), extension: "mp4")
+        let compressed = try box.importData(Data([2]), extension: "mp4")
+        var item = text("video")
+        item.fileName = compressed
+        item.originalFileName = original
+        box.add(item)
+
+        let reopened = outbox()
+
+        XCTAssertTrue(reopened.fileExists(original))
+        XCTAssertTrue(reopened.fileExists(compressed))
+    }
+
     // MARK: - Tap times (U7)
 
     func testTapTimesAreStrictlyIncreasingEvenInTheSameMillisecond() {

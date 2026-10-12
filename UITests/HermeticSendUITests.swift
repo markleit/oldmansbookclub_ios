@@ -316,6 +316,39 @@ final class HermeticSendUITests: HermeticTestCase {
                        "a deleted message was sent anyway. Stub saw: \(trail())")
     }
 
+    // MARK: - H14: video (PR 5)
+
+    func testH14AVideoLeavesTheComposerFreeAtOnceAndArrivesWhenReady() throws {
+        // Compressed after it's queued: tapping Send frees the chat straight away (it used to
+        // show a spinner for the whole compression), then the video goes on its own.
+        try setMessages([])
+        launch()
+        openCurrentBook()
+
+        app.buttons["attachmentMenuButton"].tap()
+        let videoItem = app.buttons["Video"]
+        XCTAssertTrue(videoItem.waitForExistence(timeout: 5), "+ menu has no Video item")
+        videoItem.tap()
+        // The sample clip (scripts/fixtures/sample-video.mp4, added by regression.sh).
+        let clip = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Video'")).firstMatch
+        XCTAssertTrue(clip.waitForExistence(timeout: 20), "the picker shows no video — was the sample clip added?")
+        clip.tap()
+        let picked = app.descendants(matching: .any).matching(identifier: "pendingVideo").firstMatch
+        if !picked.waitForExistence(timeout: 10) {
+            // Some iOS versions want the picker's confirm (✓) even for one item.
+            app.buttons.matching(NSPredicate(format: "identifier == 'Add' AND label != 'Add'")).firstMatch.tap()
+        }
+        XCTAssertTrue(picked.waitForExistence(timeout: 20), "the picked video didn't reach the composer")
+
+        app.buttons["sendButton"].tap()
+        // The mic is back (an image with a press gesture in hold-to-talk mode, so any element).
+        XCTAssertTrue(indicator("micButton").waitForExistence(timeout: 2),
+                      "the composer should be free at once — the video is compressed after it's queued")
+
+        let sent = try waitForSent(1, timeout: 60)
+        XCTAssertEqual(sent.first?["type"] as? String, "Video", "Stub saw: \(trail())")
+    }
+
     // MARK: - H13: a batch keeps the order it was sent in
 
     func testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn() throws {
