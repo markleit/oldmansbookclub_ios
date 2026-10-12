@@ -316,6 +316,28 @@ final class HermeticSendUITests: HermeticTestCase {
                        "a deleted message was sent anyway. Stub saw: \(trail())")
     }
 
+    // MARK: - O3: the chat is in tap-time order on the sender's phone too (PR 6)
+
+    func testO3APhotoTappedBeforeATextStaysAboveItWhenTheTextLandsFirst() throws {
+        // The 2026-10-11 report (a video, then a voice message): the slower upload landed second and
+        // jumped below the quicker message tapped after it. It belongs where it was tapped.
+        try setMessages([])
+        try script("POST /books/*/messages", [["delay": 5]])   // the photo's upload — first to reach the stub
+        launch(extraArguments: ["-sendDirectNudge", "30"])     // no second, direct copy of it meanwhile
+        openCurrentBook()
+
+        pickPhotos(1)
+        app.buttons["sendButton"].tap()
+        send("tapped after the photo")
+
+        XCTAssertEqual(try waitForSent(2, timeout: 30).count, 2, "Stub saw: \(trail())")
+        XCTAssertTrue(waitForDisappearance(indicator("sendingIndicator"), timeout: 20), "both should be confirmed")
+        let photo = app.buttons.matching(identifier: "photoMessage").firstMatch
+        let text = app.staticTexts["tapped after the photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5) && text.exists)
+        XCTAssertLessThan(photo.frame.minY, text.frame.minY, "the photo was tapped first, so it stays above the text")
+    }
+
     // MARK: - H14: video (PR 5)
 
     func testH14AVideoLeavesTheComposerFreeAtOnceAndArrivesWhenReady() throws {

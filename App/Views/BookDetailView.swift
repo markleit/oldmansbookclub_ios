@@ -34,6 +34,9 @@ struct BookDetailView: View {
     // viewport since LazyVStack keeps a small buffer). Used only to auto-dismiss
     // the "New message" pill once the user can see the newest message.
     @State private var visibleMessageIds: Set<UUID> = []
+    /// The scroll to the newest on entry has finished. Before it, rows near the top appear for a
+    /// moment while the chat lays out — not a sign the reader has seen them (#204 PR 6's chip).
+    @State private var entryScrollSettled = false
     @State private var keyboardVisible: Bool = false
     @State private var hasUnseenMessage: Bool = false
     @State private var lastSeenNewestId: UUID? = nil
@@ -149,9 +152,47 @@ struct BookDetailView: View {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
                     }
+                    .overlay(alignment: .top) {
+                        // #204 PR 6 — someone else's message landed above what you'd seen (a late
+                        // arrival, or an upload tapped earlier that finished later). Shown while
+                        // it's out of sight; tap to jump to it.
+                        if let above = viewModel.newMessageAboveId,
+                           !(entryScrollSettled && visibleMessageIds.contains(above)) {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.25)) {
+                                    proxy.scrollTo(above, anchor: .center)
+                                }
+                                viewModel.newMessageAboveId = nil
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up")
+                                    Text("New message above")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.accentColor)
+                                .foregroundColor(.white)
+                                .clipShape(Capsule())
+                                .shadow(radius: 2, y: 1)
+                            }
+                            .accessibilityIdentifier("newMessageAboveChip")
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    // Seen by scrolling to it: the chip has done its job.
+                    .onChange(of: visibleMessageIds) { ids in
+                        guard entryScrollSettled else { return }
+                        if let above = viewModel.newMessageAboveId, ids.contains(above) {
+                            viewModel.newMessageAboveId = nil
+                        }
+                    }
                     // Always scroll to newest on entry. Multiple attempts handle the
                     // cache→fresh-fetch transition and the LazyVStack layout-pass timing.
                     .task(id: viewModel.book.id) {
+                        entryScrollSettled = false
+                        defer { entryScrollSettled = true }
                         // Arrived via a notification tap (fresh open)? Capture (and
                         // consume) the targeted message so we can jump straight to it.
                         if let target = deepLink.pendingMessageId,
@@ -450,7 +491,7 @@ struct BookDetailView: View {
                 )
                 HeardStore.shared.markHeard(unheard.map(\.id), bookId: viewModel.book.id)
                 UnreadStore.shared.zero(bookId: viewModel.book.id)
-                let latestId = viewModel.visibleMessages.first(where: { $0.sendState == nil })?.id
+                let latestId = ChatOrder.latestArrival(in: viewModel.visibleMessages.filter { $0.sendState == nil })?.id
                 Task {
                     await ReceiptQueue.shared.markAllHeard(bookId: viewModel.book.id)
                     if let latestId {

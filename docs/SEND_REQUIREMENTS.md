@@ -37,11 +37,11 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 |---|---|---|---|
 | O1 | Stamped with the tap time; strictly increasing per device | O: `testTapTimesAreStrictlyIncreasing…`, `…NeverGoBackwards…`, `…SurvivesARelaunch`; E: `testMessagesGoInParallelNotInALine` | Covered |
 | O2 | Sent independently, in parallel: **a text after a video goes immediately** | E: `testO2ATextAfterAVideoGoesImmediatelyWithoutWaitingForTheVideo`, `testMessagesGoInParallelNotInALine` | Covered |
-| O3 | Every chat is ordered by tap time — **the video slots in above the text when its upload finishes**, on the sender's phone and others' | H: `testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn` (all fast) | **Gap: PR 6** — the sender's confirmed message and others' live arrivals are added as newest (found 2026-10-11); test: slow video then fast voice, order checked on both phones |
+| O3 | Every chat is ordered by tap time — **the video slots in above the text when its upload finishes**, on the sender's phone and others' | `ChatOrderTests.testO3AVideoTappedBeforeAVoiceMessageStaysAboveItWhenItsUploadFinishesLater`, `…testALiveMessageTappedEarlierGoesWhereItWasTappedNotAtTheBottom`, `…testEqualTapTimesKeepOneOrderHoweverTheyArrive`; H: `testO3APhotoTappedBeforeATextStaysAboveItWhenTheTextLandsFirst`, `testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn` | Covered (PR 6) |
 | O4 | The server keeps the tap time within [arrival − 7 days, arrival] | API: `SentAtClampTests` (6), `SentTimeTests` (clamp rows) | Covered |
-| O5 | A late message still pushes, counts as unread, read marker by arrival | API: `SentTimeTests` (unread, marker, no rewind) | Covered (server); client read marker **PR 6** |
-| O6 | "↑ New message above" chip; late arrivals merged into the chat | — | **PR 6** |
-| O7 | `received_at` decodes in both Swift mirrors (`Message`, `ChatMessageDto`) | — | **PR 6** (was in PR 4's gate; slipped — the app doesn't read it yet) |
+| O5 | A late message still pushes, counts as unread, read marker by arrival | API: `SentTimeTests` (unread, marker, no rewind); `ChatOrderTests.testTheReadMarkerGoesToTheLatestToArriveNotTheNewestByTapTime`, `…FallsBackToTapTime` | Covered (PR 6 marks read by the latest arrival) |
+| O6 | "↑ New message above" chip for someone else's message that lands above what was seen (D2); late arrivals merged into the chat | `ChatOrderTests.testTheChipPointsAtTheOldestNewMessageFromOthersAboveWhatWasSeen`, `…testNoChipForNewMessagesAtTheBottomForMyOwnOrOnAFirstLoad`, `…testALateArrivalFromAFetchIsMergedAtItsTapTime`; H: `testH15ALateArrivalGoesAtItsTapTimeWithANewMessageAboveChip` | Covered (PR 6) |
+| O7 | `received_at` decodes in both Swift mirrors (`Message`, `ChatMessageDto`) | C: `testTheArrivalTimeDecodesOverRestAndOverSignalR` | Covered (PR 6) |
 | O8 | Equal tap times keep a stable order | API: `MessagesTests.Messages_with_the_same_SentAt_return_in_a_stable_deterministic_order` (#156) | Covered; paging across equal times: #227 |
 
 ## What the sender sees

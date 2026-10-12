@@ -59,6 +59,10 @@ final class BookViewModel: ObservableObject {
     // the filter on every access was pure waste. Now refreshed only when its inputs (messages /
     // blockedUserIds) change, via their didSet.
     @Published private(set) var visibleMessages: [Message] = []
+    /// #204 PR 6 — someone else's message that landed above what you'd already seen (a late
+    /// arrival, or a slow upload tapped earlier). The chat shows "↑ New message above" until it's
+    /// seen. The oldest such message, so reading down from it covers the rest.
+    @Published var newMessageAboveId: UUID?
 
     private func recomputeVisibleMessages() {
         // #204 — the chat shows the server's messages plus this chat's unsent ones, which belong
@@ -301,7 +305,8 @@ final class BookViewModel: ObservableObject {
         let bookId = book.id
 
         // Fire messages, blocked, and reads all in parallel — they're independent
-        async let messagesFetch = APIClient.shared.getMessages(bookId: bookId)
+        // With late arrivals: messages tapped before this page but received since (PR 6).
+        async let messagesFetch = APIClient.shared.getMessages(bookId: bookId, includeLate: true)
         async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
         async let readsFetch = APIClient.shared.getReads(bookId: bookId)
         // The server's per-account heard state — seed the device-local heard cache from it so a
@@ -318,8 +323,15 @@ final class BookViewModel: ObservableObject {
             // entry would otherwise survive and restorePendingMediaBubbles would resurrect it as
             // a ghost that can never reconcile (its re-send echo is dropped because the server id
             // is already loaded here) and stick permanently on .failed.
+            let previous = messages
             let merged = ChatCache.merge(existing: messages, incoming: fetched, myUserId: TokenStore.shared.userId)
             messages = merged.messages
+            // A late arrival since this chat was last open lands above what you'd seen (PR 6).
+            if let above = ChatOrder.arrivedAbove(previous: previous, current: messages,
+                                                  me: TokenStore.shared.userId),
+               let message = messages.first(where: { $0.id == above }) {
+                noteArrivedAbove(message)
+            }
             // A send the server has (it landed while the app was closed, or its response was lost)
             // is confirmed by the fetch itself — the engine drops it and stops retrying.
             for message in fetched where message.senderId == TokenStore.shared.userId {
@@ -345,7 +357,9 @@ final class BookViewModel: ObservableObject {
 
         // Newest SERVER-known message: an optimistic send still in flight has an id the server
         // has never seen, and the read marker must point at a real message (#119).
-        let latestId = messages.first?.id
+        // The latest to arrive, not the newest by tap time: the server moves the read marker by
+        // arrival, and a late arrival is older by tap time (PR 6).
+        let latestId = ChatOrder.latestArrival(in: messages)?.id
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
         if let fetched = try? await readsFetch { reads = fetched }
@@ -676,13 +690,18 @@ final class BookViewModel: ObservableObject {
 
         case .replaceOptimistic:
             // #204 — unsent bubbles are no longer kept in `messages` (they're the SendEngine's),
-            // so there's nothing to replace: our own confirmed send simply joins the list. The
-            // engine has already dropped its pending copy and cleans up the local file.
-            messages.insert(message, at: 0)
+            // so there's nothing to replace: our own confirmed send simply joins the list — at its
+            // tap time (PR 6): a video tapped before a voice message but confirmed after it stays
+            // above it, where its pending bubble was.
+            messages.insert(message, at: ChatOrder.insertionIndex(of: message, in: messages))
             saveMessagesCache()
 
         case .insert:
-            messages.insert(message, at: 0)
+            // At its tap time, not at the bottom (PR 6). Above the newest — it was tapped earlier
+            // than something already here — means it's out of sight: "↑ New message above".
+            let index = ChatOrder.insertionIndex(of: message, in: messages)
+            messages.insert(message, at: index)
+            if index > 0, message.senderId != TokenStore.shared.userId { noteArrivedAbove(message) }
             saveMessagesCache()
             // The read receipt's response carries this book's fresh unread count — an arriving
             // voice message raises it (unheard), non-voice nets to zero (read on arrival).
@@ -716,7 +735,7 @@ final class BookViewModel: ObservableObject {
             // Merge into messages, dedup by id (server might overlap on the boundary).
             var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
             for msg in older where byId[msg.id] == nil { byId[msg.id] = msg }
-            messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
+            messages = ChatOrder.sorted(byId.values)
             saveMessagesCache()
         } catch {
             // Silent — the sentinel will fire again on next scroll attempt.
@@ -783,6 +802,13 @@ final class BookViewModel: ObservableObject {
         } catch {
             errorMessage = "Failed to save message."
         }
+    }
+
+    /// Keeps the oldest of the messages that arrived above the newest, for the "↑" chip.
+    private func noteArrivedAbove(_ message: Message) {
+        if let current = newMessageAboveId, let shown = messages.first(where: { $0.id == current }),
+           ChatOrder.isNewer(message, than: shown) { return }
+        newMessageAboveId = message.id
     }
 
     // #201 — the photo viewer's pages: every loaded, undeleted photo in this chat, oldest first

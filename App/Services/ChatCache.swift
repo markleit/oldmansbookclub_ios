@@ -37,7 +37,7 @@ enum ChatCache {
             }
             byId[msg.id] = msg
         }
-        let sorted = byId.values.sorted { $0.sentAt > $1.sentAt }
+        let sorted = ChatOrder.sorted(byId.values)
         return (sorted, reconciled)
     }
 

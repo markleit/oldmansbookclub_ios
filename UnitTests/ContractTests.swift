@@ -99,6 +99,17 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(dto.transcript, "an on-device transcript")
     }
 
+    func testTheArrivalTimeDecodesOverRestAndOverSignalR() throws {
+        // #204 O7 — received_at says what's new to a reader: a late arrival's tap time is older.
+        let rest = try APIClient.decoder.decode(Message.self, from: fixture("message_voice_rest"))
+        let dto = try signalRDecoder.decode(ChatMessageDto.self, from: fixture("message_voice_signalr"))
+        let expected = ISO8601DateFormatter.withFractionalSeconds.date(from: "2026-09-04T17:30:45.123Z")
+
+        XCTAssertEqual(rest.receivedAt, expected)
+        XCTAssertEqual(dto.receivedAtDate, expected)
+        XCTAssertGreaterThan(try XCTUnwrap(rest.receivedAt), rest.sentAt, "the fixture is a late arrival")
+    }
+
     func testTheSignalRDateStringParsesToTheSameInstantAsRest() throws {
         let rest = try APIClient.decoder.decode(Message.self, from: fixture("message_voice_rest"))
         let live = try signalRDecoder.decode(ChatMessageDto.self, from: fixture("message_voice_signalr"))
@@ -154,4 +165,12 @@ final class ContractTests: XCTestCase {
         XCTAssertEqual(user.nickname, "Marky")
         XCTAssertTrue(user.isAdmin)
     }
+}
+
+private extension ISO8601DateFormatter {
+    static let withFractionalSeconds: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 }
