@@ -74,13 +74,21 @@ public class BlobService
         return await GenerateUserDelegationSasAsync(container, blobName, BlobSasPermissions.Create, validity);
     }
 
-    /// #204 design v2 — whether a file has really landed. Throws on anything but "not found", so
-    /// a storage hiccup is retried by the caller rather than taken as "no file".
-    public virtual async Task<bool> BlobExistsAsync(string storedUrl)
+    /// #204 design v2 — a landed file's metadata (a slot upload carries its message's details there),
+    /// or null if there's no such file. Throws on anything but "not found", so a storage hiccup is
+    /// retried by the caller rather than taken as "no file".
+    public virtual async Task<IDictionary<string, string>?> GetBlobMetadataAsync(string storedUrl)
     {
-        if (SplitBlobUrl(storedUrl) is not { } blob) return false;
-        var exists = await _client.GetBlobContainerClient(blob.Container).GetBlobClient(blob.BlobName).ExistsAsync();
-        return exists.Value;
+        if (SplitBlobUrl(storedUrl) is not { } blob) return null;
+        try
+        {
+            var props = await _client.GetBlobContainerClient(blob.Container).GetBlobClient(blob.BlobName).GetPropertiesAsync();
+            return new Dictionary<string, string>(props.Value.Metadata, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Azure.RequestFailedException e) when (e.Status == 404)
+        {
+            return null;
+        }
     }
 
     private static (string Container, string BlobName)? SplitBlobUrl(string storedUrl)

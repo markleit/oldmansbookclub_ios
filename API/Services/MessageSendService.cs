@@ -146,9 +146,12 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
     {
         if (!IsOwnBlobUrl(mediaUrl)) throw new MessageSendException("Invalid media URL.");
         if (await TryRebroadcastExistingAsync(bookId, userId, clientId) is { } existing) return existing;
-        // A reserved video was counted against the limit when it was reserved.
-        var reserved = clientId is Guid cid && await db.PendingVideos.AnyAsync(p => p.SenderId == userId && p.ClientId == cid);
-        if (!reserved) EnforceRateLimit(userId);
+        // A reserved video was counted against the limit when it was reserved; a slot's isn't
+        // counted at all (it's capped instead, IssueVideoSlotsAsync) — either way, not here.
+        var plainUrl = mediaUrl.Split('?')[0];
+        var expected = await db.PendingVideos.AnyAsync(p => p.SenderId == userId
+            && ((clientId != null && p.ClientId == clientId) || p.MediaUrl == plainUrl));
+        if (!expected) EnforceRateLimit(userId);
         return await CreateVideoAsync(userId, sender, bookId, mediaUrl, clientId, parentMessageId, senderDeviceToken, sentAt);
     }
 
@@ -160,8 +163,10 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         var (dto, bookTitle, alreadyBroadcast) = await SaveMessageAsync(userId, sender, bookId, MessageType.Video,
             mediaUrl: mediaUrl, clientId: clientId, parentMessageId: parentMessageId, clientSentAt: sentAt);
         if (!alreadyBroadcast) await BroadcastAndNotify(bookId, dto, bookTitle, senderDeviceToken);
-        if (clientId is Guid id)
-            await db.PendingVideos.Where(p => p.SenderId == userId && p.ClientId == id).ExecuteDeleteAsync();
+        var plainUrl = mediaUrl.Split('?')[0];
+        await db.PendingVideos
+            .Where(p => p.SenderId == userId && ((clientId != null && p.ClientId == clientId) || p.MediaUrl == plainUrl))
+            .ExecuteDeleteAsync();
         return dto;
     }
 
@@ -199,6 +204,7 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
             pending = new PendingVideo
             {
                 SenderId = userId,
+                ClubId = book.ClubId,
                 BookId = bookId,
                 ClientId = clientId,
                 MediaUrl = blob.NewMediaBlobUrl(book.ClubId, "mp4"),
@@ -221,11 +227,57 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         }
         else
         {
-            await ValidateSenderAndBookAsync(sender, pending.BookId);
+            await ValidateSenderAndBookAsync(sender, pending.BookId ?? bookId);
         }
 
         var uploadUrl = await blob.GenerateVideoUploadUrlAsync(pending.MediaUrl, VideoUploadLinkValidity);
         return new VideoReservation(uploadUrl, pending.MediaUrl, null);
+    }
+
+    /// #204 design v2 — how many unexpired slots a user may hold at once (the app keeps 3 per club).
+    public const int MaxOutstandingVideoSlots = 10;
+
+    // #204 design v2 — upload slots: create-only links fetched in advance, so a video sent with no
+    // network can still be handed to iOS at the tap — its carrier needs nothing from the server
+    // then. The message's details (book, client id, tap time, reply, device) travel with the
+    // upload as blob metadata, and CompleteReservedVideoAsync creates the message when it lands.
+    // Not a send, so not rate-limited; capped at MaxOutstandingVideoSlots unexpired per user
+    // instead. `sessionId`: the send token's sign-in, so signing out drops what a slot would create.
+    public async Task<IReadOnlyList<VideoSlot>> IssueVideoSlotsAsync(Guid userId, SenderContext sender, Guid clubId,
+        int count, Guid? sessionId)
+    {
+        if (!sender.IsApproved) throw new MessageSendException("Account not approved.");
+        if (!sender.ClubIds.Contains(clubId)) throw new MessageSendException("Not a member of this club.");
+        var now = time.GetUtcNow().UtcDateTime;
+        await db.PendingVideos.Where(p => p.CreatedAt < now - PendingVideoMaxAge).ExecuteDeleteAsync();
+
+        var unexpired = now - VideoUploadLinkValidity;
+        var held = await db.PendingVideos.CountAsync(p => p.SenderId == userId && p.ClientId == null && p.CreatedAt > unexpired);
+        var issuing = Math.Clamp(count, 0, Math.Max(0, MaxOutstandingVideoSlots - held));
+        var slots = new List<VideoSlot>();
+        for (var i = 0; i < issuing; i++)
+        {
+            var row = new PendingVideo
+            {
+                SenderId = userId, ClubId = clubId, SessionId = sessionId,
+                MediaUrl = blob.NewMediaBlobUrl(clubId, "mp4"), CreatedAt = now
+            };
+            db.PendingVideos.Add(row);
+            slots.Add(new VideoSlot(await blob.GenerateVideoUploadUrlAsync(row.MediaUrl, VideoUploadLinkValidity),
+                row.MediaUrl, now + VideoUploadLinkValidity));
+        }
+        await db.SaveChangesAsync();
+        return slots;
+    }
+
+    /// The blob metadata a slot upload carries (the app sets them as x-ms-meta-* headers).
+    public static class SlotMetadata
+    {
+        public const string ClientId = "clientid";
+        public const string BookId = "bookid";
+        public const string SentAt = "sentat";
+        public const string ParentId = "parentid";
+        public const string DeviceId = "deviceid";
     }
 
     // #204 design v2 — the second half: storage reports a file landed (StorageEventsController).
@@ -242,19 +294,48 @@ public class MessageSendService(AppDbContext db, BlobService blob, NotificationQ
         var plainUrl = blobUrl.Split('?')[0];
         var pending = await db.PendingVideos.AsNoTracking().FirstOrDefaultAsync(p => p.MediaUrl == plainUrl);
         if (pending is null) return false;
-        if (!await blob.BlobExistsAsync(plainUrl)) return false;
+        if (await blob.GetBlobMetadataAsync(plainUrl) is not { } metadata) return false;   // not really there
 
+        // A reservation knows its message; a slot's message is described by the upload itself.
+        var details = pending.ClientId is null
+            ? await SlotDetailsAsync(pending, metadata)
+            : new VideoDetails(pending.BookId, pending.ClientId, pending.ParentMessageId, pending.DeviceId, pending.SentAt);
         try
         {
-            var sender = await LoadSenderContextAsync(pending.SenderId);
-            await CreateVideoAsync(pending.SenderId, sender, pending.BookId, pending.MediaUrl, pending.ClientId,
-                pending.ParentMessageId, pending.DeviceId, pending.SentAt);
+            if (details is { BookId: Guid book, ClientId: Guid client } d
+                && !await db.Messages.AnyAsync(m => m.SenderId == pending.SenderId && m.ClientId == client))
+            {
+                var sender = await LoadSenderContextAsync(pending.SenderId);
+                await CreateVideoAsync(pending.SenderId, sender, book, pending.MediaUrl, client, d.ParentId, d.DeviceId, d.SentAt);
+            }
         }
         catch (MessageSendException)
         {
-            await db.PendingVideos.Where(p => p.Id == pending.Id).ExecuteDeleteAsync();
+            // Refused: nobody to tell here — the app hears why when it posts the video itself.
         }
+        await db.PendingVideos.Where(p => p.Id == pending.Id).ExecuteDeleteAsync();
         return true;
+    }
+
+    // A slot upload's message, from its metadata — or null (nothing to create) when the details
+    // are missing or wrong, or the slot's sign-in has ended. The book must be in the slot's club:
+    // the file is stored under that club. Membership itself is checked when the message is saved.
+    private sealed record VideoDetails(Guid? BookId, Guid? ClientId, Guid? ParentId, string? DeviceId, DateTime? SentAt);
+
+    private async Task<VideoDetails?> SlotDetailsAsync(
+        PendingVideo slot, IDictionary<string, string> metadata)
+    {
+        if (slot.SessionId is Guid session && !await db.RefreshTokens.AnyAsync(rt =>
+                rt.Id == session && rt.RevokedAt == null && rt.ExpiresAt > DateTime.UtcNow))
+            return null;   // signed out on that phone
+        Guid? Id(string key) => metadata.TryGetValue(key, out var v) && Guid.TryParse(v, out var g) ? g : null;
+        if (Id(SlotMetadata.BookId) is not Guid bookId || Id(SlotMetadata.ClientId) is not Guid clientId) return null;
+        var clubOfBook = await db.Books.Where(b => b.Id == bookId).Select(b => (Guid?)b.ClubId).FirstOrDefaultAsync();
+        if (clubOfBook is null || clubOfBook != slot.ClubId) return null;
+        DateTime? sentAt = metadata.TryGetValue(SlotMetadata.SentAt, out var s)
+            && DateTimeOffset.TryParse(s, null, System.Globalization.DateTimeStyles.RoundtripKind, out var at) ? at.UtcDateTime : null;
+        metadata.TryGetValue(SlotMetadata.DeviceId, out var deviceId);
+        return new VideoDetails(bookId, clientId, Id(SlotMetadata.ParentId), deviceId, sentAt);
     }
 
     // #204 — one request per voice/photo message: the file's bytes ARE the request body, and the

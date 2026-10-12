@@ -107,6 +107,11 @@ public record ReserveVideoRequest(
 // Where to upload the video — or, when a copy of this send already got through, the message
 // itself and nothing to upload.
 public record VideoReservation(string? UploadUrl, string? MediaUrl, MessageDto? Message);
+
+// #204 design v2 — upload slots fetched in advance (POST /media/video-slots): each one create-only
+// link for one video, good until ExpiresAt. See MessageSendService.IssueVideoSlotsAsync.
+public record VideoSlot(string UploadUrl, string MediaUrl, DateTime ExpiresAt);
+public record VideoSlotsResponse(IReadOnlyList<VideoSlot> Slots);
 public record RegisterDeviceRequest(string DeviceToken);
 public record SetRoleRequest(bool IsAdmin);
 public record SeedMessagesRequest(string BookTitle, string Type, int Count = 1, string? SenderName = null);

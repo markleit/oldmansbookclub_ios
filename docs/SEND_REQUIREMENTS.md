@@ -130,6 +130,22 @@ Nothing after the upload needs the app.
 | V8 | The upload link can't replace a file that has landed (create-only) | Checked against Azure dev storage (403 `UnauthorizedBlobOverwrite`, 2026-10-12); not reachable from CI | **Manual** |
 | V9 | Event Grid's subscription handshake is answered | API: `V11_…`; the real subscription: **Device** M-video after deploy | Covered |
 
+## Video upload slots (design v2, server)
+
+Upload links fetched in advance, so a video sent with no network can be handed to iOS at the tap
+(the 2.2 (6) device test: offline, a video's upload had to wait for the network to reserve it, so
+it reached iOS only from the background — low priority — and went when the app was opened).
+
+| # | Requirement | Tests | Status |
+|---|---|---|---|
+| VS1 | A slot is a create-only upload link for one video, good for 7 days, only for a club you're in; at most 10 unexpired per user | API: `VideoSlotTests.VS1_…` (2) | Covered |
+| VS2 | A slot upload carries its message's details (book, client id, tap time, reply, device) as metadata; when it lands, the server creates the message from them (tap time, reply, one push skipping the sender's phone) | API: `VS2_…` | Covered; metadata on a create-only upload checked against Azure dev storage (2026-10-12) |
+| VS3 | Missing or wrong details, or a book in another club than the slot's, create nothing | API: `VS3_…` | Covered |
+| VS4 | Signing out on that phone drops what its slots would create | API: `VS4_…` | Covered |
+| VS5 | The report and the app's own post make one message, whichever comes first | API: `VS5_…` | Covered |
+| VS6 | A slot video's post isn't counted against the send limit (slots are capped instead) | API: `VS6_…` | Covered |
+| VS7 | Unused slots are dropped after 8 days | API: `VS7_…` | Covered |
+
 ## Voice recording (#213)
 
 | # | Requirement | Tests | Status |
