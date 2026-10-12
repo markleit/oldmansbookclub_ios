@@ -67,6 +67,18 @@ enum SendPolicy {
     /// message's tap time, not from posting order). While backing off, only the OLDEST ready item
     /// goes, as a probe — if the server's down, ten waiting photos cost one request per tick, not
     /// ten — and when the probe lands the clock resets and everything else follows.
+    enum TokenChoice: Equatable { case useStored, refresh }
+
+    /// Which token a send hands to iOS. One with plenty of time left is used as is; one about to
+    /// expire is refreshed first — but only with a network. Offline a refresh can only wait, and a
+    /// hand-over that's waiting when the phone locks never reaches iOS (2.2 (3) device pass: ten
+    /// photos sat on the phone until it was opened). So offline the stored token goes, expired or
+    /// not: if the server refuses it when iOS sends, that 401 wakes the app to refresh and resend.
+    static func tokenChoice(expiresIn: TimeInterval?, minRemaining: TimeInterval, hasNetwork: Bool) -> TokenChoice {
+        if let expiresIn, expiresIn > minRemaining { return .useStored }
+        return hasNetwork ? .refresh : .useStored
+    }
+
     static func itemsToSubmit(_ items: [SendItem], clock: RetryClock, now: Date, isOffline: Bool) -> [UUID] {
         guard !isOffline, clock.isDue(now: now) else { return [] }
         let ready = items

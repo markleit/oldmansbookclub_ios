@@ -62,6 +62,11 @@ final class SendEngine: ObservableObject {
     private var copies: [UUID: Int] = [:]
     /// The latest post request per in-flight item, so it can also go direct (nudge, network back).
     private var builtPosts: [UUID: (SendTaskKey, SendRequestBuilder.Built)] = [:]
+    /// Submissions not yet with iOS: getting a token, or a video's upload link. Leaving the foreground
+    /// waits for these (appWillResignActive).
+    private var handingOver: [UUID: (attempt: Int, task: Task<Void, Never>)] = [:]
+    /// 401s being answered: the token refresh, then handing the message back to iOS.
+    private var refreshing: [UUID: Task<Void, Never>] = [:]
     private var directInFlight: Set<UUID> = []
     private var refreshedAfter401: Set<UUID> = []
     /// Book of each message the user deleted while it was unsent — a late success for one (D1)
@@ -198,10 +203,29 @@ final class SendEngine: ObservableObject {
     /// user-initiated. `done` runs once every hand-over has reached iOS (or failed) — a token refresh
     /// can come first, so the caller keeps the app awake until then.
     func appWillResignActive(done: @escaping () -> Void = {}) {
-        let handovers = outbox.items.filter { $0.status == .queued || $0.status == .waiting }
-            .compactMap { handToIOS($0.id, "leaving foreground: handing to iOS") }
+        for item in outbox.items where item.status == .queued || item.status == .waiting {
+            handToIOS(item.id, "leaving foreground: handing to iOS")
+        }
+        // Everything on its way to iOS — just handed over above, or started earlier and still
+        // getting its token or upload link (2.2 (3): a hand-over waiting on a token when the
+        // phone locked never reached iOS).
+        if !handingOver.isEmpty { SendLog.note("leaving foreground: waiting for \(handingOver.count) hand-over(s)") }
+        whenHandedOver(done)
+    }
+
+    /// Calls `done` once nothing is on its way to iOS: no hand-over still getting its token or
+    /// upload link, and no 401 still refreshing its token. The caller keeps the app awake until
+    /// then — leaving the foreground, and a background wake (iOS may suspend the app as soon as
+    /// it's told the wake is handled, and a 401 still has to refresh and hand the message back).
+    func whenHandedOver(_ done: @escaping () -> Void) {
         Task {
-            for handover in handovers { await handover.value }
+            // In rounds: a refresh ends in a new hand-over. Bounded, so a bookkeeping slip can't
+            // keep the app awake forever.
+            for _ in 0..<10 {
+                let pending = handingOver.values.map(\.task) + Array(refreshing.values)
+                if pending.isEmpty { break }
+                for task in pending { await task.value }
+            }
             done()
         }
     }
@@ -282,7 +306,12 @@ final class SendEngine: ObservableObject {
         let attempt = item.attempts + 1
         outbox.update(id) { $0.status = .inFlight; $0.attempts = attempt }
         copies[id] = 0
-        return Task { await send(id, attempt: attempt, notBefore: notBefore) }
+        let task = Task {
+            await send(id, attempt: attempt, notBefore: notBefore)
+            if handingOver[id]?.attempt == attempt { handingOver[id] = nil }
+        }
+        handingOver[id] = (attempt, task)
+        return task
     }
 
     /// Give a message to iOS's background transfer when the app can't send it itself: no network
@@ -464,7 +493,8 @@ final class SendEngine: ObservableObject {
         case .refreshAuth where !refreshedAfter401.contains(id):
             refreshedAfter401.insert(id)
             SendLog.note("token refused, refreshing", id)
-            Task {
+            refreshing[id] = Task {
+                defer { refreshing[id] = nil }
                 let result = await env.tokenAfterRejection()
                 // While the token was being refreshed the message may have moved on — the retry
                 // clock already sent a newer attempt, or it was delivered or deleted. Resubmitting

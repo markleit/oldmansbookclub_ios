@@ -131,6 +131,27 @@ final class SendPolicyTests: XCTestCase {
         XCTAssertEqual(SendPolicy.itemsToSubmit([item(1)], clock: RetryClock(), now: t0, isOffline: true), [])
     }
 
+    // MARK: - Which token goes to iOS (W3; 2.2 (3) device pass)
+
+    func testATokenWithTimeLeftIsUsedAsIs() {
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: 3000, minRemaining: 600, hasNetwork: true), .useStored)
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: 3000, minRemaining: 600, hasNetwork: false), .useStored)
+    }
+
+    func testWithANetworkAnExpiringOrExpiredTokenIsRefreshedFirst() {
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: 300, minRemaining: 600, hasNetwork: true), .refresh)
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: -60, minRemaining: 600, hasNetwork: true), .refresh)
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: nil, minRemaining: 600, hasNetwork: true), .refresh)
+    }
+
+    func testOfflineTheStoredTokenGoesAtOnceEvenIfExpired() {
+        // Offline a refresh only waits, and the phone locks while it does; the hand-over to iOS
+        // mustn't wait on it. An expired token gets a 401 when iOS sends, which wakes the app.
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: 300, minRemaining: 600, hasNetwork: false), .useStored)
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: -3600, minRemaining: 600, hasNetwork: false), .useStored)
+        XCTAssertEqual(SendPolicy.tokenChoice(expiresIn: nil, minRemaining: 600, hasNetwork: false), .useStored)
+    }
+
     // MARK: - What a pending bubble shows (U1)
 
     func testSendingThenWaitingAfterAWhileOfFailures() {
