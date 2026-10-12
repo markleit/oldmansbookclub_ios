@@ -449,11 +449,11 @@ final class HermeticChatUITests: HermeticTestCase {
         XCTAssertEqual(forwarded["body"] as? String, "Forward me", "the forwarded copy takes the saved message's content")
     }
 
-    /// The slider stays; + / − step a quarter at a time and stop at the ends. Driven from Saved
-    /// Messages, whose voice row shows the speed control without playing: the chat bubble's only
-    /// appears DURING playback, and a CI simulator may stop playback (no audio device) and close
-    /// the popover mid-test. Same VerticalSpeedSlider either way.
-    func testSpeedButtonsStepAQuarterAndStopAtTheEnds() throws {
+    /// The slider stays; + / − step 0.05× at a time (2.2; was 0.25×) and stop at the ends. Driven
+    /// from Saved Messages, whose voice row shows the speed control without playing: the chat
+    /// bubble's only appears DURING playback, and a CI simulator may stop playback (no audio
+    /// device) and close the popover mid-test. Same VerticalSpeedSlider either way.
+    func testSpeedButtonsStepFiveHundredthsAndStopAtTheEnds() throws {
         try setSaved([["type": "Voice"]])
         launch()
         openCurrentBook()
@@ -467,24 +467,38 @@ final class HermeticChatUITests: HermeticTestCase {
         let up = app.buttons["speedUp"], down = app.buttons["speedDown"]
         XCTAssertTrue(value.waitForExistence(timeout: 5), "speed popover never opened")
 
-        // Start from a known place: down to the 1× floor (persisted rate may be anything).
-        for _ in 0..<12 where down.isEnabled { down.tap() }
+        // 1× to 4× is 60 taps now, so reach each end with the slider: drag from the middle of the
+        // track (between the value and −) past its end, onto the + or − button, which clamps.
+        func slide(toTop: Bool) {
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let x = value.frame.midX
+            let start = origin.withOffset(CGVector(dx: x, dy: (value.frame.maxY + down.frame.minY) / 2))
+            let end = origin.withOffset(CGVector(dx: x, dy: toTop ? up.frame.midY : down.frame.midY))
+            start.press(forDuration: 0.2, thenDragTo: end)
+        }
+
+        // Start from a known place (the persisted rate may be anything).
+        slide(toTop: false)
         XCTAssertEqual(value.label, "1×")
         XCTAssertFalse(down.isEnabled, "− should be disabled at 1×")
 
         up.tap()
-        XCTAssertEqual(value.label, "1.25×")
+        XCTAssertEqual(value.label, "1.05×")
         up.tap()
-        XCTAssertEqual(value.label, "1.5×")
+        XCTAssertEqual(value.label, "1.1×")
         down.tap()
-        XCTAssertEqual(value.label, "1.25×")
+        XCTAssertEqual(value.label, "1.05×")
 
-        for _ in 0..<12 where up.isEnabled { up.tap() }
+        slide(toTop: true)
         XCTAssertEqual(value.label, "4×")
         XCTAssertFalse(up.isEnabled, "+ should be disabled at 4×")
+        down.tap()
+        XCTAssertEqual(value.label, "3.95×")
+        XCTAssertTrue(up.isEnabled, "+ should come back below 4×")
 
         // Leave the persisted rate at 1× for whatever runs next.
-        for _ in 0..<12 where down.isEnabled { down.tap() }
+        slide(toTop: false)
+        XCTAssertEqual(value.label, "1×")
     }
 
     /// A club admin picks a photo as the book's cover: it previews on the Edit screen, and Save
