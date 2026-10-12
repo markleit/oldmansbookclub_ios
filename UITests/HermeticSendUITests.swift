@@ -334,7 +334,8 @@ final class HermeticSendUITests: HermeticTestCase {
         // The 2026-10-11 report (a video, then a voice message): the slower upload landed second and
         // jumped below the quicker message tapped after it. It belongs where it was tapped.
         try setMessages([])
-        try script("POST /books/*/messages", [["delay": 5]])   // the photo's upload — first to reach the stub
+        // The photo's upload only (the text's copies share the route, and can reach the stub first).
+        try script("POST /books/*/messages", [["delay": 5, "content_type": "image/jpeg"]])
         launch(extraArguments: ["-sendDirectNudge", "30"])     // no second, direct copy of it meanwhile
         openCurrentBook()
 
