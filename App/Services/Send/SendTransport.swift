@@ -90,6 +90,9 @@ final class URLSessionSendTransport: NSObject, SendTransport {
     private var systemCompletionHandlers: [String: () -> Void] = [:]
     /// One delegate per session: task numbers are only unique within a session.
     private let delegate = Delegate()
+
+    private lazy var background: URLSession = makeSession(Self.sessionIdentifier, delegate: delegate, shared: false)
+
     /// The share sheet's sessions this run has joined (PR 10), each with its own delegate. Joined
     /// only when iOS wakes the app for one — by then the extension that started it is gone.
     private var shareSessions: [String: (session: URLSession, delegate: Delegate)] = [:]
