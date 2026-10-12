@@ -7,6 +7,9 @@ struct MessageInputView: View {
     @Binding var text: String
     @Binding var pendingImages: [UIImage]   // #201 — up to BookViewModel.maxPendingPhotos
     @Binding var pendingVideo: URL?
+    /// #204 design v2 — the picked video is being made ready (0–1); Send waits for it.
+    var videoProgress: Double? = nil
+    var videoReady: Bool = true
     var isRecording: Bool
     var isUploading: Bool
     var isOffline: Bool = false
@@ -199,6 +202,14 @@ struct MessageInputView: View {
                     if isUploading {
                         ProgressView()
                             .frame(width: 32, height: 32)
+                    } else if pendingVideo != nil && !videoReady {
+                        // Compressing the picked video: Send comes when it's ready.
+                        ProgressView(value: videoProgress ?? 0)
+                            .progressViewStyle(.circular)
+                            .frame(width: 44, height: 44)
+                            .accessibilityElement()
+                            .accessibilityLabel("Preparing video")
+                            .accessibilityIdentifier("preparingVideo")
                     } else if hasContent {
                         Button {
                             if pendingVideo != nil {

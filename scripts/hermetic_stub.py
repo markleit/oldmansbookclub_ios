@@ -60,6 +60,9 @@ def _fresh_state():
             # #204 design v2 — video reservations by blob name: the message the server creates
             # when that blob's upload lands.
             "reservations": {},
+            # Upload slots handed out in advance, by blob name: a slot upload's message is described
+            # by its x-ms-meta-* headers.
+            "slots": {},
             # #204 — scripted responses per "METHOD /path" glob, consumed in order; and a switch
             # that makes the whole server unreachable (every non-control request is dropped).
             "scripts": {}, "down": False,
@@ -534,6 +537,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             blob = route.rsplit("/", 1)[-1].split(".")[0]
             with _lock:
                 reservation = _state["reservations"].pop(blob, None)
+                slot = _state["slots"].pop(blob, None)
+                if slot and not reservation:
+                    meta = {k.lower()[len("x-ms-meta-"):]: v for k, v in self.headers.items()
+                            if k.lower().startswith("x-ms-meta-")}
+                    if meta.get("clientid") and meta.get("bookid"):
+                        reservation = {"type": "Video", "client_id": meta["clientid"], "media_url": slot["media_url"],
+                                       "sent_at": meta.get("sentat"), "book_id": meta["bookid"].lower()}
                 if reservation and _state["epoch"] == arrival_epoch:
                     cid = reservation["client_id"]
                     if cid not in _state["by_client_id"]:
@@ -545,6 +555,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             "sent_at": echoed["sent_at"], "received_at": echoed["received_at"],
                             "book_id": reservation["book_id"]})
             return self._send_json({})
+
+        # #204 design v2 — upload slots fetched in advance (POST /media/video-slots?clubId=&count=).
+        if route == "/media/video-slots":
+            count = int(urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("count", ["3"])[0])
+            slots = []
+            with _lock:
+                for _ in range(count):
+                    blob = uuid.uuid4().hex
+                    media_url = f"http://127.0.0.1:{PORT}/_stub/media/photo.png?u={blob}"
+                    _state["slots"][blob] = {"media_url": media_url}
+                    slots.append({"upload_url": f"http://127.0.0.1:{PORT}/_stub/upload/{blob}.mp4",
+                                  "media_url": media_url,
+                                  "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 7 * 86400 - 3600))})
+            return self._send_json({"slots": slots})
 
         # #204 design v2 — reserve a video message: everything but the file, which goes to the
         # create-only link this returns. A send the server already has comes back as the message.

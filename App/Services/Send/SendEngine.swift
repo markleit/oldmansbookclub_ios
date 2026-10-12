@@ -16,8 +16,8 @@ import Foundation
 //   for a passing reason is replaced at once, held by iOS until the shared clock is due.
 // - THE FAST PATH: while the app is open it also sends directly, and retries directly on ONE shared
 //   clock (1, 2, 4, 8, 15, 30 s, then every 60 s, no limit). Whichever copy lands first wins.
-// - CONTINUED PROCESSING (iOS 26+, VideoSendKeeper): a video's compression and reservation keep
-//   going after the user leaves — a speed-up; if iOS ends it, the next run finishes the job.
+// A video is compressed in the composer before Send (BookViewModel), and its carrier is an upload
+// to a slot fetched in advance (VideoSlots), so it too is complete at the tap — offline or not.
 // A refusal stops with the server's reason. The rules are SendPolicy's; this class applies them.
 
 /// A message the server confirmed, for whichever chat is showing it.
@@ -42,11 +42,14 @@ struct SendEnvironment {
     /// renewed one.
     var token: () async -> APIClient.SendToken
     var tokenAfterRejection: () async -> APIClient.SendToken
-    /// Compresses a picked video (PR 5), reporting how far along it is (0–1). Default: can't, so the
-    /// original is sent.
-    var compressVideo: (_ source: URL, _ progress: @escaping (Double) -> Void) async -> VideoCompression = { _, _ in .unsupported }
-    /// Continued processing for a video's work (VideoSendKeeper). Default: none.
-    var videoWork: (VideoWork) -> Void = { _ in }
+    /// Compresses a video queued by an older build before Send compressed it (PR 5). Default:
+    /// can't, so the original is sent.
+    var compressVideo: (_ source: URL) async -> VideoCompression = { _ in .unsupported }
+    /// Upload slots for a club, fetched in advance (POST /media/video-slots); empty if that can't
+    /// happen now. Default: none.
+    var fetchSlots: (_ clubId: UUID, _ count: Int) async -> [VideoSlot] = { _, _ in [] }
+    /// The clubs to keep slots for at launch and on coming back to the app (a chat adds its own).
+    var slotClubs: () -> [UUID] = { [] }
     /// Run `action` after `delay` seconds; returns a cancel function.
     var schedule: (_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) -> () -> Void
     /// Keep the saved chat in step when a message is confirmed with no chat open (A2).
@@ -89,14 +92,17 @@ final class SendEngine: ObservableObject {
     private var deletedBooks: [UUID: UUID] = [:]
     private var cancelWake: (() -> Void)?
     private var started = false
-    /// Videos iOS is keeping going after the user left (continued processing), until it ends.
-    private var keptAlive: Set<UUID> = []
+    /// Upload slots on the phone (VideoSlots), beside the outbox.
+    private var slots: VideoSlots
+    /// Clubs whose slots are being topped up right now.
+    private var toppingUp: Set<UUID> = []
 
     init(outbox: Outbox, transport: SendTransport, environment: SendEnvironment, timing: SendTiming = .current) {
         self.outbox = outbox
         self.transport = transport
         self.env = environment
         self.timing = timing
+        self.slots = VideoSlots(directory: outbox.directory)
     }
 
     // MARK: - Lifecycle
@@ -108,11 +114,6 @@ final class SendEngine: ObservableObject {
         started = true
         transport.onBackgroundResult = { [weak self] key, response in
             self?.handle(key, response, direct: false)
-        }
-        transport.onBackgroundProgress = { [weak self] key, sent, total in
-            // A video's upload: the last quarter of its "Sending video" progress.
-            guard case .blobUpload = key.step, total > 0 else { return }
-            self?.env.videoWork(.progress(key.itemId, 0.75 + 0.25 * Double(sent) / Double(total)))
         }
         let taken = outbox.migrateLegacy()
         if taken > 0 { SendLog.note("migrated legacy", nil, "items=\(taken)") }
@@ -143,6 +144,7 @@ final class SendEngine: ObservableObject {
         }
         publish()
         pump("launch")
+        env.slotClubs().forEach(topUpSlots)
     }
 
     // MARK: - Sending (the chat calls these)
@@ -160,18 +162,11 @@ final class SendEngine: ObservableObject {
     /// `compress`: a picked video, compressed after it's queued (PR 5) — the composer is free at once.
     func enqueueMedia(_ kind: SendItem.Kind, bookId: UUID, clubId: UUID, fileName: String, contentType: String,
                       durationSeconds: Int?, replyTo: Message?, compress: Bool = false) -> SendItem {
-        let item = SendItem(id: UUID(), bookId: bookId, clubId: clubId, kind: kind,
-                            sentAt: outbox.nextSentAt(now: env.now()), fileName: fileName, contentType: contentType,
-                            durationSeconds: durationSeconds, parentMessageId: replyTo?.id,
-                            parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview),
-                            compressPending: compress ? true : nil)
-        // A video's work outlasts the tap: ask iOS to keep it going if the user leaves. Only now —
-        // Apple allows it only in response to the user's action, with the app in front.
-        if kind == .video, env.isAppActive() {
-            keptAlive.insert(item.id)
-            env.videoWork(.start(item.id))
-        }
-        return enqueue(item)
+        enqueue(SendItem(id: UUID(), bookId: bookId, clubId: clubId, kind: kind,
+                         sentAt: outbox.nextSentAt(now: env.now()), fileName: fileName, contentType: contentType,
+                         durationSeconds: durationSeconds, parentMessageId: replyTo?.id,
+                         parentSenderName: replyTo?.senderName, parentPreview: replyTo.map(Self.preview),
+                         compressPending: compress ? true : nil))
     }
 
     @discardableResult
@@ -214,7 +209,6 @@ final class SendEngine: ObservableObject {
         transport.cancelBackground(itemId: id)
         deletedBooks[id] = item.bookId
         handingOver[id]?.task.cancel()   // a video still compressing stops now
-        endVideoWork(item, success: false)
         forget(item, fileGrace: 0)
         publish()
     }
@@ -225,6 +219,7 @@ final class SendEngine: ObservableObject {
         SendLog.note("network back")
         isOffline = false
         clock.reset()
+        env.slotClubs().forEach(topUpSlots)
         // iOS can sit on a background transfer for a while after the network returns (#207):
         // anything already handed over also goes directly now.
         for item in outbox.items where item.status == .inFlight { sendDirectIfPossible(item.id) }
@@ -238,23 +233,12 @@ final class SendEngine: ObservableObject {
 
     /// The app is about to leave the foreground (Home, lock, another app). Nothing is handed over
     /// here: every unsent message already has its carrier with iOS (design v2) — except one whose
-    /// carrier is still being built (a token being renewed; a video compressing or reserving). `done`
-    /// runs once those are with iOS, so the caller keeps the app awake until then (iOS's ~30 s; a
-    /// video also has continued processing).
+    /// carrier is still being built (a token being renewed; a video with no slot reserving). `done`
+    /// runs once those are with iOS, so the caller keeps the app awake until then (iOS's ~30 s).
     func appWillResignActive(done: @escaping () -> Void = {}) {
         if !handingOver.isEmpty { SendLog.note("leaving foreground: waiting for \(handingOver.count) carrier(s) being built") }
         updateReminder(rearm: true)
         whenHandedOver(done)
-    }
-
-    /// iOS ended a video's continued processing (expired, or the user cancelled it). Its compression
-    /// stops; it starts again the next time the app runs. A video past compressing carries on: its
-    /// reservation is one quick request, and its upload is with iOS.
-    func videoWorkEnded(_ id: UUID) {
-        keptAlive.remove(id)
-        guard outbox.item(id)?.compressPending == true, let work = handingOver[id] else { return }
-        SendLog.note("compression stopped until the app runs again", id)
-        work.task.cancel()
     }
 
     /// Calls `done` once nothing is on its way to iOS: no carrier still being built, and no 401
@@ -266,8 +250,8 @@ final class SendEngine: ObservableObject {
             // In rounds: a refresh ends in a new hand-over. Bounded, so a bookkeeping slip can't
             // keep the app awake forever.
             for _ in 0..<10 {
-                // Not a video still compressing: that can take minutes, more than a wake or iOS's
-                // ~30 s allows — continued processing keeps it going, or the next run does.
+                // Not a video still compressing (queued by an older build): that can take minutes,
+                // more than a wake or iOS's ~30 s allows — the next run with the app open does it.
                 let building = handingOver.filter { outbox.item($0.key)?.compressPending != true }
                 let pending = building.values.map(\.task) + Array(refreshing.values)
                 if pending.isEmpty { break }
@@ -319,11 +303,30 @@ final class SendEngine: ObservableObject {
         takeSharedMessages()
         clock.reset()
         pump("foreground")
+        env.slotClubs().forEach(topUpSlots)
     }
 
-    func chatOpened() {
+    func chatOpened(clubId: UUID? = nil) {
         clock.reset()
         pump("chat open")
+        clubId.map(topUpSlots)
+    }
+
+    /// Keeps `VideoSlots.perClub` fresh upload slots for a club (see VideoSlots): only with a
+    /// network, one top-up per club at a time. A video waiting for one goes as soon as they're in.
+    func topUpSlots(_ clubId: UUID) {
+        guard env.hasNetwork(), !toppingUp.contains(clubId) else { return }
+        let missing = slots.toFetch(clubId: clubId, now: env.now())
+        guard missing > 0 else { return }
+        toppingUp.insert(clubId)
+        Task {
+            defer { toppingUp.remove(clubId) }
+            let fetched = await env.fetchSlots(clubId, missing)
+            guard !fetched.isEmpty else { return }
+            slots.add(fetched, clubId: clubId, now: env.now())
+            SendLog.note("upload slots fetched", nil, "count=\(fetched.count)")
+            pump("upload slots")
+        }
     }
 
     /// Any API request succeeded: the server's reachable, so nothing should be waiting on the clock.
@@ -395,19 +398,23 @@ final class SendEngine: ObservableObject {
     }
 
     private func send(_ id: UUID, attempt: Int, notBefore: Date?) async {
-        // A video is compressed first: it takes a while, and needs no token or network — but it needs
-        // the app running: in front, or kept going for this video (continued processing).
+        // A video queued by an older build is compressed here, with the app open (Send compresses
+        // it in the composer now).
         if outbox.item(id)?.compressPending == true {
-            guard env.isAppActive() || keptAlive.contains(id) else {
-                return couldNotBuild(id, attempt: attempt, "compresses when the app is open")
-            }
+            guard env.isAppActive() else { return couldNotBuild(id, attempt: attempt, "compresses when the app is open") }
             guard await compressVideo(id, attempt: attempt) else { return }
         }
-        // A video's upload goes to a blob the server reserves, so with no network it can't have a
-        // carrier at all: it waits for the network and the app.
-        if let item = outbox.item(id), item.kind == .video, item.mediaUrl == nil, !env.hasNetwork() {
-            isOffline = true
-            return couldNotBuild(id, attempt: attempt, "offline: a video's upload is reserved first")
+        if let item = outbox.item(id), item.kind == .video, item.mediaUrl == nil {
+            // An upload slot: the carrier needs nothing from the server, so it's handed to iOS now,
+            // offline or not — at the tap, like any other message.
+            if let slot = item.slot ?? (item.reserveOnly == true ? nil : takeSlot(for: item)) {
+                return uploadToSlot(item, slot: slot, attempt: attempt, notBefore: notBefore)
+            }
+            // No slot left: it's reserved, which needs the network — offline it waits.
+            if !env.hasNetwork() {
+                isOffline = true
+                return couldNotBuild(id, attempt: attempt, "offline, and no upload slot left")
+            }
         }
         let token: String
         // No token: no carrier yet. It waits for sign-in or a renewed token, on the clock.
@@ -424,15 +431,38 @@ final class SendEngine: ObservableObject {
         }
     }
 
-    /// A carrier can't be built yet (no token, a video offline or not yet compressed): the message
-    /// waits on the clock, and on whatever it's waiting for (sign-in, the network, the app).
+    /// A carrier can't be built yet (no token; a video offline with no slot): the message waits on
+    /// the clock, and on whatever it's waiting for (sign-in, the network, the app).
     private func couldNotBuild(_ id: UUID, attempt: Int, _ why: String) {
         guard let item = outbox.item(id), item.attempts == attempt else { return }
         copies[id] = nil
         markWaiting(id, because: why, now: env.now())
-        endVideoWork(item, success: false)
         scheduleWake()
         publish()
+    }
+
+    /// The newest upload slot for this video's club, kept with the message so a retry reuses its
+    /// blob; the club's slots are then topped up.
+    private func takeSlot(for item: SendItem) -> VideoSlot? {
+        guard let slot = slots.take(clubId: item.clubId, now: env.now()) else { return nil }
+        outbox.update(item.id) { $0.slot = slot }
+        topUpSlots(item.clubId)
+        return slot
+    }
+
+    /// A video's carrier on a slot: its upload, carrying the message's details as metadata, from
+    /// which the server creates the message when it lands.
+    private func uploadToSlot(_ item: SendItem, slot: VideoSlot, attempt: Int, notBefore: Date?) {
+        guard let fileName = item.fileName, outbox.fileExists(fileName), let link = URL(string: slot.uploadUrl) else {
+            return refuse(item.id, "This message's file is missing from your phone, so it can't be sent.")
+        }
+        let built = SendRequestBuilder.blobUpload(uploadUrl: link, fileURL: outbox.fileURL(fileName),
+                                                  contentType: item.contentType ?? "video/mp4",
+                                                  metadata: SendRequestBuilder.slotMetadata(item, deviceId: env.deviceId()))
+        let key = SendTaskKey(itemId: item.id, attempt: attempt, step: .blobUpload(mediaUrl: slot.mediaUrl))
+        transport.submitBackground(key, request: built.request, bodyFile: outbox.fileURL(fileName), notBefore: notBefore)
+        copies[item.id, default: 0] += 1
+        SendLog.note("submit bg", item.id, "attempt=\(attempt) step=blob slot" + (env.isAppActive() ? "" : " from the background"))
     }
 
     private func post(_ item: SendItem, attempt: Int, token: String, notBefore: Date? = nil) {
@@ -518,10 +548,7 @@ final class SendEngine: ObservableObject {
             return false
         }
         SendLog.note("compressing video", id)
-        // Compressing is the first 70% of its "Sending video" progress.
-        let result = await env.compressVideo(outbox.fileURL(original)) { [weak self] fraction in
-            Task { @MainActor in self?.env.videoWork(.progress(id, 0.7 * fraction)) }
-        }
+        let result = await env.compressVideo(outbox.fileURL(original))
         guard let current = outbox.item(id), current.attempts == attempt, current.status == .inFlight else {
             if case .compressed(let url) = result { try? FileManager.default.removeItem(at: url) }
             return false   // deleted, or moved on, while compressing
@@ -543,7 +570,6 @@ final class SendEngine: ObservableObject {
             SendLog.note("video compression interrupted, will start again", id)
             outbox.update(id) { $0.status = .waiting }
             copies[id] = nil
-            endVideoWork(current, success: false)
             scheduleWake()
             publish()
             return false
@@ -588,7 +614,6 @@ final class SendEngine: ObservableObject {
         guard let link = reservation?.uploadUrl.flatMap(URL.init(string:)), let mediaUrl = reservation?.mediaUrl else {
             return fail(item.id, attempt: attempt, .transient("unreadable reservation"), replace: false)
         }
-        env.videoWork(.progress(item.id, 0.75))
         let built = SendRequestBuilder.blobUpload(uploadUrl: link, fileURL: outbox.fileURL(fileName),
                                                   contentType: item.contentType ?? "video/mp4")
         let key = SendTaskKey(itemId: item.id, attempt: attempt, step: .blobUpload(mediaUrl: mediaUrl))
@@ -633,13 +658,14 @@ final class SendEngine: ObservableObject {
             SendLog.note("blob uploaded", id, "the server creates the message")
             outbox.update(id) { $0.mediaUrl = mediaUrl; $0.serverCreates = true; $0.status = .queued }
             copies[id] = nil
-            endVideoWork(item, success: true)
             pump("blob uploaded")
 
         case (.blobUpload, .refused(let why)):
             // Storage, not the server, refused the upload: its link ran out (a week waiting), or
             // this is a repeat of an upload that already landed (create-only). Neither is the
-            // message's fault — a fresh reservation either answers that it's sent or gives a new link.
+            // message's fault — its slot is dropped, and a reservation either answers that it's sent
+            // or gives a new link.
+            outbox.update(id) { $0.slot = nil; $0.reserveOnly = true }
             fail(id, attempt: key.attempt, .transient("upload refused by storage: \(why)"), direct: direct)
 
         default:
@@ -732,17 +758,13 @@ final class SendEngine: ObservableObject {
         // is down) mustn't escalate the backoff for each of them.
         if clock.isDue(now: now) { clock.recordFailure(now: now, timing: timing, jitter: env.jitter()) }
         markWaiting(id, because: why, now: now)
-        guard replace else {
-            if let item = outbox.item(id) { endVideoWork(item, success: false) }
-            return
-        }
+        guard replace else { return }
         SendLog.note("replacing carrier", id, env.isAppActive() ? "" : "from the background")
         submit(id, notBefore: clock.nextDue(after: now))
     }
 
     private func delivered(_ item: SendItem, _ message: Message, via: String) {
         SendLog.note("sent", item.id, "via=\(via) attempts=\(item.attempts)")
-        endVideoWork(item, success: true)
         transport.cancelBackground(itemId: item.id)   // the other copy, if still out
         forget(item, fileGrace: 10)
         clock.reset()
@@ -753,7 +775,6 @@ final class SendEngine: ObservableObject {
 
     private func refuse(_ id: UUID, _ reason: String) {
         SendLog.note("refused", id, reason)
-        if let item = outbox.item(id) { endVideoWork(item, success: false) }
         transport.cancelBackground(itemId: id)
         outbox.update(id) { $0.status = .refused; $0.refusedReason = reason }
         copies[id] = nil
@@ -769,13 +790,6 @@ final class SendEngine: ObservableObject {
             if $0.firstFailureAt == nil { $0.firstFailureAt = now }
         }
         builtPosts[id] = nil
-    }
-
-    /// A video's work is over (uploaded, sent, refused, deleted) or stopped until the app runs
-    /// again: release its continued processing, if it has one.
-    private func endVideoWork(_ item: SendItem, success: Bool) {
-        guard item.kind == .video, keptAlive.remove(item.id) != nil else { return }
-        env.videoWork(.finish(item.id, success: success))
     }
 
     private func forget(_ item: SendItem, fileGrace: TimeInterval) {

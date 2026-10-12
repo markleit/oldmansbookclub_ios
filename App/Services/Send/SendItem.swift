@@ -57,6 +57,11 @@ struct SendItem: Codable, Identifiable, Equatable {
     /// A reserved video whose upload has landed (#204 design v2): the server creates the message
     /// itself, so it's no longer unsent — the app only confirms it (its post returns the message).
     var serverCreates: Bool?
+    /// The upload slot a video goes to (VideoSlots), kept so a retry reuses its blob.
+    var slot: VideoSlot?
+    /// Storage refused its slot upload: from then on it's reserved, which can answer that it's
+    /// already sent — another slot would only upload it all again.
+    var reserveOnly: Bool?
 
     var status: Status = .queued
     var attempts: Int = 0

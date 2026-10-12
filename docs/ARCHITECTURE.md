@@ -49,7 +49,7 @@ no signal, server down, the app killed by iOS (a force-quit is the one case only
 | `SendPolicy`, `RetryClock` | The rules, as pure functions: classify a response (delivered, renew token, 429 wait, offline, transient, refused); which messages get a carrier now; ONE retry clock for the whole queue — 1, 2, 4, 8, 15, 30 s then every 60 s, ±20%, no limit; while backing off only the oldest is retried directly, as a probe |
 | `SendRequestBuilder` | The request per step: the file itself as the body for voice/photo (one request), JSON for text/forwards/media-by-URL; for video, its reservation and then a blob PUT |
 | `SendTransport` | `URLSessionSendTransport`: one background URLSession (iOS carries it while the app sleeps, relaunches the app with the result), created off the main thread, + a direct path. Text also goes directly at once; voice/photo directly if iOS's copy hasn't landed after 3 s. Server dedups by `client_id` |
-| `VideoSendKeeper` | iOS 26+ continued processing for a video's compression, reservation and upload, asked for at the tap; shows "Sending video" with progress; a speed-up, never the guarantee |
+| `VideoPreparation`, `VideoSlots` | A picked video is checked and compressed in the composer before Send; its upload goes to a slot fetched in advance (3 per club, kept fresh while online) — so a video, too, is complete at the tap |
 | `SendEngine` | Applies all of it; triggers: launch, foreground, leaving the foreground, network back/lost, any API success, chat open, Send now; confirmations to the chat (and the chat cache when no chat is open) |
 
 **Design v2 (#204): every unsent message always has its carrier with iOS.** The carrier is one
@@ -58,14 +58,16 @@ complete request in the background URLSession, handed over at the tap while the 
 (`TokenStore.sendToken`, see Authentication), so it can wait days for the network and still
 arrive authorized. iOS sends it when it can — app suspended, phone locked — and when is iOS's
 choice: usually seconds, sometimes a minute or more (energy and data budgets). A video's carrier
-is its upload to a reserved blob: the server creates the message when the upload lands, so nothing
-after the hand-over needs the app. A carrier that fails for a passing reason is replaced at once,
+is its upload to an upload slot fetched in advance (or, with none left, a reservation made then),
+carrying the message's details: the server creates the message when the upload lands, so nothing
+after the tap needs the app. The video is compressed in the composer before Send, so it's complete
+at the tap — offline too. A carrier that fails for a passing reason is replaced at once,
 held by iOS (`earliestBeginDate`) until the retry clock is due — the same rule with the app open
 or suspended. So leaving the foreground hands nothing over; it only keeps the app awake for a
 carrier still being built (a token being renewed, a video compressing or reserving). The fast
 path: while the app is open, everything also goes directly, and failing messages are retried
-directly on the clock. A message with no carrier yet (signed out; a video offline, which can't be
-reserved) waits on the clock and for the app.
+directly on the clock. A message with no carrier yet (signed out; a video offline with no slot
+left) waits on the clock and for the app.
 
 The chat (`BookViewModel`) draws `SendEngine.items` for its book as pending bubbles and inserts
 confirmed messages; its own `messages` are server-confirmed only. Bubbles show **sending**

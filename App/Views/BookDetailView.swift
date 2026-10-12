@@ -339,6 +339,8 @@ struct BookDetailView: View {
                 text: $viewModel.messageText,
                 pendingImages: $viewModel.pendingImages,
                 pendingVideo: $viewModel.pendingVideo,
+                videoProgress: viewModel.videoProgress,
+                videoReady: viewModel.preparedVideo != nil,
                 isRecording: viewModel.isRecording,
                 isUploading: viewModel.isUploading,
                 isOffline: viewModel.isOffline,
