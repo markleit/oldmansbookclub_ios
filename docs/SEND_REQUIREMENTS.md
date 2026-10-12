@@ -29,7 +29,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | S3 | App open, good signal: arrives in ~1–2 s | H: `testATextReachesTheServerWithinTwoSecondsOfTappingSend` (< 2.5 s), `testS3APhotoReachesTheServerWithinSecondsWithTheAppOpen` (< 5 s: iOS first, direct after 3 s) | Covered; voice: **PR 8** (needs the test recorder) |
 | S5 | **Ten photos sent at once all arrive on the first try**, even when some wait their turn on the phone's one connection | API (real web server): `BatchUploadTests.A_photo_that_waits_its_turn_for_eight_seconds_still_arrives`, `…Ten_photos_sent_at_once_over_one_slow_connection_all_arrive_the_first_time` | Covered by #231 (found 2026-10-11: the server cut 2 of 9 off); **Device**: M5 with 10 photos, zero 408s in the server log |
 | S6 | A photo is sent at 2048 px on its long side (~1 MB), from the chat and the share sheet | `PhotoUploadTests` (chat path) | Covered by #231 (chat); share sheet uses the same constant, untested — **PR 10** |
-| S4 | Storage full at tap: an error, no bubble (D4) | — | **PR 8** — photo/video show the error (untested); voice currently loses the take silently (found 2026-10-11): fix + tests for all three with PR 8's test recorder |
+| S4 | Storage full at tap: an error, no bubble (D4) | — | Partial — photo/video show the error (as before); voice was silent and now shows it too (PR 8); untested — needs a full disk |
 
 ## Order and time
 
@@ -37,11 +37,11 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 |---|---|---|---|
 | O1 | Stamped with the tap time; strictly increasing per device | O: `testTapTimesAreStrictlyIncreasing…`, `…NeverGoBackwards…`, `…SurvivesARelaunch`; E: `testMessagesGoInParallelNotInALine` | Covered |
 | O2 | Sent independently, in parallel: **a text after a video goes immediately** | E: `testO2ATextAfterAVideoGoesImmediatelyWithoutWaitingForTheVideo`, `testMessagesGoInParallelNotInALine` | Covered |
-| O3 | Every chat is ordered by tap time — **the video slots in above the text when its upload finishes**, on the sender's phone and others' | H: `testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn` (all fast) | **Gap: PR 6** — the sender's confirmed message and others' live arrivals are added as newest (found 2026-10-11); test: slow video then fast voice, order checked on both phones |
+| O3 | Every chat is ordered by tap time — **the video slots in above the text when its upload finishes**, on the sender's phone and others' | `ChatOrderTests.testO3AVideoTappedBeforeAVoiceMessageStaysAboveItWhenItsUploadFinishesLater`, `…testALiveMessageTappedEarlierGoesWhereItWasTappedNotAtTheBottom`, `…testEqualTapTimesKeepOneOrderHoweverTheyArrive`; H: `testO3APhotoTappedBeforeATextStaysAboveItWhenTheTextLandsFirst`, `testPhotosAndTheirCaptionKeepTheOrderTheyWereSentIn` | Covered (PR 6) |
 | O4 | The server keeps the tap time within [arrival − 7 days, arrival] | API: `SentAtClampTests` (6), `SentTimeTests` (clamp rows) | Covered |
-| O5 | A late message still pushes, counts as unread, read marker by arrival | API: `SentTimeTests` (unread, marker, no rewind) | Covered (server); client read marker **PR 6** |
-| O6 | "↑ New message above" chip; late arrivals merged into the chat | — | **PR 6** |
-| O7 | `received_at` decodes in both Swift mirrors (`Message`, `ChatMessageDto`) | — | **PR 6** (was in PR 4's gate; slipped — the app doesn't read it yet) |
+| O5 | A late message still pushes, counts as unread, read marker by arrival | API: `SentTimeTests` (unread, marker, no rewind); `ChatOrderTests.testTheReadMarkerGoesToTheLatestToArriveNotTheNewestByTapTime`, `…FallsBackToTapTime` | Covered (PR 6 marks read by the latest arrival) |
+| O6 | "↑ New message above" chip for someone else's message that lands above what was seen (D2); late arrivals merged into the chat | `ChatOrderTests.testTheChipPointsAtTheOldestNewMessageFromOthersAboveWhatWasSeen`, `…testNoChipForNewMessagesAtTheBottomForMyOwnOrOnAFirstLoad`, `…testALateArrivalFromAFetchIsMergedAtItsTapTime`; H: `testH15ALateArrivalGoesAtItsTapTimeWithANewMessageAboveChip` | Covered (PR 6) |
+| O7 | `received_at` decodes in both Swift mirrors (`Message`, `ChatMessageDto`) | C: `testTheArrivalTimeDecodesOverRestAndOverSignalR` | Covered (PR 6) |
 | O8 | Equal tap times keep a stable order | API: `MessagesTests.Messages_with_the_same_SentAt_return_in_a_stable_deterministic_order` (#156) | Covered; paging across equal times: #227 |
 
 ## What the sender sees
@@ -52,7 +52,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | B2 | Waiting: quiet clock when offline or still retrying after ~30 s; **never red** | P: `testOfflineShowsWaitingStraightAway`, `testHandedToIOSWithNoNetworkShowsWaiting`; H: `testWhenTheServerIsDownItShowsWaiting…`, `testServerErrorsAreRetriedAutomatically` | Covered |
 | B3 | Waiting menu: "Will send automatically", **Send now**, **Delete** | H: `testSendNowTriesImmediately…` (menu wording, Delete offered, Send now), `testB3AWaitingMessageDeletedFromItsMenuNeverArrives`; E: `testDeletingAnUnsentMessageCancelsIt` | Covered |
 | B4 | Couldn't send: red with the server's reason, content kept, **Copy** (text), **Delete**; only on a permanent refusal | E: `testARefusalShowsTheReasonAndIsNeverRetried`; H: `testARefusedMessageShowsTheReasonAndCanBeDeleted` (reason, Copy, Delete); P: `testOtherClientErrorsAreRefused…` | Covered |
-| B5 | Library: "N unsent", red if any refused | — | **PR 7** |
+| B5 | Library: "N unsent", red if any refused | P: `testB5ABooksUnsentCountsSendingWaitingAndRefusedAndOnlyItsOwn`; H: `testWhenTheServerIsDown…` (count, clears when sent), `testARefusedMessage…` (red) | Covered (PR 7) |
 
 ## Walking away
 
@@ -63,7 +63,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | W3 | **Signal returns while locked → sends** — including when the sign-in token is about to expire | E: `testOfflineAtTapIsHandedToIOSAndShowsWaiting`, `testAMessageHandedOverOfflineIsSentByIOSWithNoHelpFromTheApp` (#226), `testW3LeavingTheAppWaitsForAHandOverStillGettingItsToken`; P: `testOfflineTheStoredTokenGoesAtOnceEvenIfExpired` | Covered (logic); **Device** M5 (2.2 (3) found the expiring-token case: the hand-over waited on a refresh offline, the phone locked, nothing went until opened) |
 | W4 | Server back while locked → sends | E: `testLeavingTheAppHandsIOSWhatsWaitingOnTheClock`, `testAFailureWhileSuspendedGoesStraightBackToIOSOnTheBackoff` (#226) | Covered (logic); **Device** M6 |
 | W5 | iOS kills the app / reboot → sends when iOS wakes it or it's next opened | H: `testMessagesQueuedWhenTheAppWasKilledGoOnRelaunchWithoutOpeningTheChat`; E: `testOnRelaunch…` (3) | Covered (relaunch); the iOS wake itself: **Device** M8 |
-| W6 | Force-quit → a reminder 10 min after the oldest unsent; cancelled when sent; not while open | — | **PR 7** |
+| W6 | Force-quit → a reminder 10 min after the oldest unsent; cancelled when sent; not while open | `SendReminderTests` (10 min after the oldest; refused don't count; overdue → a minute out; wording; not shown while open); E: `testU10TheReminderIsSetWhenSomethingsUnsentAndMovesAsItSends`, `…OnlyTouchedWhenWhatsUnsentChanges`, `…LeavingTheAppReArms…` | Covered (PR 7); the notification itself after a real force-quit: **Device** M7 (`-sendReminderAfter 60` shortens it) |
 | W7 | App update mid-send: 2.1's queues taken over; 2.1's in-flight transfers recognised, nothing sent twice (D3) | O: `testEverything21HadQueuedIsTakenOverInSendOrder`, `testALegacyMediaItemWhoseFileWasPurgedIsDropped` | Partial — each message arrives once (server dedup), but a 2.1 photo/voice upload still in flight at upgrade can upload twice (one unused blob); 2.1 transfer results untested. Decision pending; **Device** M12 |
 
 ## Retry schedule and responses
@@ -100,5 +100,14 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | T12 | Old clients keep working against the new server | API: `The_json_send_is_unchanged_alongside_the_file_send`, `No_tap_time_means_sent_when_received…`; **Device** M13 after each deploy | Covered |
 
 ## Voice recording (#213)
-All rows (pause/resume within 15 s, hold-to-talk, leaving the chat sends the take, stop reasons
-logged): **PR 8**, with U13/H17 and device rows R1–R9.
+
+| # | Requirement | Tests | Status |
+|---|---|---|---|
+| C1 | Declined call, Siri, alarm: paused; over within 15 s → resumes into the same message (chirp, "Recording resumed") | `RecordingTakeTests.testR1ADeclinedCallWithin15sResumesIntoTheSameMessage` | Covered (PR 8); the real interruption: **Device** R1, R5 |
+| C2 | Call answered, or over 15 s → sends what was recorded | `testR2R3AnAnsweredCallOrOneOver15sSendsWhatWasRecorded` | Covered (PR 8); **Device** R2, R3 |
+| C3 | Hold-to-talk resumes only if still held; lifted → sends | `testR4HoldToTalkLiftedDuringTheInterruptionSendsWithoutResuming` | Covered (PR 8); **Device** R4 |
+| C4 | Leaving the chat mid-recording sends the take | `testC8LeavingTheChatSendsTheTake` (take); the chat's close calls it (`BookViewModel.disconnect`) | Covered (PR 8); **Device** R8 (tap-to-talk + Back) — a UI test needs a microphone CI doesn't have |
+| C5 | Home, lock, playing a bubble → sends the take, as before | `testEveryWayATakeEndsIsLogged` (each reason ends it once) | Covered; **Device** R9 |
+| C6 | Notification sounds, AirPods/CarPlay route changes don't stop it | — | **Device** R6, R7, CarPlay checklist |
+| C7 | The send log records why each recording ended | `testEveryWayATakeEndsIsLogged` | Covered (PR 8) |
+| C8 | Under half a second → dropped; can't resume → what was recorded is sent; ends once | `testUnderHalfASecondIsDropped`, `testWhenItCantResumeWhatWasRecordedIsSent`, `testAnEndedTakeEndsOnce` | Covered (PR 8) |

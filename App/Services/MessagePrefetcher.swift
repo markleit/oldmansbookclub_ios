@@ -28,7 +28,7 @@ actor MessagePrefetcher {
     private static func run(bookId: UUID) async -> Bool {
         // Refresh headlessly if needed — the token may have expired while suspended.
         guard await APIClient.shared.ensureFreshToken() else { return false }
-        guard let fetched = try? await APIClient.shared.getMessages(bookId: bookId), !fetched.isEmpty else {
+        guard let fetched = try? await APIClient.shared.getMessages(bookId: bookId, includeLate: true), !fetched.isEmpty else {
             return false
         }
 

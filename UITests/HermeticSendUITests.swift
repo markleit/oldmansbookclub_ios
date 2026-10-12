@@ -204,9 +204,16 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "a passing failure should become a quiet clock, not red")
         XCTAssertFalse(indicator("failedSendIndicator").exists, "never red for a passing failure")
 
+        // B5 (PR 7): the Library says so too.
+        goBack()
+        let unsent = indicator("unsentCount")
+        XCTAssertTrue(unsent.waitForExistence(timeout: 5), "the book's row should say it has an unsent message")
+        // The row is one button, so it reads as one label: "<title>, <author>, 1 unsent, Discussion".
+        XCTAssertTrue(unsent.label.contains("1 unsent"), "the row says \(unsent.label)")
+
         try setServerDown(false)
         XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "while it's down")
-        XCTAssertTrue(waitForDisappearance(indicator("waitingSendIndicator"), timeout: 15))
+        XCTAssertTrue(waitForDisappearance(unsent, timeout: 15), "the Library's count clears once it's sent")
     }
 
     func testServerErrorsAreRetriedAutomatically() throws {
@@ -263,6 +270,12 @@ final class HermeticSendUITests: HermeticTestCase {
         Thread.sleep(forTimeInterval: 3)
         XCTAssertEqual(try requests(matching: "/messages"), attempts, "a refusal is never retried")
 
+        // B5 (PR 7): the Library row turns red.
+        goBack()
+        XCTAssertTrue(indicator("unsentRefused").waitForExistence(timeout: 5), "the book's row should show it in red")
+        openCurrentBook()
+        XCTAssertTrue(refused.waitForExistence(timeout: 10))
+
         refused.tap()
         // A menu's text row may be exposed as a button or as text — match the label either way.
         let reasonRow = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", reason)).firstMatch
@@ -314,6 +327,29 @@ final class HermeticSendUITests: HermeticTestCase {
         Thread.sleep(forTimeInterval: 2)   // anything sent with it has landed by now
         XCTAssertEqual(try sentMessages().compactMap { $0["body"] as? String }, ["still here"],
                        "a deleted message was sent anyway. Stub saw: \(trail())")
+    }
+
+    // MARK: - O3: the chat is in tap-time order on the sender's phone too (PR 6)
+
+    func testO3APhotoTappedBeforeATextStaysAboveItWhenTheTextLandsFirst() throws {
+        // The 2026-10-11 report (a video, then a voice message): the slower upload landed second and
+        // jumped below the quicker message tapped after it. It belongs where it was tapped.
+        try setMessages([])
+        // The photo's upload only (the text's copies share the route, and can reach the stub first).
+        try script("POST /books/*/messages", [["delay": 5, "content_type": "image/jpeg"]])
+        launch(extraArguments: ["-sendDirectNudge", "30"])     // no second, direct copy of it meanwhile
+        openCurrentBook()
+
+        pickPhotos(1)
+        app.buttons["sendButton"].tap()
+        send("tapped after the photo")
+
+        XCTAssertEqual(try waitForSent(2, timeout: 30).count, 2, "Stub saw: \(trail())")
+        XCTAssertTrue(waitForDisappearance(indicator("sendingIndicator"), timeout: 20), "both should be confirmed")
+        let photo = app.buttons.matching(identifier: "photoMessage").firstMatch
+        let text = app.staticTexts["tapped after the photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 5) && text.exists)
+        XCTAssertLessThan(photo.frame.minY, text.frame.minY, "the photo was tapped first, so it stays above the text")
     }
 
     // MARK: - H14: video (PR 5)

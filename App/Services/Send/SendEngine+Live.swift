@@ -36,7 +36,8 @@ extension SendEngine {
                 let merged = ChatCache.merge(existing: ChatCache.load(bookId: bookId), incoming: [message],
                                              myUserId: TokenStore.shared.userId)
                 ChatCache.save(merged.messages, bookId: bookId, excludingPending: [])
-            })
+            },
+            reminder: { SendReminder.apply($0) })
         return SendEngine(outbox: Outbox(), transport: liveTransport, environment: env)
     }()
 

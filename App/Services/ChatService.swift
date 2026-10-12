@@ -157,6 +157,7 @@ actor ChatService {
                 mediaUrl: dto.mediaUrl,
                 durationSeconds: dto.durationSeconds,
                 sentAt: dto.sentAtDate,
+                receivedAt: dto.receivedAtDate,
                 isDeleted: dto.isDeleted,
                 isForwarded: dto.isForwarded,
                 clientId: dto.clientId,
@@ -304,6 +305,7 @@ struct ChatMessageDto: Decodable {
     let mediaUrl: String?
     let durationSeconds: Int?
     let sentAt: String
+    let receivedAt: String?
     let isDeleted: Bool
     let isForwarded: Bool
     let clientId: UUID?
@@ -317,6 +319,13 @@ struct ChatMessageDto: Decodable {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f.date(from: sentAt) ?? Date()
+    }
+
+    var receivedAtDate: Date? {
+        guard let receivedAt else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: receivedAt)
     }
 
     var parentSentAtDate: Date? {

@@ -468,8 +468,11 @@ final class APIClient {
         return data
     }
 
-    func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50) async throws -> [Message] {
+    /// `includeLate`: the newest page also brings messages tapped before it but received recently
+    /// (#204 — held up by an outage), so they can be shown at their tap time.
+    func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50, includeLate: Bool = false) async throws -> [Message] {
         var path = "/books/\(bookId)/messages?limit=\(limit)"
+        if includeLate && before == nil { path += "&include_late=true" }
         if let before {
             let iso = ISO8601DateFormatter()
             // Include fractional seconds to match server-side UtcDateTimeConverter

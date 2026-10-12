@@ -43,6 +43,8 @@ struct SendEnvironment {
     var schedule: (_ delay: TimeInterval, _ action: @escaping @MainActor () -> Void) -> () -> Void
     /// Keep the saved chat in step when a message is confirmed with no chat open (A2).
     var cacheConfirmed: (_ bookId: UUID, _ message: Message) -> Void
+    /// The force-quit reminder (PR 7): set, move, or (nil) cancel it.
+    var reminder: (_ plan: ReminderPlan?) -> Void = { _ in }
 }
 
 @MainActor
@@ -69,6 +71,8 @@ final class SendEngine: ObservableObject {
     private var handingOver: [UUID: (attempt: Int, task: Task<Void, Never>)] = [:]
     /// 401s being answered: the token refresh, then handing the message back to iOS.
     private var refreshing: [UUID: Task<Void, Never>] = [:]
+    /// What the force-quit reminder was last set for — it's only touched when that changes.
+    private var reminderBasis: SendReminder.Basis?
     private var directInFlight: Set<UUID> = []
     private var refreshedAfter401: Set<UUID> = []
     /// Book of each message the user deleted while it was unsent — a late success for one (D1)
@@ -214,6 +218,7 @@ final class SendEngine: ObservableObject {
         // getting its token or upload link (2.2 (3): a hand-over waiting on a token when the
         // phone locked never reached iOS).
         if !handingOver.isEmpty { SendLog.note("leaving foreground: waiting for \(handingOver.count) hand-over(s)") }
+        updateReminder(rearm: true)
         whenHandedOver(done)
     }
 
@@ -698,6 +703,17 @@ final class SendEngine: ObservableObject {
 
     private func publish() {
         items = outbox.items.sorted { $0.sentAt < $1.sentAt }
+        updateReminder()
+    }
+
+    /// Keeps the force-quit reminder in step with what's unsent (PR 7). `rearm`: set it again even
+    /// if nothing changed — leaving the foreground, so one that fell due while the app was open
+    /// (and so wasn't shown) still comes if the app is then swiped away.
+    private func updateReminder(rearm: Bool = false) {
+        let basis = SendReminder.basis(for: outbox.items)
+        guard rearm || basis != reminderBasis else { return }
+        reminderBasis = basis
+        env.reminder(basis.map { SendReminder.plan($0, after: timing.reminderAfter, now: env.now()) })
     }
 
     func displayState(of item: SendItem) -> SendDisplayState {

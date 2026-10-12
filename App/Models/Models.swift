@@ -82,6 +82,10 @@ struct Message: Identifiable, Codable {
     var mediaUrl: String?
     var durationSeconds: Int?
     var sentAt: Date
+    /// When the server got it (#204). Orders nothing — `sentAt`, the tap time, orders the chat —
+    /// but says what's new to a reader: a message held up by an outage arrives late with an older
+    /// tap time. Nil from servers before 2.2 and on unsent bubbles.
+    var receivedAt: Date? = nil
     var isDeleted: Bool = false
     var isForwarded: Bool = false
     var sendState: MessageSendState? = nil  // local only — never sent to or received from server
@@ -95,7 +99,7 @@ struct Message: Identifiable, Codable {
     var reactions: [MessageReaction]? = nil   // #47 — per-user emoji reactions
 
     enum CodingKeys: String, CodingKey {
-        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt, transcript, reactions
+        case id, clubId, senderId, senderName, senderAvatarUrl, type, body, mediaUrl, durationSeconds, sentAt, receivedAt, isDeleted, isForwarded, clientId, parentMessageId, parentSenderName, parentPreview, parentSentAt, transcript, reactions
     }
 }
 
@@ -136,6 +140,7 @@ extension Message {
         mediaUrl = try c.decodeIfPresent(String.self, forKey: .mediaUrl)
         durationSeconds = try c.decodeIfPresent(Int.self, forKey: .durationSeconds)
         sentAt = try c.decode(Date.self, forKey: .sentAt)
+        receivedAt = try c.decodeIfPresent(Date.self, forKey: .receivedAt)
         isDeleted = try c.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
         isForwarded = try c.decodeIfPresent(Bool.self, forKey: .isForwarded) ?? false
         // Present on the sender's own messages (REST + SignalR echo); lets load()

@@ -166,6 +166,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // The "waiting to send" reminder isn't shown while the app is open (#204 PR 7).
+        if let options = SendReminder.foregroundOptions(for: notification.request.identifier) {
+            completionHandler(options)
+            return
+        }
         let userInfo = notification.request.content.userInfo
         guard let bookIdStr = userInfo["bookId"] as? String,
               let bookId = UUID(uuidString: bookIdStr) else {

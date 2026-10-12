@@ -249,6 +249,32 @@ final class HermeticChatUITests: HermeticTestCase {
         XCTAssertTrue(app.staticTexts["Seed: Future Read"].exists)
     }
 
+    // #204 PR 6 (H15, O6) — a message held up by an outage arrives with an older tap time: it's
+    // placed there, out of sight of someone reading at the bottom, so the chat says so.
+    func testH15ALateArrivalGoesAtItsTapTimeWithANewMessageAboveChip() throws {
+        func seconds(_ s: Int) -> String { String(format: "2026-09-01T12:%02d:%02d.000Z", s / 60, s % 60) }
+        let earlier: [[String: Any]] = (0..<30).map { ["body": "message \($0)", "sent_at": seconds($0 * 10)] }
+        try setMessages(earlier)
+        launch()
+        openCurrentBook()   // seen: the chat is cached as it was
+        XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        // Tapped between messages 2 and 3, received an hour later.
+        let late: [String: Any] = ["body": "held up by an outage", "sent_at": seconds(25),
+                                   "received_at": "2026-09-01T13:30:00.000Z"]
+        try setMessages(earlier + [late])
+        openCurrentBook()
+
+        let chip = app.buttons["newMessageAboveChip"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10), "no '↑ New message above' for a late arrival out of sight")
+        let lateBubble = app.staticTexts["held up by an outage"]
+        XCTAssertFalse(lateBubble.exists && lateBubble.isHittable, "it's above, out of sight — not at the bottom")
+        chip.tap()
+        XCTAssertTrue(app.staticTexts["held up by an outage"].waitForExistence(timeout: 5), "the chip didn't jump to it")
+        XCTAssertTrue(waitForDisappearance(chip, timeout: 5), "the chip stays once the message is seen")
+    }
+
     func testTheChatRendersTheMessagesTheServerReturned() throws {
         launch()
         openCurrentBook()

@@ -131,6 +131,21 @@ final class SendPolicyTests: XCTestCase {
         XCTAssertEqual(SendPolicy.itemsToSubmit([item(1)], clock: RetryClock(), now: t0, isOffline: true), [])
     }
 
+    // MARK: - The Library's "N unsent" (U11, B5)
+
+    func testB5ABooksUnsentCountsSendingWaitingAndRefusedAndOnlyItsOwn() {
+        let book = UUID(), other = UUID()
+        func on(_ id: UUID, _ status: SendItem.Status) -> SendItem {
+            SendItem(id: UUID(), bookId: id, clubId: UUID(), kind: .text, sentAt: t0, body: "x", status: status)
+        }
+        let items = [on(book, .inFlight), on(book, .waiting), on(other, .refused), on(book, .queued)]
+
+        XCTAssertEqual(SendPolicy.unsent(in: items, bookId: book), .init(count: 3, anyRefused: false))
+        XCTAssertEqual(SendPolicy.unsent(in: items + [on(book, .refused)], bookId: book), .init(count: 4, anyRefused: true),
+                       "red when the server refused one")
+        XCTAssertEqual(SendPolicy.unsent(in: [], bookId: book).count, 0, "nothing shown")
+    }
+
     // MARK: - Which token goes to iOS (W3; 2.2 (3) device pass)
 
     func testATokenWithTimeLeftIsUsedAsIs() {

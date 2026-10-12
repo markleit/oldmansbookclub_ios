@@ -234,6 +234,24 @@ struct UnreadBadge: View {
     }
 }
 
+/// #204 PR 7 — "N unsent" under a book: its messages still on their way (sending or waiting), red
+/// if the server refused any — those need you (Copy / Delete in the chat).
+@MainActor
+struct UnsentNote: View {
+    let bookId: UUID
+    @ObservedObject private var engine = SendEngine.shared
+
+    var body: some View {
+        let unsent = SendPolicy.unsent(in: engine.items, bookId: bookId)
+        if unsent.count > 0 {
+            Text("\(unsent.count) unsent")
+                .font(.caption)
+                .foregroundColor(unsent.anyRefused ? .red : .secondary)
+                .accessibilityIdentifier(unsent.anyRefused ? "unsentRefused" : "unsentCount")
+        }
+    }
+}
+
 struct CurrentBookCard: View {
     let book: Book
     var refreshToken: UUID = UUID()
@@ -252,6 +270,7 @@ struct CurrentBookCard: View {
                 Text(book.author)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                UnsentNote(bookId: book.id)
                 Spacer()
                 Label("Discussion", systemImage: "bubble.left.and.bubble.right")
                     .font(.caption)
@@ -327,6 +346,7 @@ struct PastBookRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(book.title).font(.headline).foregroundColor(.primary)
                 Text(book.author).font(.subheadline).foregroundColor(.secondary)
+                UnsentNote(bookId: book.id)
             }
             Spacer()
             Image(systemName: "chevron.right")

@@ -59,6 +59,10 @@ final class BookViewModel: ObservableObject {
     // the filter on every access was pure waste. Now refreshed only when its inputs (messages /
     // blockedUserIds) change, via their didSet.
     @Published private(set) var visibleMessages: [Message] = []
+    /// #204 PR 6 — someone else's message that landed above what you'd already seen (a late
+    /// arrival, or a slow upload tapped earlier). The chat shows "↑ New message above" until it's
+    /// seen. The oldest such message, so reading down from it covers the rest.
+    @Published var newMessageAboveId: UUID?
 
     private func recomputeVisibleMessages() {
         // #204 — the chat shows the server's messages plus this chat's unsent ones, which belong
@@ -240,6 +244,8 @@ final class BookViewModel: ObservableObject {
     private var appBackgroundObserver: NSObjectProtocol?
     private var audioInterruptionObserver: NSObjectProtocol?
     private let audioRecorder = AudioRecorder()
+    /// The take being recorded (#213): pauses through an interruption, resumes within 15 s.
+    private var take: RecordingTake?
     private var networkMonitor: NWPathMonitor?
     private var recordingStartTime: Date?
 
@@ -301,7 +307,8 @@ final class BookViewModel: ObservableObject {
         let bookId = book.id
 
         // Fire messages, blocked, and reads all in parallel — they're independent
-        async let messagesFetch = APIClient.shared.getMessages(bookId: bookId)
+        // With late arrivals: messages tapped before this page but received since (PR 6).
+        async let messagesFetch = APIClient.shared.getMessages(bookId: bookId, includeLate: true)
         async let blockedFetch = APIClient.shared.fetchBlockedUserIds()
         async let readsFetch = APIClient.shared.getReads(bookId: bookId)
         // The server's per-account heard state — seed the device-local heard cache from it so a
@@ -318,8 +325,15 @@ final class BookViewModel: ObservableObject {
             // entry would otherwise survive and restorePendingMediaBubbles would resurrect it as
             // a ghost that can never reconcile (its re-send echo is dropped because the server id
             // is already loaded here) and stick permanently on .failed.
+            let previous = messages
             let merged = ChatCache.merge(existing: messages, incoming: fetched, myUserId: TokenStore.shared.userId)
             messages = merged.messages
+            // A late arrival since this chat was last open lands above what you'd seen (PR 6).
+            if let above = ChatOrder.arrivedAbove(previous: previous, current: messages,
+                                                  me: TokenStore.shared.userId),
+               let message = messages.first(where: { $0.id == above }) {
+                noteArrivedAbove(message)
+            }
             // A send the server has (it landed while the app was closed, or its response was lost)
             // is confirmed by the fetch itself — the engine drops it and stops retrying.
             for message in fetched where message.senderId == TokenStore.shared.userId {
@@ -345,7 +359,9 @@ final class BookViewModel: ObservableObject {
 
         // Newest SERVER-known message: an optimistic send still in flight has an id the server
         // has never seen, and the read marker must point at a real message (#119).
-        let latestId = messages.first?.id
+        // The latest to arrive, not the newest by tap time: the server moves the read marker by
+        // arrival, and a late arrival is older by tap time (PR 6).
+        let latestId = ChatOrder.latestArrival(in: messages)?.id
 
         if let ids = try? await blockedFetch { blockedUserIds = Set(ids) }
         if let fetched = try? await readsFetch { reads = fetched }
@@ -586,45 +602,80 @@ final class BookViewModel: ObservableObject {
         do {
             try audioRecorder.start(atTime: recordAt)
             recordingStartTime = Date()
+            take = RecordingTake(
+                recorder: audioRecorder, now: { Date() },
+                schedule: { delay, action in
+                    let task = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(delay))
+                        guard !Task.isCancelled else { return }
+                        action()
+                    }
+                    return { task.cancel() }
+                },
+                onFinished: { [weak self] file, _ in self?.takeFinished(file) })
             startRecordingTypingPings()   // broadcast "is recording audio…"
             // Let playback call sites finalize-and-send this take instead of fighting the
             // recorder for AVAudioSession (#160).
-            AudioRecorder.forceStopForPlayback = { [weak self] in self?.finalizeRecording() }
+            AudioRecorder.forceStopForPlayback = { [weak self] in self?.finalizeRecording(.playback) }
         } catch {
             isRecording = false
             errorMessage = "Could not start recording."
         }
     }
 
-    func stopRecording() async {
-        _ = finalizeRecording()
+    func stopRecording(_ reason: RecordingEnd = .released) async {
+        _ = finalizeRecording(reason)
     }
 
     // Body of stopRecording(), extracted so AudioRecorder.forceStopForPlayback can call it
     // synchronously (playback call sites need the recorder already torn down before they touch
-    // AVAudioSession themselves — see #160). The network send is not part of that hand-off, so
-    // it runs in its own Task rather than making this function async.
+    // AVAudioSession themselves — see #160). The take decides what's kept and logs why it ended
+    // (#213); `takeFinished` does the rest, whoever ended it.
     @discardableResult
-    private func finalizeRecording() -> Bool {
+    private func finalizeRecording(_ reason: RecordingEnd = .released) -> Bool {
         guard isRecording else { return false }
+        guard let take else {
+            // Released during the start chirp: startRecording sees this and doesn't start.
+            isRecording = false
+            return false
+        }
+        return take.finish(reason)
+    }
+
+    /// A take ended — released, or ended for it (an interruption over 15 s, leaving the chat,
+    /// the background, playback). `file` is nil when it was too short to keep.
+    private func takeFinished(_ file: (url: URL, duration: Int)?) {
+        take = nil
         isRecording = false
         stopRecordingTypingPings()
-        let elapsed = recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         recordingStartTime = nil
         AudioRecorder.forceStopForPlayback = nil
-        let recording = audioRecorder.stop()
         // "Mic closed" chirp — capture has ended, so it won't be in the recording.
         // Plays on close regardless of whether the take is kept or discarded.
         AudioCue.shared.playRecordStop()
-        guard let (tempUrl, duration) = recording else { return false }
-        guard elapsed >= 0.5 else { return false }
-        guard TokenStore.shared.userId != nil,
-              let fileName = try? engine.files.importFile(at: tempUrl, extension: "m4a") else { return false }
+        guard let (tempUrl, duration) = file, TokenStore.shared.userId != nil else { return }
+        guard let fileName = try? engine.files.importFile(at: tempUrl, extension: "m4a") else {
+            // Was silent: the take was simply lost (D4, found 2026-10-11).
+            errorMessage = "Your phone's storage is full, so the voice message couldn't be queued."
+            return
+        }
         let reply = replyingTo
         replyingTo = nil
         engine.enqueueMedia(.voice, bookId: book.id, clubId: book.clubId, fileName: fileName,
                             contentType: "audio/mp4", durationSeconds: duration, replyTo: reply)
-        return true
+    }
+
+    /// The interruption is over. Back within 15 s and still held: the resume chirp, then capture
+    /// continues into the same message (#213). Otherwise the take's own timer sends it, or the
+    /// system says not to resume and it's sent now.
+    private func interruptionEnded(shouldResume: Bool) async {
+        guard isRecording, let take else { return }
+        guard shouldResume else { finalizeRecording(.interrupted); return }
+        guard take.canResume else { return }
+        let resumeAt = await AudioCue.shared.playRecordStart()
+        guard self.take === take, take.canResume else { return }
+        take.resume(atTime: resumeAt)
+        if !take.isFinished { toast = Toast(text: "Recording resumed", systemImage: "mic.fill") }
     }
 
     /// Drop an in-progress take when recording is interrupted by backgrounding or a
@@ -676,13 +727,18 @@ final class BookViewModel: ObservableObject {
 
         case .replaceOptimistic:
             // #204 — unsent bubbles are no longer kept in `messages` (they're the SendEngine's),
-            // so there's nothing to replace: our own confirmed send simply joins the list. The
-            // engine has already dropped its pending copy and cleans up the local file.
-            messages.insert(message, at: 0)
+            // so there's nothing to replace: our own confirmed send simply joins the list — at its
+            // tap time (PR 6): a video tapped before a voice message but confirmed after it stays
+            // above it, where its pending bubble was.
+            messages.insert(message, at: ChatOrder.insertionIndex(of: message, in: messages))
             saveMessagesCache()
 
         case .insert:
-            messages.insert(message, at: 0)
+            // At its tap time, not at the bottom (PR 6). Above the newest — it was tapped earlier
+            // than something already here — means it's out of sight: "↑ New message above".
+            let index = ChatOrder.insertionIndex(of: message, in: messages)
+            messages.insert(message, at: index)
+            if index > 0, message.senderId != TokenStore.shared.userId { noteArrivedAbove(message) }
             saveMessagesCache()
             // The read receipt's response carries this book's fresh unread count — an arriving
             // voice message raises it (unheard), non-voice nets to zero (read on arrival).
@@ -716,7 +772,7 @@ final class BookViewModel: ObservableObject {
             // Merge into messages, dedup by id (server might overlap on the boundary).
             var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
             for msg in older where byId[msg.id] == nil { byId[msg.id] = msg }
-            messages = byId.values.sorted(by: { $0.sentAt > $1.sentAt })
+            messages = ChatOrder.sorted(byId.values)
             saveMessagesCache()
         } catch {
             // Silent — the sentinel will fire again on next scroll attempt.
@@ -783,6 +839,13 @@ final class BookViewModel: ObservableObject {
         } catch {
             errorMessage = "Failed to save message."
         }
+    }
+
+    /// Keeps the oldest of the messages that arrived above the newest, for the "↑" chip.
+    private func noteArrivedAbove(_ message: Message) {
+        if let current = newMessageAboveId, let shown = messages.first(where: { $0.id == current }),
+           ChatOrder.isNewer(message, than: shown) { return }
+        newMessageAboveId = message.id
     }
 
     // #201 — the photo viewer's pages: every loaded, undeleted photo in this chat, oldest first
@@ -860,6 +923,8 @@ final class BookViewModel: ObservableObject {
     }
 
     func disconnect() {
+        // Leaving the chat mid-recording sends the take — it used to be lost (#213).
+        finalizeRecording(.leftChat)
         networkMonitor?.cancel()
         networkMonitor = nil
         stopLifecycleObservers()
@@ -894,23 +959,31 @@ final class BookViewModel: ObservableObject {
                 // user had deliberately released the mic. stopRecording() already no-ops below
                 // 0.5s of audio, so an accidental instant background doesn't send a near-empty
                 // clip.
-                await self?.stopRecording()
+                await self?.stopRecording(.background)
                 if bgTask != .invalid {
                     UIApplication.shared.endBackgroundTask(bgTask)
                     bgTask = .invalid
                 }
             }
         }
-        // Recording interrupted by a phone call / Siri / alarm. Only `.began` matters — once
-        // interrupted, the audio session is gone and capture cannot resume, so `.ended` is still
-        // ignored; the only choice was ever finalize-vs-discard, and #146 changed that choice
-        // from discard (#75) to finalize-and-send, same reasoning as the backgrounding case above.
+        // Recording interrupted by a phone call / Siri / alarm (#213): paused, not ended. Over
+        // within 15 s (a declined call), it resumes into the same message; longer (a call
+        // answered), what was recorded is sent. Before #213 `.began` sent the take at once and
+        // anything said after declining a call was lost.
         audioInterruptionObserver = center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
-                  AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
-            Task { @MainActor in await self?.stopRecording() }
+                  let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
+                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
+            Task { @MainActor in
+                switch type {
+                case .began: self?.take?.interruptionBegan()
+                case .ended: await self?.interruptionEnded(shouldResume: options.contains(.shouldResume))
+                @unknown default: break
+                }
+            }
         }
     }
 
