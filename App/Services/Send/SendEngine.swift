@@ -171,8 +171,7 @@ final class SendEngine: ObservableObject {
         SendLog.note("deleted", id)
         transport.cancelBackground(itemId: id)
         deletedBooks[id] = item.bookId
-        forget(item, fileGrace: 0)
-        publish()
+        publish()   // BREAK-CHECK: hidden, not deleted
     }
 
     // MARK: - Triggers
@@ -607,7 +606,7 @@ final class SendEngine: ObservableObject {
     // MARK: - Helpers
 
     private func publish() {
-        items = outbox.items.sorted { $0.sentAt < $1.sentAt }
+        items = outbox.items.filter { deletedBooks[$0.id] == nil }.sorted { $0.sentAt < $1.sentAt }
     }
 
     func displayState(of item: SendItem) -> SendDisplayState {
