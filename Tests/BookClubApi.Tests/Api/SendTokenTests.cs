@@ -116,5 +116,5 @@ public class SendTokenTests(TestAppFixture fixture) : IntegrationTestBase(fixtur
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendTextAsync(session.Send, session.Book.Id)).StatusCode);
     }
 
-    // K5 (deleting the account ends the send token) waits on #244: account deletion itself fails.
+    // K5 (deleting the account ends the send token): AccountDeletionTests, with #244's fix.
 }

@@ -239,7 +239,7 @@ public class AuthController(
         var sub = User.FindFirst("sub")?.Value;
         if (!Guid.TryParse(sub, out var userId)) return Unauthorized();
 
-        var user = await db.Users.Include(u => u.Memberships).FirstOrDefaultAsync(u => u.Id == userId);
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId);
         if (user is null) return NotFound();
 
         if (user.AppleRefreshToken is not null)
@@ -252,29 +252,7 @@ public class AuthController(
             _ = appleValidator.RevokeRefreshTokenAsync(user.AppleRefreshToken, bundleId);
         }
 
-        var messageIds = await db.Messages
-            .Where(m => m.SenderId == userId)
-            .Select(m => m.Id)
-            .ToListAsync();
-
-        // All-or-nothing: a crash mid-way must not leave a half-deleted account.
-        await using var transaction = await db.Database.BeginTransactionAsync();
-        if (messageIds.Count > 0)
-        {
-            await db.Reports.Where(r => messageIds.Contains(r.MessageId)).ExecuteDeleteAsync();
-            await db.SavedMessages.Where(s => messageIds.Contains(s.MessageId)).ExecuteDeleteAsync();
-        }
-
-        await db.Reports.Where(r => r.ReporterId == userId).ExecuteDeleteAsync();
-        await db.SavedMessages.Where(s => s.UserId == userId).ExecuteDeleteAsync();
-        await db.Messages.Where(m => m.SenderId == userId).ExecuteDeleteAsync();
-        await db.JoinRequests.Where(jr => jr.UserId == userId).ExecuteDeleteAsync();
-        await db.BlockedUsers.Where(b => b.BlockerId == userId || b.BlockedId == userId).ExecuteDeleteAsync();
-        db.Memberships.RemoveRange(user.Memberships);
-        db.Users.Remove(user);
-        await db.SaveChangesAsync();
-        await transaction.CommitAsync();
-
+        await AccountDeletion.DeleteAsync(db, userId);   // #244
         return NoContent();
     }
 
