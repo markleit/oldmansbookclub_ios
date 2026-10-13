@@ -148,17 +148,22 @@ it reached iOS only from the background — low priority — and went when the a
 
 ## Voice recording (#213)
 
+**One rule:** whatever ends a recording sends what was recorded. To carry on after an interruption,
+the user records again. (Resuming into the same message after a short interruption was tried in
+2.2 (7)–(8); on a device the recorder captured nothing after it. Mark chose this rule instead,
+2026-10-13.)
+
 | # | Requirement | Tests | Status |
 |---|---|---|---|
-| C1 | Declined call, Siri, alarm: paused; over within 15 s → resumes into the same message (chirp, "Recording resumed") | `RecordingTakeTests.testR1ADeclinedCallWithin15sResumesIntoTheSameMessage`; `AudioRecorderTests.testR1ADeclinedCallResumesCaptureEvenThoughIOSHadAlreadyPausedIt` (iOS pauses capture before the app hears; 2.2 (7) found the take dropped) | Covered (PR 8); the real interruption: **Device** R1, R5 |
-| C2 | Call answered, or over 15 s → sends what was recorded | `testR2R3AnAnsweredCallOrOneOver15sSendsWhatWasRecorded` | Covered (PR 8); **Device** R2, R3 |
-| C3 | Hold-to-talk resumes only if still held; lifted → sends | `testR4HoldToTalkLiftedDuringTheInterruptionSendsWithoutResuming` | Covered (PR 8); **Device** R4 |
-| C4 | Leaving the chat mid-recording sends the take | `testC8LeavingTheChatSendsTheTake` (take); the chat's close calls it (`BookViewModel.disconnect`) | Covered (PR 8); **Device** R8 (tap-to-talk + Back) — a UI test needs a microphone CI doesn't have |
-| C5 | Home, lock, playing a bubble → sends the take, as before | `testEveryWayATakeEndsIsLogged` (each reason ends it once) | Covered; **Device** R9 |
-| C6 | Notification sounds, AirPods/CarPlay route changes don't stop it | — | **Device** R6, R7, CarPlay checklist |
-| C7 | The send log records why each recording ended | `testEveryWayATakeEndsIsLogged` | Covered (PR 8) |
-| C8 | Under half a second → dropped; can't resume → what was recorded is sent; ends once | `testUnderHalfASecondIsDropped`, `testWhenItCantResumeWhatWasRecordedIsSent`, `testAnEndedTakeEndsOnce` | Covered (PR 8) |
-| C9 | A take long enough to keep is **never lost silently**: if the recorder gives back no file, the user is told | `RecordingTakeTests.testC9ATakeLongEnoughToKeepIsNeverLostSilently`, `testATooShortTakeIsDroppedWithoutAnError`; `AudioRecorderTests` (3) | Covered (2.2 (7) device pass) |
+| C1 | **An interruption** — a call (answered or declined), Siri, an alarm or timer, another app's audio — **ends the recording and sends what was recorded**, even though iOS stops capture before the app hears of it; a note says so ("record again to carry on"). Nothing happens when the interruption ends | `RecordingTakeTests.testC1AnInterruptionSendsWhatWasRecorded`; `AudioRecorderTests.testC1AnInterruptedTakeIsHandedOverThoughIOSHadAlreadyStoppedCapture` | Covered; **Device** R1–R4 |
+| C2 | Hold-to-talk interrupted: lifting the finger afterwards sends nothing more — one message, no stuck recording | `testAnEndedTakeEndsOnce` | Covered; **Device** R3 |
+| C3 | An interruption during the start chirp: the recording doesn't start | `BookViewModel.finalizeRecording` (no take yet → isRecording off; startRecording stops after the chirp) | **Device** only |
+| C4 | Leaving the chat mid-recording sends it | `testC4LeavingTheChatSendsTheTake` (take); the chat's close calls it (`BookViewModel.disconnect`) | Covered; **Device** R6 |
+| C5 | Home, lock, playing a voice message or video mid-recording sends it — **at once, without reopening the app** (T2: queued in the background, it goes directly while the app still runs) | `testEveryWayATakeEndsIsLogged`; E: `testT2AMessageQueuedWithTheAppInTheBackgroundAlsoGoesDirectlyAtOnce` | Covered; **Device** R7, R8, R9 |
+| C6 | Notification sounds, AirPods/CarPlay route changes don't end it | — | **Device** R5, CarPlay checklist |
+| C7 | The send log records why each recording ended | `testEveryWayATakeEndsIsLogged` | Covered |
+| C8 | Under half a second → dropped (an accidental tap); a recording ends once | `testUnderHalfASecondIsDropped`, `testAnEndedTakeEndsOnce` | Covered |
+| C9 | A recording long enough to keep is **never lost silently**: if the recorder gives back no file, the user is told | `testC9ATakeLongEnoughToKeepIsNeverLostSilently`, `testATooShortTakeIsDroppedWithoutAnError`; `AudioRecorderTests` | Covered |
 
 ## Design v2: the carrier, the limit, upload slots (app)
 
