@@ -275,6 +275,7 @@ final class SendEngineTests: XCTestCase {
 
     func testT2ACarrierReplacedInTheBackgroundKeepsToTheBackoffNotDirect() async throws {
         let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }   // the server's down
         engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
         await settle()
         let direct = transport.direct.count
