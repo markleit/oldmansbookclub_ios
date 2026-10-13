@@ -11,8 +11,8 @@ behaviour in the requirement's own terms and has been seen to fail when that beh
   (no network-back event, no timer) — a suspended app gets neither.
 - Each new test is validated by breaking what it covers (docs/TESTING.md).
 - "Device only" rows can't be proven by any automated lane (iOS's own background-transfer
-  timing, real force-quit, real radio); they're run on every TestFlight build with the send log
-  as evidence (M rows, #204 test plan).
+  timing, real force-quit, real radio); they're run on the TestFlight build with the send log as
+  evidence — the checklist is `docs/SEND_DEVICE_MATRIX.md`.
 
 Status: **Covered** · **Partial** (some of the row) · **Gap** (not yet covered) ·
 **PR n** (built in that PR) · **Device** (device lane only).
