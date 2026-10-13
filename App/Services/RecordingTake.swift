@@ -34,6 +34,7 @@ final class RecordingTake {
     private let now: () -> Date
     private let schedule: (TimeInterval, @escaping @MainActor () -> Void) -> () -> Void
     private let onFinished: (_ take: (url: URL, duration: Int)?, _ reason: RecordingEnd) -> Void
+    private let onLost: () -> Void
     private let startedAt: Date
     private var pausedAt: Date?
     private var pausedTotal: TimeInterval = 0
@@ -53,13 +54,16 @@ final class RecordingTake {
         now().timeIntervalSince(startedAt) - pausedTotal - (pausedAt.map { now().timeIntervalSince($0) } ?? 0)
     }
 
-    /// `onFinished`: the take (nil when dropped as too short) and why it ended.
+    /// `onFinished`: the take (nil when dropped as too short, or lost) and why it ended. `onLost`: a
+    /// take long enough to keep, but the recorder gave back no file — never silently (#213).
     init(recorder: VoiceRecorder, now: @escaping () -> Date,
          schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> () -> Void,
+         onLost: @escaping () -> Void = {},
          onFinished: @escaping (_ take: (url: URL, duration: Int)?, _ reason: RecordingEnd) -> Void) {
         self.recorder = recorder
         self.now = now
         self.schedule = schedule
+        self.onLost = onLost
         self.onFinished = onFinished
         self.startedAt = now()
     }
@@ -99,7 +103,13 @@ final class RecordingTake {
         cancelTimeout = nil
         let take = recorder.stop()
         SendLog.note("recording ended: \(reason.rawValue)", nil, String(format: "recorded=%.1fs", recorded))
-        guard recorded >= Self.minimumDuration, let take else {
+        guard recorded >= Self.minimumDuration else {
+            onFinished(nil, reason)
+            return false
+        }
+        guard let take else {
+            SendLog.note("recording lost: the recorder gave back no file")
+            onLost()
             onFinished(nil, reason)
             return false
         }

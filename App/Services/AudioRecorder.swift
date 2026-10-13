@@ -1,7 +1,31 @@
 import AVFoundation
 
+/// The parts of AVAudioRecorder a take uses, so the pause / resume / stop rules are tested against a
+/// stand-in that behaves like the real one — in particular, iOS pausing capture by itself when a
+/// call comes in (#213; the fake that didn't do that is how a dropped take shipped to TestFlight).
+protocol AudioCapture: AnyObject {
+    var isRecording: Bool { get }
+    var url: URL { get }
+    var deviceCurrentTime: TimeInterval { get }
+    func record() -> Bool
+    func record(atTime: TimeInterval) -> Bool
+    func pause()
+    func stop()
+}
+
+extension AVAudioRecorder: AudioCapture {}
+
 final class AudioRecorder: VoiceRecorder {
-    private var recorder: AVAudioRecorder?
+    private var recorder: AudioCapture?
+    private let makeCapture: (URL, [String: Any]) throws -> AudioCapture
+
+    init(makeCapture: @escaping (URL, [String: Any]) throws -> AudioCapture = { url, settings in
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.prepareToRecord()
+        return recorder
+    }) {
+        self.makeCapture = makeCapture
+    }
     private var startTime: Date?
     /// Paused by an interruption (#213): since when, and how long all pauses so far took.
     private var pausedAt: Date?
@@ -60,8 +84,7 @@ final class AudioRecorder: VoiceRecorder {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
 
-        let newRecorder = try AVAudioRecorder(url: url, settings: settings)
-        newRecorder.prepareToRecord()
+        let newRecorder = try makeCapture(url, settings)
         // record()/record(atTime:) return false if the session isn't ready; surface that as
         // an error instead of leaving a recorder that reports isRecording == false (which
         // would later make stop() return nil and silently drop the message).
@@ -78,19 +101,27 @@ final class AudioRecorder: VoiceRecorder {
         startTime = Date().addingTimeInterval(preroll)
     }
 
-    /// A call, Siri or an alarm took the microphone (#213): keep the file, stop capturing.
+    /// A call, Siri or an alarm took the microphone (#213): keep the file, stop capturing. By the
+    /// time the app hears of it iOS has usually paused capture itself — so the pause is noted
+    /// either way. (It used to be noted only if capture was still running: on a device it never
+    /// was, the resume then did nothing while the screen said "Recording resumed", and the take
+    /// was dropped when released — found in the 2.2 (7) device pass.)
     func pause() {
-        guard let recorder, recorder.isRecording else { return }
-        recorder.pause()
+        guard let recorder, pausedAt == nil else { return }
+        if recorder.isRecording { recorder.pause() }
         pausedAt = Date()
     }
 
     /// Back into the same file. The session comes back first — the interruption deactivated it.
+    /// Throws if capture doesn't restart, so the take sends what it has rather than pretend.
     func resume(atTime startAt: TimeInterval?) throws {
-        guard let recorder, let since = pausedAt else { return }
+        guard let recorder, let since = pausedAt else {
+            throw NSError(domain: "AudioRecorder", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "Nothing to resume."])
+        }
         if startAt == nil { try AVAudioSession.sharedInstance().setActive(true) }
         let resumed = startAt.map { recorder.record(atTime: $0) } ?? recorder.record()
-        guard resumed else {
+        guard resumed, recorder.isRecording else {
             throw NSError(domain: "AudioRecorder", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "Failed to resume recording."])
         }
@@ -99,9 +130,10 @@ final class AudioRecorder: VoiceRecorder {
         pausedAt = nil
     }
 
-    /// Ends the take, paused or not — a take lifted mid-interruption is still sent (#213).
+    /// Ends the take, paused or not — a take lifted mid-interruption is still sent (#213). Whatever
+    /// iOS did to capture meanwhile, a take that started has a file: it's handed over.
     func stop() -> (url: URL, duration: Int)? {
-        guard let recorder, let start = startTime, recorder.isRecording || pausedAt != nil else { return nil }
+        guard let recorder, let start = startTime else { return nil }
         let paused = pausedTotal + (pausedAt.map { Date().timeIntervalSince($0) } ?? 0)
         let duration = max(1, Int(Date().timeIntervalSince(start) - paused))
         recorder.stop()

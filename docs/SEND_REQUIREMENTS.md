@@ -87,7 +87,7 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | # | Requirement | Tests | Status |
 |---|---|---|---|
 | T1 | Text: background + direct at once | E: `testATextGoesThroughIOSAndDirectlyAtOnce` | Covered |
-| T2 | Voice/photo: direct only after 3 s while open, or on network back / Send now; never while backgrounded | E: `testVoiceGoesThroughIOSFirstAndDirectlyOnlyAfterTheNudge`, `testNothingGoesDirectlyWhileTheAppIsBackgrounded` | Covered |
+| T2 | Voice/photo: direct only after 3 s while open, or on network back / Send now. **A message queued with the app already in the background** (a recording ended by Home or the lock) **also goes directly at once** while the app still runs — its carrier was handed over from the background, which iOS holds at its discretion. A carrier replaced in the background keeps to the backoff | E: `testVoiceGoesThroughIOSFirstAndDirectlyOnlyAfterTheNudge`, `testT2AMessageQueuedWithTheAppInTheBackgroundAlsoGoesDirectlyAtOnce`, `testT2ACarrierReplacedInTheBackgroundKeepsToTheBackoffNotDirect` | Covered (2.2 (7) device pass found the background case) |
 | T3 | The first copy to land wins; the other is cancelled; shown once | E: `testTheFirstCopyToLandWinsAndTheOtherIsDropped`, `testTheSignalREchoCountsAsDelivered`; H: `testASentMessageAppearsOnceNotTwice` | Covered |
 | T4 | Server: one request per voice/photo; dedup by `client_id` before the limit; refusals before storage | API: `MediaFileSendTests` (13) | Covered |
 | T5 | Delete while in flight: cancelled; if it lands anyway, shown as sent (D1) | E: `testDeletingAnUnsentMessageCancelsIt`, `testAMessageDeletedOnItsWayThatLandsAnywayIsShownAsSent` | Covered |
@@ -150,7 +150,7 @@ it reached iOS only from the background — low priority — and went when the a
 
 | # | Requirement | Tests | Status |
 |---|---|---|---|
-| C1 | Declined call, Siri, alarm: paused; over within 15 s → resumes into the same message (chirp, "Recording resumed") | `RecordingTakeTests.testR1ADeclinedCallWithin15sResumesIntoTheSameMessage` | Covered (PR 8); the real interruption: **Device** R1, R5 |
+| C1 | Declined call, Siri, alarm: paused; over within 15 s → resumes into the same message (chirp, "Recording resumed") | `RecordingTakeTests.testR1ADeclinedCallWithin15sResumesIntoTheSameMessage`; `AudioRecorderTests.testR1ADeclinedCallResumesCaptureEvenThoughIOSHadAlreadyPausedIt` (iOS pauses capture before the app hears; 2.2 (7) found the take dropped) | Covered (PR 8); the real interruption: **Device** R1, R5 |
 | C2 | Call answered, or over 15 s → sends what was recorded | `testR2R3AnAnsweredCallOrOneOver15sSendsWhatWasRecorded` | Covered (PR 8); **Device** R2, R3 |
 | C3 | Hold-to-talk resumes only if still held; lifted → sends | `testR4HoldToTalkLiftedDuringTheInterruptionSendsWithoutResuming` | Covered (PR 8); **Device** R4 |
 | C4 | Leaving the chat mid-recording sends the take | `testC8LeavingTheChatSendsTheTake` (take); the chat's close calls it (`BookViewModel.disconnect`) | Covered (PR 8); **Device** R8 (tap-to-talk + Back) — a UI test needs a microphone CI doesn't have |
@@ -158,6 +158,7 @@ it reached iOS only from the background — low priority — and went when the a
 | C6 | Notification sounds, AirPods/CarPlay route changes don't stop it | — | **Device** R6, R7, CarPlay checklist |
 | C7 | The send log records why each recording ended | `testEveryWayATakeEndsIsLogged` | Covered (PR 8) |
 | C8 | Under half a second → dropped; can't resume → what was recorded is sent; ends once | `testUnderHalfASecondIsDropped`, `testWhenItCantResumeWhatWasRecordedIsSent`, `testAnEndedTakeEndsOnce` | Covered (PR 8) |
+| C9 | A take long enough to keep is **never lost silently**: if the recorder gives back no file, the user is told | `RecordingTakeTests.testC9ATakeLongEnoughToKeepIsNeverLostSilently`, `testATooShortTakeIsDroppedWithoutAnError`; `AudioRecorderTests` (3) | Covered (2.2 (7) device pass) |
 
 ## Design v2: the carrier, the limit, upload slots (app)
 

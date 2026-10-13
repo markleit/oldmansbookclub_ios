@@ -9,24 +9,27 @@ final class RecordingTakeTests: XCTestCase {
     final class FakeRecorder: VoiceRecorder {
         var log: [String] = []
         var resumeFails = false
+        var noFile = false
         let file = URL(fileURLWithPath: "/tmp/take.m4a")
         func pause() { log.append("pause") }
         func resume(atTime: TimeInterval?) throws {
             if resumeFails { throw URLError(.cannotOpenFile) }
             log.append("resume")
         }
-        func stop() -> (url: URL, duration: Int)? { log.append("stop"); return (file, 1) }
+        func stop() -> (url: URL, duration: Int)? { log.append("stop"); return noFile ? nil : (file, 1) }
     }
 
     private var recorder: FakeRecorder!
     private var now = Date(timeIntervalSince1970: 1_800_000_000)
     private var timers: [(due: Date, action: @MainActor () -> Void, cancelled: Bool)] = []
     private var finished: [(kept: Bool, reason: RecordingEnd)] = []
+    private var lost = 0
 
     override func setUp() async throws {
         recorder = FakeRecorder()
         timers = []
         finished = []
+        lost = 0
     }
 
     private func startTake() -> RecordingTake {
@@ -37,6 +40,7 @@ final class RecordingTakeTests: XCTestCase {
                 self.timers.append((self.now.addingTimeInterval(delay), action, false))
                 return { [weak self] in self?.timers[index].cancelled = true }
             },
+            onLost: { [unowned self] in self.lost += 1 },
             onFinished: { [unowned self] file, reason in self.finished.append((file != nil, reason)) })
     }
 
@@ -133,5 +137,25 @@ final class RecordingTakeTests: XCTestCase {
             XCTAssertTrue(SendLog.recent(limit: 50).contains("recording ended: \(reason.rawValue)"),
                           "'\(reason.rawValue)' isn't in the send log")
         }
+    }
+
+    func testC9ATakeLongEnoughToKeepIsNeverLostSilently() {
+        // If the recorder gives back no file, the user is told — it used to vanish (2.2 (7)).
+        recorder.noFile = true
+        let take = startTake()
+        wait(20)
+        take.finish(.released)
+
+        XCTAssertEqual(lost, 1)
+        XCTAssertEqual(finished.first?.kept, false)
+        XCTAssertTrue(SendLog.recent(limit: 5).contains("recording lost"))
+    }
+
+    func testATooShortTakeIsDroppedWithoutAnError() {
+        recorder.noFile = true
+        let take = startTake()
+        wait(0.2)
+        take.finish(.released)
+        XCTAssertEqual(lost, 0, "under half a second is dropped on purpose — not an error")
     }
 }

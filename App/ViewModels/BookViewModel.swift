@@ -651,6 +651,9 @@ final class BookViewModel: ObservableObject {
                     }
                     return { task.cancel() }
                 },
+                onLost: { [weak self] in
+                    self?.errorMessage = "Your voice message couldn't be saved. Please record it again."
+                },
                 onFinished: { [weak self] file, _ in self?.takeFinished(file) })
             startRecordingTypingPings()   // broadcast "is recording audio…"
             // Let playback call sites finalize-and-send this take instead of fighting the
