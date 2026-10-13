@@ -85,6 +85,9 @@ final class SendEngine: ObservableObject {
     /// What the force-quit reminder was last set for — it's only touched when that changes.
     private var reminderBasis: SendReminder.Basis?
     private var directInFlight: Set<UUID> = []
+    /// Messages whose carrier was handed over with the app in the background — which iOS holds at
+    /// its discretion, often until the app is opened. While the app still runs, they go directly.
+    private var carrierFromBackground: Set<UUID> = []
     private var refreshedAfter401: Set<UUID> = []
     /// Book of each message the user deleted while it was unsent — a late success for one (D1)
     /// still needs to reach its chat. (A message already confirmed isn't here: its other copy's
@@ -488,7 +491,15 @@ final class SendEngine: ObservableObject {
 
         // A carrier held until the retry clock is due goes only via iOS then; the fast path retries
         // directly on that same clock (pump).
-        guard notBefore == nil, env.isAppActive() else { return }
+        guard notBefore == nil else { return }
+        guard env.isAppActive() else {
+            // Queued with the app already in the background — a recording ended by Home or the
+            // lock (2.2 (7) device pass: it waited until the app was opened). iOS holds a carrier
+            // handed over now at its discretion, so while the app still runs (iOS's ~30 s after
+            // leaving) it goes directly, at once.
+            carrierFromBackground.insert(item.id)
+            return sendDirectIfPossible(item.id)
+        }
         if built.bodyFile == nil {
             // Small JSON: also straight away, directly — never slower than before this engine.
             sendDirectIfPossible(item.id)
@@ -503,7 +514,8 @@ final class SendEngine: ObservableObject {
     }
 
     private func sendDirectIfPossible(_ id: UUID) {
-        guard env.isAppActive(), env.hasNetwork(), !directInFlight.contains(id) else { return }
+        guard env.isAppActive() || carrierFromBackground.contains(id), env.hasNetwork(),
+              !directInFlight.contains(id) else { return }
         if let (key, built) = builtPosts[id] { return sendDirect(id, key, built) }
 
         // No request in hand: after a relaunch iOS can still hold a message's background copy while
@@ -798,6 +810,7 @@ final class SendEngine: ObservableObject {
         copies[item.id] = nil
         builtPosts[item.id] = nil
         directInFlight.remove(item.id)
+        carrierFromBackground.remove(item.id)
         refreshedAfter401.remove(item.id)
     }
 

@@ -643,13 +643,8 @@ final class BookViewModel: ObservableObject {
             recordingStartTime = Date()
             take = RecordingTake(
                 recorder: audioRecorder, now: { Date() },
-                schedule: { delay, action in
-                    let task = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(delay))
-                        guard !Task.isCancelled else { return }
-                        action()
-                    }
-                    return { task.cancel() }
+                onLost: { [weak self] in
+                    self?.errorMessage = "Your voice message couldn't be saved. Please record it again."
                 },
                 onFinished: { [weak self] file, _ in self?.takeFinished(file) })
             startRecordingTypingPings()   // broadcast "is recording audio…"
@@ -704,17 +699,12 @@ final class BookViewModel: ObservableObject {
                             contentType: "audio/mp4", durationSeconds: duration, replyTo: reply)
     }
 
-    /// The interruption is over. Back within 15 s and still held: the resume chirp, then capture
-    /// continues into the same message (#213). Otherwise the take's own timer sends it, or the
-    /// system says not to resume and it's sent now.
-    private func interruptionEnded(shouldResume: Bool) async {
-        guard isRecording, let take else { return }
-        guard shouldResume else { finalizeRecording(.interrupted); return }
-        guard take.canResume else { return }
-        let resumeAt = await AudioCue.shared.playRecordStart()
-        guard self.take === take, take.canResume else { return }
-        take.resume(atTime: resumeAt)
-        if !take.isFinished { toast = Toast(text: "Recording resumed", systemImage: "mic.fill") }
+    /// A call (answered or declined), Siri, an alarm or another app's audio took the microphone
+    /// (#213): the take ends and what was recorded is sent — the same as every other way a take
+    /// ends — with a note, since the user didn't stop it. To carry on, they record again.
+    private func recordingInterrupted() {
+        guard finalizeRecording(.interrupted) else { return }
+        toast = Toast(text: "Voice message sent — record again to carry on", systemImage: "mic.fill")
     }
 
     /// Drop an in-progress take when recording is interrupted by backgrounding or a
@@ -1004,24 +994,16 @@ final class BookViewModel: ObservableObject {
                 }
             }
         }
-        // Recording interrupted by a phone call / Siri / alarm (#213): paused, not ended. Over
-        // within 15 s (a declined call), it resumes into the same message; longer (a call
-        // answered), what was recorded is sent. Before #213 `.began` sent the take at once and
-        // anything said after declining a call was lost.
+        // Recording interrupted by a call, Siri, an alarm or another app's audio (#213): the take
+        // ends and is sent (recordingInterrupted). Nothing happens when the interruption ends —
+        // resuming into the same message was tried and captured nothing on a device (2.2 (8)).
         audioInterruptionObserver = center.addObserver(
             forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
             guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
                   let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt)
-                .map(AVAudioSession.InterruptionOptions.init(rawValue:)) ?? []
-            Task { @MainActor in
-                switch type {
-                case .began: self?.take?.interruptionBegan()
-                case .ended: await self?.interruptionEnded(shouldResume: options.contains(.shouldResume))
-                @unknown default: break
-                }
-            }
+            guard type == .began else { return }
+            Task { @MainActor in self?.recordingInterrupted() }
         }
     }
 

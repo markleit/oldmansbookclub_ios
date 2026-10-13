@@ -257,15 +257,35 @@ final class SendEngineTests: XCTestCase {
         XCTAssertEqual(transport.direct.count, 1)
     }
 
-    func testNothingGoesDirectlyWhileTheAppIsBackgrounded() async throws {
+    func testT2AMessageQueuedWithTheAppInTheBackgroundAlsoGoesDirectlyAtOnce() async throws {
+        // 2.2 (7) device pass: a recording ended by Home or the lock is queued after the app has
+        // left — its carrier is handed over from the background, which iOS held until the app
+        // was opened. While the app still runs, it goes directly too: at once, no nudge.
         let engine = await started(makeEngine())
+        let name = try engine.files.importData(Data([1, 2, 3]), extension: "m4a")
         appActive = false
 
-        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        engine.enqueueMedia(.voice, bookId: book, clubId: club, fileName: name, contentType: "audio/mp4",
+                            durationSeconds: 4, replyTo: nil)
         await settle()
 
-        XCTAssertEqual(transport.background.count, 1)
-        XCTAssertEqual(transport.direct.count, 0)
+        XCTAssertEqual(transport.background.count, 1, "the carrier, as always")
+        XCTAssertEqual(transport.direct.count, 1, "and directly, while the app still runs")
+    }
+
+    func testT2ACarrierReplacedInTheBackgroundKeepsToTheBackoffNotDirect() async throws {
+        let engine = await started(makeEngine())
+        transport.directResponse = { _ in SendResponse(status: 503) }   // the server's down
+        engine.enqueueText(bookId: book, clubId: club, body: "hello", replyTo: nil)
+        await settle()
+        let direct = transport.direct.count
+
+        appActive = false
+        transport.finish(0, status(503))   // the server's down; iOS's copy fails while suspended
+        await settle()
+
+        XCTAssertEqual(transport.background.count, 2)
+        XCTAssertEqual(transport.direct.count, direct, "a failing server isn't hit again before the clock says")
     }
 
     func testMessagesGoInParallelNotInALine() async throws {

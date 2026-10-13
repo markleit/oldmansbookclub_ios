@@ -38,6 +38,7 @@ later build that touches sending.
 | V2 | Pick a video, press Home while it's preparing, come back after 10 s | Preparing carries on and Send appears; nothing was sent while you were away |
 | V3 | Pick a video over 5 minutes | "Video is too long (max 5 minutes)…" before anything is sent; the composer is cleared |
 | V4 | Pick a video, tap ✕ on it while preparing | Removed; nothing sent |
+| V6 | Film a video with the in-app camera (+ → Camera); have someone call mid-filming; decline | iOS's camera stops filming and offers what was filmed (Use Video / Retake); Use Video → it's prepared → Send works. Nothing is sent without Send |
 | V5 | Open a chat in a **different club** (if you have one), send a video while offline | Same as M5 for that club (each club keeps its own slots) |
 
 ## 3. Upgrade and old clients (P1)
@@ -48,18 +49,19 @@ later build that touches sending.
 | U2 | On the Mac (2.1): send a text, voice, photo and video to the chat | All arrive on the phone (2.2); the Mac's video still works its old way |
 | U3 | On the Mac (2.1), look at what the phone sent in M5 and M9 | Everything is there (the Mac orders by arrival — expected for 2.1) |
 
-## 4. Recording interruptions (#213) (P1)
+## 4. Recording: whatever ends it sends it (#213) (P1)
 
 | ID | Steps | Expected |
 |---|---|---|
-| R1 | Record a voice message; have someone call; **decline** within 15 s | Recording resumes into the same message ("Recording resumed"); one message with both parts |
-| R2 | Record; **answer** the call | What was recorded before the call is sent |
-| R3 | Record; let a call ring past 15 s and decline | What was recorded is sent; no resume |
-| R4 | Hold-to-talk: hold, get a call, lift your finger during it, decline | Sent without resuming |
-| R5 | Record; trigger Siri or an alarm | Resumes within 15 s, or sends what was recorded |
-| R6 | Record while a notification sound plays; connect/disconnect AirPods mid-recording | Recording carries on |
-| R7 | Tap-to-talk: start recording, tap Back | The recording is sent |
-| R8 | Record, then lock the phone | What was recorded is sent |
+| R1 | Record a voice message; have someone call; **decline** | What you recorded before the call is sent; a note says "Voice message sent — record again to carry on" |
+| R2 | Record; **answer** the call | The same: what you recorded is sent |
+| R3 | Hold-to-talk: hold, get a call, then lift your finger | One message (what was recorded before the call); the mic works normally for the next recording |
+| R4 | Record; trigger Siri, then an alarm (separately) | Each sends what was recorded, with the note |
+| R5 | Record while a notification sound plays; connect/disconnect AirPods mid-recording | Recording carries on |
+| R6 | Tap-to-talk: start recording, tap Back | Sent |
+| R7 | Record, then press Home | **Arrives without reopening the app** |
+| R8 | Record, then lock the phone | **Arrives without unlocking** |
+| R9 | Record, then tap a voice message (or video) to play it | The recording is sent; the other message plays |
 
 ## 5. Share sheet and forward (P2)
 

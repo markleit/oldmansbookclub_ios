@@ -1,11 +1,31 @@
 import AVFoundation
 
+/// The parts of AVAudioRecorder a take uses, so the stop rule is tested against a stand-in that
+/// behaves like the real one — in particular, iOS stopping capture by itself when a call comes in
+/// (#213; the fake that didn't do that is how a dropped take shipped to TestFlight).
+protocol AudioCapture: AnyObject {
+    var isRecording: Bool { get }
+    var url: URL { get }
+    var deviceCurrentTime: TimeInterval { get }
+    func record() -> Bool
+    func record(atTime: TimeInterval) -> Bool
+    func stop()
+}
+
+extension AVAudioRecorder: AudioCapture {}
+
 final class AudioRecorder: VoiceRecorder {
-    private var recorder: AVAudioRecorder?
+    private var recorder: AudioCapture?
+    private let makeCapture: (URL, [String: Any]) throws -> AudioCapture
+
+    init(makeCapture: @escaping (URL, [String: Any]) throws -> AudioCapture = { url, settings in
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        recorder.prepareToRecord()
+        return recorder
+    }) {
+        self.makeCapture = makeCapture
+    }
     private var startTime: Date?
-    /// Paused by an interruption (#213): since when, and how long all pauses so far took.
-    private var pausedAt: Date?
-    private var pausedTotal: TimeInterval = 0
 
     // Set by BookViewModel while a recording is in progress. Playback call sites invoke this
     // before touching AVAudioSession so an active recording is finalized-and-sent first, rather
@@ -60,8 +80,7 @@ final class AudioRecorder: VoiceRecorder {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
 
-        let newRecorder = try AVAudioRecorder(url: url, settings: settings)
-        newRecorder.prepareToRecord()
+        let newRecorder = try makeCapture(url, settings)
         // record()/record(atTime:) return false if the session isn't ready; surface that as
         // an error instead of leaving a recorder that reports isRecording == false (which
         // would later make stop() return nil and silently drop the message).
@@ -78,38 +97,16 @@ final class AudioRecorder: VoiceRecorder {
         startTime = Date().addingTimeInterval(preroll)
     }
 
-    /// A call, Siri or an alarm took the microphone (#213): keep the file, stop capturing.
-    func pause() {
-        guard let recorder, recorder.isRecording else { return }
-        recorder.pause()
-        pausedAt = Date()
-    }
-
-    /// Back into the same file. The session comes back first — the interruption deactivated it.
-    func resume(atTime startAt: TimeInterval?) throws {
-        guard let recorder, let since = pausedAt else { return }
-        if startAt == nil { try AVAudioSession.sharedInstance().setActive(true) }
-        let resumed = startAt.map { recorder.record(atTime: $0) } ?? recorder.record()
-        guard resumed else {
-            throw NSError(domain: "AudioRecorder", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "Failed to resume recording."])
-        }
-        let preroll = startAt.map { max(0, $0 - recorder.deviceCurrentTime) } ?? 0
-        pausedTotal += Date().timeIntervalSince(since) + preroll
-        pausedAt = nil
-    }
-
-    /// Ends the take, paused or not — a take lifted mid-interruption is still sent (#213).
+    /// Ends the take and hands over its file. A take that started has a file whatever iOS did to
+    /// capture meanwhile — a call stops capture before the app hears of it (#213; 2.2 (7) found a
+    /// take dropped because this required capture to be running).
     func stop() -> (url: URL, duration: Int)? {
-        guard let recorder, let start = startTime, recorder.isRecording || pausedAt != nil else { return nil }
-        let paused = pausedTotal + (pausedAt.map { Date().timeIntervalSince($0) } ?? 0)
-        let duration = max(1, Int(Date().timeIntervalSince(start) - paused))
+        guard let recorder, let start = startTime else { return nil }
+        let duration = max(1, Int(Date().timeIntervalSince(start)))
         recorder.stop()
         let url = recorder.url
         self.recorder = nil
         self.startTime = nil
-        self.pausedAt = nil
-        self.pausedTotal = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return (url, duration)
     }
@@ -125,8 +122,6 @@ final class AudioRecorder: VoiceRecorder {
         recorder.stop()
         self.recorder = nil
         self.startTime = nil
-        self.pausedAt = nil
-        self.pausedTotal = 0
         try? FileManager.default.removeItem(at: url)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
