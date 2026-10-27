@@ -3,7 +3,7 @@ using System.Net;
 namespace BookClubApi.Tests.Infrastructure;
 
 /// Intercepts an outbound HttpClient so tests never reach a third party. Used for the named
-/// "apns" and "github" clients.
+/// "apns", "github" and "google-books" clients.
 ///
 /// It records requests rather than merely blocking them, which is the point: real APNs delivery
 /// can't be tested without a device, but the payload the server *builds* — alert text, badge
@@ -17,6 +17,10 @@ public sealed class StubHttpHandler : HttpMessageHandler
     /// Overridable per test; defaults to APNs' success shape (200, empty body).
     public Func<HttpRequestMessage, string, HttpResponseMessage> Responder { get; set; } =
         (_, _) => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("") };
+
+    /// Google Books' answer for a query that matched nothing (200, no "items").
+    public static readonly Func<HttpRequestMessage, string, HttpResponseMessage> NoGoogleBooksMatches =
+        (_, _) => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"kind":"books#volumes","totalItems":0}""") };
 
     public IReadOnlyList<(HttpRequestMessage Request, string Body)> Requests
     {
