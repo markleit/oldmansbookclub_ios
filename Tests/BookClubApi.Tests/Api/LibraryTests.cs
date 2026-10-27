@@ -206,6 +206,111 @@ public class LibraryTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
     }
 
+    private Task<HttpResponseMessage> PutSeriesOrder(TestUser admin, Guid clubId, string series, params Guid[] ids) =>
+        admin.Client.PutAsJsonAsync("/books/series-order", new
+        {
+            club_id = clubId, series_name = series, ordered_book_ids = ids
+        });
+
+    private async Task<int?[]> SeriesOrders(params Guid[] ids)
+    {
+        await using var db = App.NewDbContext();
+        var result = new int?[ids.Length];
+        for (var i = 0; i < ids.Length; i++) result[i] = (await db.Books.FindAsync(ids[i]))!.SeriesOrder;
+        return result;
+    }
+
+    [Fact]
+    public async Task A_series_spanning_two_sections_can_be_reordered_one_section_at_a_time()
+    {
+        // The Reading Order screen groups a series per section, so it sends only that section's
+        // books. Before the fix this compared against the whole series and always 409'd.
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var dune = await CreateBookAsync(club.Id, "Dune", "past", seriesName: "Dune", seriesOrder: 0);
+        var messiah = await CreateBookAsync(club.Id, "Dune Messiah", "future", seriesName: "Dune", seriesOrder: 1);
+        var children = await CreateBookAsync(club.Id, "Children of Dune", "future", seriesName: "Dune", seriesOrder: 2);
+
+        var response = await PutSeriesOrder(admin, club.Id, "Dune", children.Id, messiah.Id);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        // The future books swap within the positions they held; the past book keeps its place.
+        Assert.Equal([0, 2, 1], await SeriesOrders(dune.Id, messiah.Id, children.Id));
+    }
+
+    [Fact]
+    public async Task A_section_reorder_keeps_the_rest_of_the_series_in_place_around_it()
+    {
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var a = await CreateBookAsync(club.Id, "A", "future", seriesName: "Dune", seriesOrder: 0);
+        var b = await CreateBookAsync(club.Id, "B", "past", seriesName: "Dune", seriesOrder: 1);
+        var c = await CreateBookAsync(club.Id, "C", "future", seriesName: "Dune", seriesOrder: 2);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await PutSeriesOrder(admin, club.Id, "Dune", c.Id, a.Id)).StatusCode);
+
+        Assert.Equal([2, 1, 0], await SeriesOrders(a.Id, b.Id, c.Id));
+    }
+
+    [Fact]
+    public async Task A_section_reorder_with_a_stale_book_set_is_still_refused()
+    {
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        await CreateBookAsync(club.Id, "Dune", "past", seriesName: "Dune", seriesOrder: 0);
+        var messiah = await CreateBookAsync(club.Id, "Dune Messiah", "future", seriesName: "Dune", seriesOrder: 1);
+        await CreateBookAsync(club.Id, "Children of Dune", "future", seriesName: "Dune", seriesOrder: 2);
+
+        // Only one of the two future books: someone added one since this list was loaded.
+        Assert.Equal(HttpStatusCode.Conflict, (await PutSeriesOrder(admin, club.Id, "Dune", messiah.Id)).StatusCode);
+        Assert.Equal([1], await SeriesOrders(messiah.Id));
+    }
+
+    [Fact]
+    public async Task A_series_reorder_mixing_sections_or_naming_another_book_is_refused()
+    {
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var dune = await CreateBookAsync(club.Id, "Dune", "past", seriesName: "Dune", seriesOrder: 0);
+        var messiah = await CreateBookAsync(club.Id, "Dune Messiah", "future", seriesName: "Dune", seriesOrder: 1);
+        var children = await CreateBookAsync(club.Id, "Children of Dune", "future", seriesName: "Dune", seriesOrder: 2);
+        var other = await CreateBookAsync(club.Id, "Hyperion", "future");
+
+        Assert.Equal(HttpStatusCode.Conflict, (await PutSeriesOrder(admin, club.Id, "Dune", messiah.Id, dune.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await PutSeriesOrder(admin, club.Id, "Dune", children.Id, messiah.Id, other.Id)).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await PutSeriesOrder(admin, club.Id, "Dune", children.Id, children.Id)).StatusCode);
+        Assert.Equal([0, 1, 2], await SeriesOrders(dune.Id, messiah.Id, children.Id));
+    }
+
+    [Fact]
+    public async Task A_differently_capitalized_series_is_not_part_of_the_reorder()
+    {
+        // The app groups series case-sensitively; SQL Server's collation doesn't. A "dune" book
+        // must not make "Dune" look stale.
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var one = await CreateBookAsync(club.Id, "Dune", "future", seriesName: "Dune", seriesOrder: 0);
+        var two = await CreateBookAsync(club.Id, "Dune Messiah", "future", seriesName: "Dune", seriesOrder: 1);
+        var lower = await CreateBookAsync(club.Id, "Dune (lowercase)", "future", seriesName: "dune", seriesOrder: 0);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await PutSeriesOrder(admin, club.Id, "Dune", two.Id, one.Id)).StatusCode);
+        Assert.Equal([1, 0, 0], await SeriesOrders(one.Id, two.Id, lower.Id));
+    }
+
+    [Fact]
+    public async Task A_series_with_missing_positions_is_renumbered_rather_than_colliding()
+    {
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var a = await CreateBookAsync(club.Id, "A", "past", seriesName: "Dune", seriesOrder: 5);
+        var b = await CreateBookAsync(club.Id, "B", "future", seriesName: "Dune", seriesOrder: null, addedAt: DateTime.UtcNow.AddDays(-2));
+        var c = await CreateBookAsync(club.Id, "C", "future", seriesName: "Dune", seriesOrder: null, addedAt: DateTime.UtcNow.AddDays(-1));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await PutSeriesOrder(admin, club.Id, "Dune", c.Id, b.Id)).StatusCode);
+
+        Assert.Equal([0, 2, 1], await SeriesOrders(a.Id, b.Id, c.Id));
+    }
+
     [Fact]
     public async Task Re_saving_the_same_series_does_not_move_the_book_to_the_end_of_it()
     {

@@ -503,18 +503,42 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .AnyAsync(m => m.UserId == UserId && m.ClubId == request.ClubId && m.IsClubAdmin);
         if (!isClubAdmin) return Forbid();
 
-        var books = await db.Books
-            .Where(b => b.ClubId == request.ClubId && b.SeriesName == request.SeriesName)
-            .ToListAsync();
+        // Ordinal match in memory: SQL Server's collation would also pull in "dune", which the
+        // app shows as a different series.
+        var series = (await db.Books
+                .Where(b => b.ClubId == request.ClubId && b.SeriesName == request.SeriesName)
+                .ToListAsync())
+            .Where(b => b.SeriesName == request.SeriesName)
+            .OrderBy(b => b.SeriesOrder ?? int.MaxValue).ThenBy(b => b.AddedAt).ThenBy(b => b.Id)
+            .ToList();
 
-        if (books.Count != request.OrderedBookIds.Count ||
-            !books.Select(b => b.Id).ToHashSet().SetEquals(request.OrderedBookIds))
+        // The app's Reading Order screen groups a series within each section (current / future /
+        // past), so it sends only that section's books. Accept exactly the series' books in one
+        // status, or the whole series. Anything else is a stale list (someone added, removed or
+        // moved a book meanwhile) and is refused rather than partially applied. Comparing against
+        // the whole series only made every series that spans two sections impossible to reorder.
+        var sent = request.OrderedBookIds.ToHashSet();
+        var sameSection = series.Where(b => sent.Contains(b.Id)).Select(b => b.Status).Distinct().ToList();
+        var expected = sameSection.Count == 1 && series.Count(b => sent.Contains(b.Id)) != series.Count
+            ? series.Where(b => b.Status == sameSection[0]).ToList()
+            : series;
+        if (sent.Count != request.OrderedBookIds.Count || expected.Count != sent.Count ||
+            !expected.Select(b => b.Id).ToHashSet().SetEquals(sent))
         {
             return Conflict("This series changed — refresh and try again.");
         }
 
+        // The sent books take the series positions they already occupy, in their new order;
+        // the rest of the series keeps its place. Renumbered 0..n-1 first so missing or
+        // duplicate SeriesOrder values can't collide.
+        var slots = new List<int>();
+        for (var i = 0; i < series.Count; i++)
+        {
+            if (sent.Contains(series[i].Id)) slots.Add(i);
+            else series[i].SeriesOrder = i;
+        }
         for (var i = 0; i < request.OrderedBookIds.Count; i++)
-            books.First(b => b.Id == request.OrderedBookIds[i]).SeriesOrder = i;
+            series.First(b => b.Id == request.OrderedBookIds[i]).SeriesOrder = slots[i];
 
         await db.SaveChangesAsync();
         return NoContent();
