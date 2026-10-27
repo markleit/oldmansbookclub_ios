@@ -44,6 +44,8 @@ public abstract class IntegrationTestBase(TestAppFixture fixture) : IAsyncLifeti
         Hub.Clear();
         Apns.Clear();
         App.GitHub.Clear();
+        App.GoogleBooks.Clear();
+        App.GoogleBooks.Responder = StubHttpHandler.NoGoogleBooksMatches;
         Blob.NextBlobSize = null;
         Blob.ClearRecorded();
         RateLimiter.Reset();

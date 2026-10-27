@@ -81,6 +81,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     public RecordingHubContext Hub { get; } = new();
     public StubHttpHandler Apns { get; } = new();
     public StubHttpHandler GitHub { get; } = new();
+    public StubHttpHandler GoogleBooks { get; } = new() { Responder = StubHttpHandler.NoGoogleBooksMatches };
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -132,6 +133,7 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
             services.AddHttpClient("apns").ConfigurePrimaryHttpMessageHandler(() => Apns);
             services.AddHttpClient("apns-sandbox").ConfigurePrimaryHttpMessageHandler(() => Apns);
             services.AddHttpClient("github").ConfigurePrimaryHttpMessageHandler(() => GitHub);
+            services.AddHttpClient("google-books").ConfigurePrimaryHttpMessageHandler(() => GoogleBooks);
         });
     }
 

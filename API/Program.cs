@@ -75,6 +75,8 @@ builder.Services.AddHttpClient("github", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("oldmansbookclub-api");
     client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
 });
+builder.Services.AddHttpClient("google-books", client =>
+    client.BaseAddress = new Uri("https://www.googleapis.com/books/v1/"));
 builder.Services.AddHttpClient("apns", client =>
 {
     client.BaseAddress = new Uri("https://api.push.apple.com");

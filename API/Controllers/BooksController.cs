@@ -209,59 +209,78 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .ToListAsync();
     }
 
+    // 503 when Google Books didn't answer, so "no matches" and "Google is down" are no longer the
+    // same empty list (#211). Shipped clients already treat any failure here as no results.
     [HttpGet("search")]
-    public async Task<IEnumerable<BookSearchResult>> SearchBooks([FromQuery] string q)
+    public async Task<ActionResult<IEnumerable<BookSearchResult>>> SearchBooks([FromQuery] string q)
     {
-        if (string.IsNullOrWhiteSpace(q)) return [];
-        var volumes = await FetchGoogleBooksAsync(q);
-        return volumes.Select(v => new BookSearchResult(v.Title, v.Author, v.CoverUrl)).ToList();
+        if (string.IsNullOrWhiteSpace(q)) return Ok(Array.Empty<BookSearchResult>());
+        var search = await FetchGoogleBooksAsync(q);
+        if (search.Unavailable) return StatusCode(StatusCodes.Status503ServiceUnavailable, "Google Books is unavailable.");
+        return Ok(search.Volumes.Select(v => new BookSearchResult(v.Title, v.Author, v.CoverUrl)).ToList());
     }
 
     // A parsed Google Books volume with the fields we care about.
     private record GoogleVolume(string Title, string Author, string? CoverUrl, string? Description, int? PublishedYear, int? PageCount);
 
-    // Shared Google Books fetch + parse, used by both search and the lazy metadata
-    // enrichment. Returns [] on any failure (caller degrades gracefully).
-    private async Task<List<GoogleVolume>> FetchGoogleBooksAsync(string q)
+    // Volumes is empty both for "no matches" and for "Google didn't answer"; Unavailable tells them apart.
+    private record GoogleBooksSearch(List<GoogleVolume> Volumes, bool Unavailable);
+
+    // Shared Google Books search by title, used by both search and the lazy metadata enrichment.
+    // Tries a title-only query first, then the plain title: since Oct 2026 Google returns no
+    // results at all for field-qualified queries (intitle:, inauthor:, isbn:) — "intitle:Dune"
+    // finds nothing while "Dune" finds hundreds — and every search came back empty.
+    // Keeping intitle: first means the tighter matching comes back by itself if Google fixes it.
+    private async Task<GoogleBooksSearch> FetchGoogleBooksAsync(string title)
+    {
+        var byTitle = await QueryGoogleBooksAsync($"intitle:{title}");
+        if (byTitle.Unavailable || byTitle.Volumes.Count > 0) return byTitle;
+        return await QueryGoogleBooksAsync(title);
+    }
+
+    // One Google Books volumes query. Never throws: a failure comes back as Unavailable.
+    private async Task<GoogleBooksSearch> QueryGoogleBooksAsync(string q)
     {
         var apiKey = config["GoogleBooks:ApiKey"];
-        var url = $"https://www.googleapis.com/books/v1/volumes?q=intitle:{Uri.EscapeDataString(q)}&maxResults=20&printType=books";
+        var url = $"volumes?q={Uri.EscapeDataString(q)}&maxResults=20&printType=books";
         if (!string.IsNullOrEmpty(apiKey)) url += $"&key={apiKey}";
 
-        var client = http.CreateClient();
-        HttpResponseMessage response;
-        try { response = await client.GetAsync(url); }
+        var client = http.CreateClient("google-books");
+        try
+        {
+            using var response = await client.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                var body = await response.Content.ReadAsStringAsync();
+                logger.LogWarning("Google Books returned {Status}: {Body}", (int)response.StatusCode, body[..Math.Min(500, body.Length)]);
+                return new([], Unavailable: true);
+            }
+
+            var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            if (!json.TryGetProperty("items", out var items)) return new([], Unavailable: false);
+            return new(items.EnumerateArray().Select(ParseVolume).ToList(), Unavailable: false);
+        }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Google Books HTTP request failed");
-            return [];
+            logger.LogError(ex, "Google Books request failed");
+            return new([], Unavailable: true);
         }
+    }
 
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync();
-            logger.LogWarning("Google Books returned {Status}: {Body}", (int)response.StatusCode, body[..Math.Min(500, body.Length)]);
-            return [];
-        }
-
-        var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
-        if (!json.TryGetProperty("items", out var items)) return [];
-
-        return items.EnumerateArray().Select(item =>
-        {
-            var info = item.GetProperty("volumeInfo");
-            var title = info.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
-            var author = info.TryGetProperty("authors", out var a) && a.GetArrayLength() > 0
-                ? a[0].GetString() ?? "" : "";
-            string? coverUrl = null;
-            if (info.TryGetProperty("imageLinks", out var links) &&
-                links.TryGetProperty("thumbnail", out var thumb))
-                coverUrl = EnlargeCover(thumb.GetString());
-            var description = info.TryGetProperty("description", out var d) ? d.GetString() : null;
-            int? year = info.TryGetProperty("publishedDate", out var pd) ? ParseYear(pd.GetString()) : null;
-            int? pages = info.TryGetProperty("pageCount", out var pc) && pc.TryGetInt32(out var p) ? p : null;
-            return new GoogleVolume(title, author, coverUrl, description, year, pages);
-        }).ToList();
+    private static GoogleVolume ParseVolume(System.Text.Json.JsonElement item)
+    {
+        var info = item.GetProperty("volumeInfo");
+        var title = info.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+        var author = info.TryGetProperty("authors", out var a) && a.GetArrayLength() > 0
+            ? a[0].GetString() ?? "" : "";
+        string? coverUrl = null;
+        if (info.TryGetProperty("imageLinks", out var links) &&
+            links.TryGetProperty("thumbnail", out var thumb))
+            coverUrl = EnlargeCover(thumb.GetString());
+        var description = info.TryGetProperty("description", out var d) ? d.GetString() : null;
+        int? year = info.TryGetProperty("publishedDate", out var pd) ? ParseYear(pd.GetString()) : null;
+        int? pages = info.TryGetProperty("pageCount", out var pc) && pc.TryGetInt32(out var p) ? p : null;
+        return new GoogleVolume(title, author, coverUrl, description, year, pages);
     }
 
     // Normalize a Google Books thumbnail URL to https (required by ATS). NOTE: do not
@@ -350,7 +369,8 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
 
         if (book.MetadataFetchedAt is null)
         {
-            var match = (await FetchGoogleBooksAsync(book.Title)).FirstOrDefault();
+            var search = await FetchGoogleBooksAsync(book.Title);
+            var match = search.Volumes.FirstOrDefault();
             if (match is not null)
             {
                 book.Description ??= match.Description;
@@ -358,8 +378,13 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
                 book.PageCount ??= match.PageCount;
                 if (!string.IsNullOrEmpty(match.CoverUrl)) book.CoverBlobUrl = match.CoverUrl;
             }
-            book.MetadataFetchedAt = DateTime.UtcNow;   // mark attempted, even if no match
-            await db.SaveChangesAsync();
+            // Mark attempted even with no match — but not when Google didn't answer, so the next
+            // open tries again instead of leaving the book without details for good.
+            if (!search.Unavailable)
+            {
+                book.MetadataFetchedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
         }
 
         return await ToDtoAsync(book);
@@ -405,7 +430,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             {
                 try
                 {
-                    var match = (await FetchGoogleBooksAsync(book.Title)).FirstOrDefault();
+                    var match = (await FetchGoogleBooksAsync(book.Title)).Volumes.FirstOrDefault();
                     if (match is not null)
                     {
                         book.Description ??= match.Description;
