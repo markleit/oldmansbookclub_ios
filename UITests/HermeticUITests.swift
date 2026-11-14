@@ -250,13 +250,14 @@ final class HermeticChatUITests: HermeticTestCase {
     }
 
     // #204 PR 6 (H15, O6) — a message held up by an outage arrives with an older tap time: it's
-    // placed there, out of sight of someone reading at the bottom, so the chat says so.
+    // placed there, out of sight of someone reading at the bottom, so the chat says so. #275: it's
+    // unread (it arrived after the reader's marker), which is what puts it on the pill.
     func testH15ALateArrivalGoesAtItsTapTimeWithANewMessageAboveChip() throws {
         func seconds(_ s: Int) -> String { String(format: "2026-09-01T12:%02d:%02d.000Z", s / 60, s % 60) }
         let earlier: [[String: Any]] = (0..<30).map { ["body": "message \($0)", "sent_at": seconds($0 * 10)] }
         try setMessages(earlier)
         launch()
-        openCurrentBook()   // seen: the chat is cached as it was
+        openCurrentBook()   // opening marks these read
         XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10))
         app.navigationBars.buttons.element(boundBy: 0).tap()
 
@@ -273,6 +274,46 @@ final class HermeticChatUITests: HermeticTestCase {
         chip.tap()
         XCTAssertTrue(app.staticTexts["held up by an outage"].waitForExistence(timeout: 5), "the chip didn't jump to it")
         XCTAssertTrue(waitForDisappearance(chip, timeout: 5), "the chip stays once the message is seen")
+    }
+
+    // #275 (O6, D2 option b) — away for a while: you land at the newest, and the unread messages
+    // above the screen are one tap away, starting with the oldest.
+    func testO6ABacklogAboveTheScreenGetsAnUnreadPillThatGoesToTheOldest() throws {
+        func seconds(_ s: Int) -> String { String(format: "2026-09-01T12:%02d:%02d.000Z", s / 60, s % 60) }
+        try setMessages((0..<30).map { ["body": "message \($0)", "sent_at": seconds($0 * 10)] })
+        launch()
+        openCurrentBook()
+        XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10), "didn't land at the newest")
+
+        let pill = app.buttons["newMessageAboveChip"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10), "no pill for unread messages above the screen")
+        XCTAssertTrue(pill.label.contains("unread"), "pill reads '\(pill.label)'")
+        pill.tap()
+        let oldest = app.staticTexts["message 0"]
+        XCTAssertTrue(oldest.waitForExistence(timeout: 5) && oldest.isHittable, "the pill didn't go to the oldest unread")
+        XCTAssertTrue(waitForDisappearance(pill, timeout: 5), "the pill stays once nothing unread is above")
+    }
+
+    // #275 (O6) — voice is unread until heard, like the library number: skipped on one visit, it's
+    // still pointed at on the next, after opening has marked everything else read.
+    func testO6AVoiceMessageSkippedOnAnEarlierVisitStillGetsThePill() throws {
+        func seconds(_ s: Int) -> String { String(format: "2026-09-01T12:%02d:%02d.000Z", s / 60, s % 60) }
+        let voice: [String: Any] = ["type": "Voice", "sent_at": seconds(0)]
+        try setMessages([voice] + (1..<30).map { ["body": "message \($0)", "sent_at": seconds($0 * 10)] })
+        launch()
+        openCurrentBook()   // first visit: lands at the newest; the voice message is far above, unplayed
+        XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        openCurrentBook()   // text is read now; the voice message isn't
+        XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10))
+        let pill = app.buttons["newMessageAboveChip"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10), "an unheard voice message above the screen got no pill")
+        XCTAssertTrue(pill.label.contains("1 unread"), "pill reads '\(pill.label)'")
+        pill.tap()
+        let play = app.buttons.matching(identifier: "voicePlayButton").firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 5) && play.isHittable, "the pill didn't go to the voice message")
+        XCTAssertTrue(waitForDisappearance(pill, timeout: 5))
     }
 
     func testTheChatRendersTheMessagesTheServerReturned() throws {

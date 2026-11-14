@@ -472,7 +472,9 @@ final class APIClient {
 
     /// `includeLate`: the newest page also brings messages tapped before it but received recently
     /// (#204 — held up by an outage), so they can be shown at their tap time.
-    func getMessages(bookId: UUID, before: Date? = nil, limit: Int = 50, includeLate: Bool = false) async throws -> [Message] {
+    static let messagePageSize = 50
+
+    func getMessages(bookId: UUID, before: Date? = nil, limit: Int = APIClient.messagePageSize, includeLate: Bool = false) async throws -> [Message] {
         var path = "/books/\(bookId)/messages?limit=\(limit)"
         if includeLate && before == nil { path += "&include_late=true" }
         if let before {
@@ -503,6 +505,20 @@ final class APIClient {
     // cache on load so heard/unread state is consistent across devices (#102).
     func myHeardMessageIds(bookId: UUID) async throws -> [UUID] {
         try await get(path: "/books/\(bookId)/my-heard")
+    }
+
+    // #275 — the caller's unread messages in a book, newest first: what the library number counts
+    // (text/photos/video from others that arrived after the read marker, plus voice not yet heard).
+    // Fetch before moving the marker (markRead), or the list no longer has what this open covers.
+    struct BookUnreadDto: Decodable {
+        struct Ref: Decodable { let id: UUID; let sentAt: Date }
+        let unreadCount: Int
+        let messages: [Ref]
+    }
+
+    func unreadMessages(bookId: UUID) async throws -> [UnreadAbove.Ref] {
+        let dto: BookUnreadDto = try await get(path: "/books/\(bookId)/unread")
+        return dto.messages.map { UnreadAbove.Ref(id: $0.id, sentAt: $0.sentAt) }
     }
 
     // MARK: - Feedback (admin / club-admin only; backed by GitHub issues)

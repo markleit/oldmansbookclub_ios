@@ -41,6 +41,18 @@ enum ChatCache {
         return (sorted, reconciled)
     }
 
+    /// Keep an existing saved chat in step with a send confirmed while that chat isn't open (A2).
+    /// With no saved chat (never opened on this phone, or iOS purged its caches) nothing is written:
+    /// a "saved chat" of just this one message would be what the next open starts from (#275).
+    @discardableResult
+    static func addConfirmed(_ message: Message, bookId: UUID, myUserId: UUID?, waitForWrite: Bool = false) -> Bool {
+        let existing = load(bookId: bookId)
+        guard !existing.isEmpty else { return false }
+        let merged = merge(existing: existing, incoming: [message], myUserId: myUserId)
+        save(merged.messages, bookId: bookId, excludingPending: [], waitForWrite: waitForWrite)
+        return true
+    }
+
     /// Persist the newest `maxCachedMessages`, excluding still-pending optimistic sends (their ids
     /// aren't confirmed by the server yet, so persisting them would resurrect ghosts on reload).
     /// `waitForWrite` forces the encode+write to complete before returning — required on a

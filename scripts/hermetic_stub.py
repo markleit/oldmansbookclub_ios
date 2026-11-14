@@ -66,6 +66,9 @@ def _fresh_state():
             # #204 — scripted responses per "METHOD /path" glob, consumed in order; and a switch
             # that makes the whole server unreachable (every non-control request is dropped).
             "scripts": {}, "down": False,
+            # #275 — the reader's read state, as the server keeps it: the read marker per book (the
+            # message last seen; it only moves to a later arrival) and the voice messages heard.
+            "read_marker": {}, "heard": set(),
             # #204 — bumped by every reset (each test's setUp). Tokens carry it; see _stale().
             "epoch": 0}
 
@@ -79,6 +82,12 @@ _state = _fresh_state()
 # field set here that the server doesn't have is an error.
 with open(os.path.join(ROOT, "Tests", "contract", "message_minimal_rest.json")) as _f:
     _MESSAGE_KEYS = list(json.load(_f).keys())
+
+
+# #275 — the unread list's shape, from its contract fixture too.
+with open(os.path.join(ROOT, "Tests", "contract", "book_unread_rest.json")) as _f:
+    _UNREAD = json.load(_f)
+    _UNREAD_KEYS, _UNREAD_REF_KEYS = sorted(_UNREAD.keys()), sorted(_UNREAD["messages"][0].keys())
 
 
 def _dto(**fields):
@@ -252,6 +261,33 @@ def _echo_file(query, content_type):
 
 
 _MESSAGES_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/messages$")
+_UNREAD_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/unread$")
+_READ_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/read$")
+_HEARD_ONE_ROUTE = re.compile(r"^/books/[0-9a-fA-F-]{36}/messages/([0-9a-fA-F-]{36})/heard$")
+_HEARD_BATCH_ROUTE = re.compile(r"^/books/[0-9a-fA-F-]{36}/heard$")
+_HEARD_ALL_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/heard/all$")
+
+
+def _book_messages(book):
+    """The seeded history of a book, as the app receives it (every seeded message is from Dixie)."""
+    items = _state["messages"] if book == CURRENT_BOOK_ID else _state["other_messages"].get(book, [])
+    return [_message(item, i) for i, item in enumerate(items)]
+
+
+def _unread(book):
+    """#275 — the server's rule (UnreadCalculator): text/photo/video that arrived after the read
+    marker's message arrived, plus voice not yet heard; newest first by tap time."""
+    messages = _book_messages(book)
+    marker = next((m for m in messages if m["id"] == _state["read_marker"].get(book)), None)
+    seen_at = marker["received_at"] if marker else ""
+    unread = [m for m in messages
+              if (m["id"] not in _state["heard"] if m["type"] == "Voice" else m["received_at"] > seen_at)]
+    unread.sort(key=lambda m: (m["sent_at"], m["id"]), reverse=True)
+    payload = {"unread_count": len(unread),
+               "messages": [{"id": m["id"], "sent_at": m["sent_at"]} for m in unread]}
+    assert sorted(payload.keys()) == _UNREAD_KEYS, payload.keys()
+    assert all(sorted(r.keys()) == _UNREAD_REF_KEYS for r in payload["messages"])
+    return payload
 _VIDEO_ROUTE = re.compile(r"^/books/([0-9a-fA-F-]{36})/messages/video$")
 
 
@@ -422,6 +458,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with _lock:
                 saved = list(_state["saved"])
             return self._send_json([_saved(item, i) for i, item in enumerate(saved)])
+        match = _UNREAD_ROUTE.match(route)
+        if match:
+            with _lock:
+                return self._send_json(_unread(match.group(1).lower()))
+
         match = _MESSAGES_ROUTE.match(route)
         if match:
             with _lock:
@@ -589,6 +630,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send_json({
                 "upload_url": f"http://127.0.0.1:{PORT}/_stub/upload/{blob}.mp4",
                 "media_url": media_url, "message": None})
+
+        # #275 — read state, kept like the server's so /unread answers like it. Replies unchanged ({}):
+        # the app copes with a reply that has no count, and tests don't depend on the stub's.
+        match = _READ_ROUTE.match(route)
+        if match and self.command == "POST":
+            book, message_id = match.group(1).lower(), json.loads(body) if body else None
+            with _lock:
+                by_id = {m["id"]: m for m in _book_messages(book)}
+                current = by_id.get(_state["read_marker"].get(book))
+                incoming = by_id.get(message_id)
+                # Only ever forward, by arrival (MarkRead).
+                if incoming and (current is None or incoming["received_at"] > current["received_at"]):
+                    _state["read_marker"][book] = message_id
+            return self._send_json({})
+        match = _HEARD_ONE_ROUTE.match(route)
+        if match and self.command == "POST":
+            with _lock:
+                _state["heard"].add(match.group(1).lower())
+            return self._send_json({})
+        if _HEARD_BATCH_ROUTE.match(route) and self.command == "POST":
+            with _lock:
+                _state["heard"].update(i.lower() for i in (json.loads(body) if body else []))
+            return self._send_json({})
+        match = _HEARD_ALL_ROUTE.match(route)
+        if match and self.command == "POST":
+            with _lock:
+                _state["heard"].update(m["id"] for m in _book_messages(match.group(1).lower()) if m["type"] == "Voice")
+            return self._send_json({})
 
         # Edit Book (incl. the 2.1 cover change): record what was sent, answer with the book.
         if self.command == "PATCH" and route == f"/books/{CURRENT_BOOK_ID}":
