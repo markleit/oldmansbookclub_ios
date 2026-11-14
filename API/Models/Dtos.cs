@@ -132,6 +132,11 @@ public record SetSeriesOrderRequest(Guid ClubId, string SeriesName, List<Guid> O
 public record SetTranscriptRequest(string Transcript);
 public record ReportDto(Guid Id, Guid MessageId, string ReporterName, string SenderName, MessageType MessageType, string? MessageBody, DateTime SentAt, DateTime ReportedAt);
 public record ChatReadDto(Guid UserId, string DisplayName, string? AvatarUrl, Guid LastSeenMessageId, List<Guid> HeardMessageIds);
+
+// #275 — the caller's unread messages in one book (UnreadCalculator's rule), newest first. Backs the
+// chat's "↑ N unread" pill; UnreadCount is the same number the books list shows.
+public record UnreadMessageRef(Guid Id, DateTime SentAt);
+public record BookUnreadDto(int UnreadCount, List<UnreadMessageRef> Messages);
 public record CreateFeedbackRequest(string Title, string Body, string? AppVersion = null);
 public record FeedbackDto(int Number, string Title, string State, string HtmlUrl, DateTime CreatedAt);
 

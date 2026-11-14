@@ -115,7 +115,7 @@ preset list and the `.dev`-app isolation this enables.
 | `AuthController` | `/auth` | Sign in with Apple, demo/dev login, token refresh, account deletion |
 | `UsersController` | `/users` | Own profile, blocking |
 | `ClubsController` | `/clubs` | Club CRUD, public listing, membership |
-| `BooksController` | `/books` | Book CRUD per club, reorder, unread counts |
+| `BooksController` | `/books` | Book CRUD per club, reorder, unread counts, the caller's unread messages per book (`/books/{id}/unread`, #275) |
 | `MessagesController` | `/messages`, `/books/{id}/messages` | Send/list/save/report messages, transcripts |
 | `ChatHub` | SignalR (`/hubs/chat`) | Real-time messaging |
 | `MediaController` | `/media` | SAS URL generation for blob uploads |
@@ -132,7 +132,7 @@ preset list and the `.dev`-app isolation this enables.
 | `AppleTokenValidator` | Validates Sign in with Apple identity tokens; exchanges authorization code for refresh token; revokes token on account deletion |
 | `BlobService` | Generates upload/read SAS URLs for Azure Blob Storage; stores voice/photo files sent as a request body |
 | `MessageSendService` | Validation, persistence, and broadcast for a sent message — shared by `ChatHub` and `MessagesController` |
-| `UnreadCalculator` | Unread-count formula: others' messages that *arrived* after the read marker's message arrived (#204: `ReceivedAt`, not `SentAt`), plus voice tracked independently until heard; shared by the books list and push badge counts |
+| `UnreadCalculator` | Unread-count formula: others' messages that *arrived* after the read marker's message arrived (#204: `ReceivedAt`, not `SentAt`), plus voice tracked independently until heard; shared by the books list, push badge counts and the chat's unread list (#275) |
 | `HubRateLimiter` | Per-user, in-memory, fixed-window send limit (30/min) for both the REST send and the legacy hub sends; reports how long until the window resets (→ `Retry-After`) |
 | `RateLimitPolicies` | HTTP rate-limit partitions: `auth` per IP (10/min), `media` upload links per user (30/min). Authentication runs before the limiter so the user is known |
 | `NotificationService` | Sends APNs push notifications (join requests, approvals, new messages) |

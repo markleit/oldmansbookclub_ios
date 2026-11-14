@@ -209,6 +209,21 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             .ToListAsync();
     }
 
+    // #275 — the caller's own unread messages in a book, newest first: what the library number counts
+    // (text/photo/video from others that arrived after the read marker, plus voice not yet heard).
+    // The chat fetches this on open, before it moves the read marker, to point "↑ N unread" at the
+    // oldest one above the screen.
+    [HttpGet("{bookId}/unread")]
+    public async Task<ActionResult<BookUnreadDto>> GetUnread(Guid bookId)
+    {
+        var book = await db.Books.FindAsync(bookId);
+        if (book is null) return NotFound();
+        if (!await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId)) return Forbid();
+
+        var unread = await UnreadCalculator.InBookAsync(db, UserId, bookId);
+        return new BookUnreadDto(unread.Count, unread);
+    }
+
     // 503 when Google Books didn't answer, so "no matches" and "Google is down" are no longer the
     // same empty list (#211). Shipped clients already treat any failure here as no results.
     [HttpGet("search")]
