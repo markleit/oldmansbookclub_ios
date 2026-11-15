@@ -1371,6 +1371,7 @@ struct VoiceMessageBubble: View {
                             .frame(width: isPlaying ? 44 : 36, height: isPlaying ? 44 : 36)
                     }
                 }
+                .accessibilityIdentifier("voiceTranscriptButton")
             }
         }
         .frame(maxWidth: isPlaying ? .infinity : 180)

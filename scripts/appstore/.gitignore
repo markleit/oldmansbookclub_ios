@@ -1,0 +1,4 @@
+# App Store screenshot pipeline: generated and per-run files
+assets/
+preview/
+.stage.json
