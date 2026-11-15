@@ -423,7 +423,11 @@ final class ZoomingImageScrollView: UIScrollView {
         }
         analysis?.analysis = nil
         analysisTask = Task { @MainActor [weak self] in
-            let config = ImageAnalyzer.Configuration([.text, .machineReadableCode, .visualLookUp])
+            // Visual Look Up (identify plants, landmarks, …) needs iOS 17; the app supports 16.
+            // Xcode 27's SDK makes the missing availability check an error rather than a warning.
+            var types: ImageAnalyzer.AnalysisTypes = [.text, .machineReadableCode]
+            if #available(iOS 17.0, *) { types.insert(.visualLookUp) }
+            let config = ImageAnalyzer.Configuration(types)
             guard let result = try? await ImageAnalyzer().analyze(image, configuration: config),
                   !Task.isCancelled else { return }
             self?.analysis?.analysis = result
