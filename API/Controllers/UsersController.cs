@@ -130,12 +130,12 @@ public class UsersController(AppDbContext db, BlobService blob) : ControllerBase
         Guid.Parse(User.FindFirst("sub")?.Value
             ?? throw new UnauthorizedAccessException());
 
-    private const string AllowedBlobHost = "oldmansbookclubstore.blob.core.windows.net";
-
-    private static bool IsOwnBlobUrl(string url) =>
+    // #210: this server's own storage account — prod's in production, the dev account in
+    // Development (#120). A hardcoded prod host rejected every avatar saved against the dev API.
+    private bool IsOwnBlobUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
         uri.Scheme == "https" &&
-        uri.Host == AllowedBlobHost;
+        uri.Host == blob.AccountHost;
 
     private async Task<UserDto[]> BuildDtos(IList<User> users)
     {
