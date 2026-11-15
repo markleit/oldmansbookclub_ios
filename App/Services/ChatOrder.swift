@@ -39,20 +39,4 @@ enum ChatOrder {
     static func latestArrival(in messages: [Message]) -> Message? {
         messages.max { ($0.receivedAt ?? $0.sentAt) < ($1.receivedAt ?? $1.sentAt) }
     }
-
-    /// Superseded by `UnreadAbove` (#275): "new since the saved copy" isn't "unread" — a partial saved
-    /// chat makes old messages look new, and a push-prefetched late arrival looks seen. No longer
-    /// drives the chat's pill.
-    ///
-    /// What "↑ New message above" pointed at: of the messages from others new since `previous`, the
-    /// oldest that landed above what was already the newest — out of sight of someone reading at the
-    /// bottom. Nil on a first load (nothing was seen before) and when everything new is at the bottom.
-    static func arrivedAbove(previous: [Message], current: [Message], me: UUID?) -> UUID? {
-        guard let previousNewest = previous.first else { return nil }
-        let known = Set(previous.map(\.id))
-        return current
-            .filter { !known.contains($0.id) && $0.senderId != me && isNewer(previousNewest, than: $0) }
-            .min { isNewer($1, than: $0) }   // the oldest
-            .map(\.id)
-    }
 }

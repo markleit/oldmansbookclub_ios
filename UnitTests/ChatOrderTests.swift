@@ -2,7 +2,8 @@ import XCTest
 @testable import OldMansBookClub
 
 /// #204 PR 6 (U12; docs/SEND_REQUIREMENTS.md O3, O5, O6) — every chat is in tap-time order,
-/// whatever order messages arrive in; a late arrival is flagged and counts as new.
+/// whatever order messages arrive in; a late arrival is merged at its tap time. Whether it's unread
+/// (the "↑ N unread" pill) is UnreadAboveTests' (#275).
 final class ChatOrderTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
     private let me = UUID(), dixie = UUID(), club = UUID()
@@ -70,27 +71,5 @@ final class ChatOrderTests: XCTestCase {
     func testWithoutArrivalTimesTheReadMarkerFallsBackToTapTime() {
         // Messages from a server before 2.2 carry no received_at.
         XCTAssertEqual(ChatOrder.latestArrival(in: [message(10, body: "a"), message(30, body: "c")])?.body, "c")
-    }
-
-    // MARK: - O6: "↑ New message above"
-
-    func testTheChipPointsAtTheOldestNewMessageFromOthersAboveWhatWasSeen() {
-        let previous = [message(30, body: "c"), message(10, body: "a")]
-        let lateOld = message(12, body: "late-old"), lateNew = message(25, body: "late-new")
-        let current = ChatOrder.sorted(previous + [lateOld, lateNew])
-
-        XCTAssertEqual(ChatOrder.arrivedAbove(previous: previous, current: current, me: me), lateOld.id,
-                       "reading down from the oldest covers the rest")
-    }
-
-    func testNoChipForNewMessagesAtTheBottomForMyOwnOrOnAFirstLoad() {
-        let previous = [message(30), message(10)]
-        let atBottom = message(40)
-        let mine = message(20, from: me)
-
-        XCTAssertNil(ChatOrder.arrivedAbove(previous: previous, current: ChatOrder.sorted(previous + [atBottom]), me: me),
-                     "the bottom is where the reader is — the usual 'New message' pill covers it")
-        XCTAssertNil(ChatOrder.arrivedAbove(previous: previous, current: ChatOrder.sorted(previous + [mine]), me: me))
-        XCTAssertNil(ChatOrder.arrivedAbove(previous: [], current: previous, me: me), "nothing was seen before")
     }
 }
