@@ -216,6 +216,34 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertTrue(waitForDisappearance(unsent, timeout: 15), "the Library's count clears once it's sent")
     }
 
+    /// #189 (seen on 2.0 (3)): a text sent right after opening a chat, while the chat's first load
+    /// was still in flight, vanished when that load failed — the load replaced the list with the
+    /// saved chat, dropping the new bubble. Here the load hangs for 5 s and then fails (the server
+    /// is down by then); the message must still be on screen, waiting, and go once it's back.
+    /// #189: a message sent into a chat with nothing loaded — here the server is down from the
+    /// start, so the chat's load fails and there's no saved chat — was hidden behind "No discussion
+    /// yet" (that view checked the confirmed messages only). It must show at once, waiting, and go
+    /// once the server is back.
+    func test189AMessageSentIntoAnEmptyChatShowsWhileTheServerIsDown() throws {
+        launch(extraArguments: fastTimings)
+        try setServerDown(true)
+        openCurrentBook()
+        let failed = app.alerts["Error"]
+        XCTAssertTrue(failed.waitForExistence(timeout: 20), "the chat's load should fail with the server down")
+        failed.buttons["OK"].tap()
+
+        send("into an empty chat")
+
+        let bubble = app.staticTexts["into an empty chat"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 5), "the unsent message is hidden")
+        XCTAssertFalse(app.staticTexts["No discussion yet. Start the conversation!"].exists)
+        XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "it should show it's waiting")
+
+        try setServerDown(false)
+        XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "into an empty chat")
+        XCTAssertTrue(bubble.exists, "the message stays on screen once sent")
+    }
+
     func testServerErrorsAreRetriedAutomatically() throws {
         try script("POST /books/*/messages", Array(repeating: ["status": 503], count: 4))
         launch(extraArguments: fastTimings)

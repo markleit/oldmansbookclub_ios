@@ -68,7 +68,10 @@ struct BookDetailView: View {
 
             if viewModel.isLoadingMessages {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.messages.isEmpty {
+            } else if viewModel.visibleMessages.isEmpty {
+                // #189: visibleMessages, not messages — `messages` holds only what the server has
+                // confirmed, so a message sent into an empty chat (a new book, or nothing loaded
+                // with the server unreachable) sat hidden behind this text until it was confirmed.
                 Text("No discussion yet. Start the conversation!")
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
