@@ -41,6 +41,11 @@ struct AddBookView: View {
     @State private var showingCoverPhotoPicker = false
     @State private var coverPickerItem: PhotosPickerItem?
     @State private var isFindingCovers = false
+    // #211: the last search couldn't be done (Google Books down, offline) — said so, instead of
+    // looking exactly like "no such book".
+    @State private var searchUnavailable = false
+    private static let searchUnavailableText =
+        "Book search isn't available right now. Try again in a bit, or type the author yourself."
 
     var body: some View {
         NavigationStack {
@@ -58,7 +63,11 @@ struct AddBookView: View {
                 } header: {
                     Text("Title")
                 } footer: {
-                    if !isEditing {
+                    if searchUnavailable && !isEditing {
+                        Text(Self.searchUnavailableText)
+                            .foregroundColor(.orange)
+                            .accessibilityIdentifier("bookSearchUnavailable")
+                    } else if !isEditing {
                         Text("Start typing to search for cover art and author.")
                     }
                 }
@@ -205,6 +214,7 @@ struct AddBookView: View {
         guard t.count >= 2 else {
             author = ""
             coverUrl = nil
+            searchUnavailable = false
             return
         }
         searchTask = Task {
@@ -217,8 +227,13 @@ struct AddBookView: View {
     private func runSearch(title: String) async {
         isSearching = true
         defer { isSearching = false }
-        let results = await APIClient.shared.searchBooks(title: title)
+        let outcome = await APIClient.shared.searchBooks(title: title)
         guard !Task.isCancelled else { return }
+        guard case .results(let results) = outcome else {
+            searchUnavailable = true
+            return
+        }
+        searchUnavailable = false
         searchResults = results
         // Preview author/cover from the top match as you type, but DON'T touch the
         // title — that only changes when you explicitly pick a result below.
@@ -235,7 +250,12 @@ struct AddBookView: View {
         guard t.count >= 2 else { return }
         isFindingCovers = true
         defer { isFindingCovers = false }
-        searchResults = await APIClient.shared.searchBooks(title: t)
+        errorMessage = nil
+        guard case .results(let results) = await APIClient.shared.searchBooks(title: t) else {
+            errorMessage = "Book search isn't available right now. Try again in a bit, or choose a photo instead."
+            return
+        }
+        searchResults = results
         if searchResults.contains(where: { $0.coverUrl != nil }) {
             showingPicker = true
         } else {

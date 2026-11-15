@@ -568,6 +568,59 @@ final class HermeticChatUITests: HermeticTestCase {
         XCTAssertEqual(patches.count, 1)
         XCTAssertNil(patches.first?["cover_url"], "an untouched cover must be left out of the edit")
     }
+
+    /// #211 — when the book search can't be done (Google Books down: our API answers 503), Add Book
+    /// says so instead of looking exactly like "no such book"; the next search that does answer
+    /// (the stub's normal one: no matches) takes the message away again.
+    func testAddBookSaysSoWhenBookSearchIsUnavailable() throws {
+        try controlRequest(path: "/_stub/script", method: "POST",
+                           jsonBody: ["route": "GET /books/search", "responses": [["status": 503]]])
+        launch()
+        let menu = app.buttons["libraryMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15), "Library never rendered from the stub")
+        menu.tap()
+        let add = app.buttons["Add Book"]
+        XCTAssertTrue(add.waitForExistence(timeout: 5), "library menu has no Add Book")
+        add.tap()
+
+        let titleField = app.textFields["bookTitleField"]
+        XCTAssertTrue(titleField.waitForExistence(timeout: 10), "Add Book sheet never appeared")
+        titleField.tap()
+        titleField.typeText("Dune")
+        let unavailable = app.staticTexts["bookSearchUnavailable"]
+        XCTAssertTrue(unavailable.waitForExistence(timeout: 10),
+                      "a failed search showed nothing: \((try? requestedPaths()) ?? [])")
+
+        titleField.typeText(" Messiah")
+        let answered = Date().addingTimeInterval(10)
+        while try requestedPaths().filter({ $0.hasPrefix("GET /books/search") }).count < 2, Date() < answered {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+        XCTAssertTrue(unavailable.waitForNonExistence(timeout: 10),
+                      "the message stayed after a search that worked")
+    }
+
+    /// #211 — the same for Edit Book → Change Cover → Search Google Books.
+    func testEditBookCoverSearchSaysSoWhenBookSearchIsUnavailable() throws {
+        try controlRequest(path: "/_stub/script", method: "POST",
+                           jsonBody: ["route": "GET /books/search", "responses": [["status": 503]]])
+        launch()
+        openCurrentBook()
+        let menu = app.buttons["bookMenuButton"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        menu.tap()
+        let edit = app.buttons["Edit Book"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 5), "book menu has no Edit Book")
+        edit.tap()
+        let change = app.buttons["changeCoverMenu"]
+        XCTAssertTrue(change.waitForExistence(timeout: 10), "Edit Book has no Change Cover")
+        change.tap()
+        app.buttons["Search Google Books"].tap()
+
+        let message = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'available right now'")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10), "a failed cover search showed nothing")
+        XCTAssertFalse(app.staticTexts["No Google Books covers found for this title."].exists)
+    }
 }
 
 /// CI shard 2 (#204 C1): the photo viewer, Save to Photos, sharing, swiping, multi-photo sends.
