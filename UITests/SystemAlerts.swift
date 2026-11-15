@@ -35,7 +35,9 @@ enum SystemAlerts {
         // are the prompt that actually covers the login screen. "While Using the App" is the
         // microphone and local-network wording, which the voice and device lanes need.
         for label in ["Allow", "Allow While Using App", "OK", "Continue"] where alert.buttons[label].exists {
-            alert.buttons[label].tap()
+            // firstMatch: iOS 27.2 lists some alert buttons twice (same identifier), and tapping an
+            // ambiguous query fails with "Multiple matching elements found".
+            alert.buttons[label].firstMatch.tap()
             // A clean install can queue several in a row (notifications, then local network).
             dismissAny(timeout: 2)
             return true
