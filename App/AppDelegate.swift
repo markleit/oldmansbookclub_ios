@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         DiagnosticsReporter.shared.start()
         // Screen/lifecycle trail attached to the crashed process's next MetricKit report.
         Breadcrumbs.start()
+        // #273 — on a Mac, keep Metal's shader-cache locks from getting the app killed when hidden.
+        MacSuspensionGuard.start()
         // #203 — send-path trail (also attached to in-app Feedback).
         SendLog.start()
         // #178 — hand the Share extension what it can't read from this app's own UserDefaults.
