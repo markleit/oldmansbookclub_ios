@@ -5,9 +5,10 @@ using BookClubApi.Tests.Infrastructure;
 
 namespace BookClubApi.Tests.Api;
 
-/// #175–#177: the auto-filed issue lost the frames that mattered (the payload is a root-first
-/// tree and truncation cut the innermost end) and couldn't say which screen froze. These pin the
-/// issue body the server builds — the only place a developer ever sees the diagnostic.
+/// #175–#177: the auto-filed issue couldn't say which screen froze. #283: it also listed the frames
+/// backwards — MetricKit's tree is INNERMOST first (the root frame is the top of the stack, each
+/// subFrame its caller) and the server reversed it, so the 40-frame cut dropped the innermost end.
+/// These pin the issue body the server builds — the only place a developer ever sees the diagnostic.
 public class DiagnosticsTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
 {
     /// No open issues → a new one is filed; the created issue echoes back as #1.
@@ -19,7 +20,8 @@ public class DiagnosticsTests(TestAppFixture fixture) : IntegrationTestBase(fixt
                 : """{"number": 1, "title": "t", "html_url": "https://example/1"}""")
         };
 
-    /// A root-first tree: Root → Middle → Leaf, with a lighter sibling branch that must be skipped.
+    /// MetricKit's shape: the root frame is the innermost (Top), its subFrames are callers
+    /// (Caller → Start), with a lighter sibling caller that must be skipped.
     private static string Payload() => JsonSerializer.Serialize(new
     {
         callStackTree = new
@@ -34,14 +36,14 @@ public class DiagnosticsTests(TestAppFixture fixture) : IntegrationTestBase(fixt
                     {
                         new
                         {
-                            binaryName = "Root", offsetIntoBinaryTextSegment = 10, sampleCount = 5,
+                            binaryName = "Top", offsetIntoBinaryTextSegment = 10, sampleCount = 5,
                             subFrames = new object[]
                             {
                                 new { binaryName = "LightBranch", offsetIntoBinaryTextSegment = 20, sampleCount = 1 },
                                 new
                                 {
-                                    binaryName = "Middle", offsetIntoBinaryTextSegment = 30, sampleCount = 4,
-                                    subFrames = new[] { new { binaryName = "Leaf", offsetIntoBinaryTextSegment = 40, sampleCount = 4 } }
+                                    binaryName = "Caller", offsetIntoBinaryTextSegment = 30, sampleCount = 4,
+                                    subFrames = new[] { new { binaryName = "Start", offsetIntoBinaryTextSegment = 40, sampleCount = 4 } }
                                 }
                             }
                         }
@@ -77,11 +79,37 @@ public class DiagnosticsTests(TestAppFixture fixture) : IntegrationTestBase(fixt
 
         var body = FiledIssueBody();
         Assert.Contains("Screen trail (crashed process):** `+0s launch → +40s tab Admin → +55s background`", body);
-        Assert.Contains("0  Leaf +40\n1  Middle +30\n2  Root +10", body);   // innermost first, heaviest path
+        Assert.Contains("0  Top +10\n1  Caller +30\n2  Start +40", body);   // innermost first, heaviest path
         Assert.DoesNotContain("LightBranch +20\n", body.Split("<details>")[0]);
         Assert.DoesNotContain("OtherThread", body.Split("<details>")[0]);
         Assert.True(body.IndexOf("Innermost frames", StringComparison.Ordinal) < body.IndexOf("<details>", StringComparison.Ordinal),
             "the frame summary must come before the (truncatable) payload dump");
+    }
+
+    /// #283 — a stack deeper than the 40 shown keeps its INNERMOST frames (where the app actually
+    /// was) and drops the outer ones (run loop, main, start).
+    [Fact]
+    public async Task A_deep_stack_keeps_the_innermost_frames_and_drops_the_outer_ones()
+    {
+        GitHubWithNoOpenIssues();
+        var club = await CreateClubAsync();
+        var user = await CreateUserAsync("Mark", club.Id);
+        // Built by hand: 45 nested frames is deeper than System.Text.Json's default limit of 64
+        // levels — which the server's own parse used to hit too (#283).
+        var frames = "";
+        for (var i = 44; i >= 0; i--)   // F0 is the root frame (innermost); F44 the outermost caller
+            frames = "{\"binaryName\":\"F" + i + "\",\"offsetIntoBinaryTextSegment\":" + i + ",\"sampleCount\":1"
+                     + (frames == "" ? "" : ",\"subFrames\":[" + frames + "]") + "}";
+        var payload = "{\"callStackTree\":{\"callStacks\":[{\"threadAttributed\":true,\"callStackRootFrames\":[" + frames + "]}]}}";
+
+        var response = await user.Client.PostAsJsonAsync("/diagnostics", Report(payload, null), Json);
+
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+        var summary = FiledIssueBody().Split("<details>")[0];
+        Assert.Contains("0  F0 +0\n1  F1 +1", summary);
+        Assert.Contains("39  F39 +39", summary);
+        Assert.Contains("… 5 outer frames omitted", summary);
+        Assert.DoesNotContain("F44 +44", summary);
     }
 
     [Fact]

@@ -94,16 +94,21 @@ public class DiagnosticsController(GitHubService github) : ControllerBase
     }
 
     // MetricKit's callStackTree: callStacks[] (one per thread; `threadAttributed` marks the one
-    // blamed), each a tree of callStackRootFrames → subFrames, OUTERMOST first. Walk the
-    // attributed thread down its heaviest path (max sampleCount — hang reports hold several
-    // samples) and return that path innermost-first. Null if the payload doesn't parse or has
+    // blamed), each a tree of callStackRootFrames → subFrames, INNERMOST first: the root frame is
+    // the top of the stack and each subFrame is its caller (#283 — confirmed against the same
+    // crash's .ips: root libsystem_kernel +3104 = mach_msg2_trap, deepest subFrame dyld = start;
+    // this used to reverse it, printing outermost-first and cutting the innermost frames). Walk
+    // the attributed thread down its heaviest path (max sampleCount — hang reports hold several
+    // samples) and return that path as is. Null if the payload doesn't parse or has
     // no stack; never throws — a malformed payload must not stop the issue being filed.
     internal static string? InnermostFrames(string payloadJson)
     {
         if (string.IsNullOrWhiteSpace(payloadJson)) return null;
         try
         {
-            using var doc = JsonDocument.Parse(payloadJson);
+            // Each frame is two JSON levels (subFrames array + frame), so the default MaxDepth of 64
+            // rejected any stack deeper than ~30 frames — exactly the deep watchdog stacks (#283).
+            using var doc = JsonDocument.Parse(payloadJson, new JsonDocumentOptions { MaxDepth = 2048 });
             if (!doc.RootElement.TryGetProperty("callStackTree", out var tree)
                 || !tree.TryGetProperty("callStacks", out var stacks)
                 || stacks.ValueKind != JsonValueKind.Array) return null;
@@ -130,7 +135,6 @@ public class DiagnosticsController(GitHubService github) : ControllerBase
             }
             if (path.Count == 0) return null;
 
-            path.Reverse();
             var sb = new StringBuilder();
             foreach (var (line, i) in path.Take(MaxInnermostFrames).Select((l, i) => (l, i)))
                 sb.Append(i).Append("  ").AppendLine(line);
