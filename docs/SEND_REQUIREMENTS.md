@@ -45,6 +45,8 @@ Tests: `E:` SendEngineTests · `P:` SendPolicyTests · `O:` OutboxTests · `C:` 
 | O8 | Equal tap times keep a stable order | API: `MessagesTests.Messages_with_the_same_SentAt_return_in_a_stable_deterministic_order` (#156) | Covered; paging across equal times: #227 |
 | O9 | Older history pages on from the edge of the newest page, not from a late arrival in the first fetch (which would skip everything between); pages already held are passed over (#275) | `PageFloorTests` (2) | Partial — the multi-page loop calls the network directly (not injectable) and the stub doesn't paginate |
 | O10 | A send confirmed with its chat closed updates the saved chat only if there is one; it never creates a saved chat of just that message (#275) | `ChatCacheAddConfirmedTests` (2) | Covered |
+| O11 | A message sent into a chat with nothing in it yet — a new book, or nothing loaded with the server unreachable — **shows at once** (waiting), not hidden behind "No discussion yet" (#189) | H: `test189AMessageSentIntoAnEmptyChatShowsWhileTheServerIsDown` | Covered (#189, found on 2.0 (3), still there until 2.3) |
+| O12 | A chat load that fails **never interrupts** (no alert — it took the keyboard mid-typing and lost the rest). The banner says so: with a saved chat "Can't reach the server — showing saved messages", with none "Can't reach the server — messages will show when it's back" (and not "No discussion yet"). No automatic retry: it reloads when the phone's network comes back or the chat is reopened (Mark, 2026-11-15: #286 options 1a, 3b) | H: `test286AFailedLoadDoesNotInterruptTyping`, `test286AFailedLoadWithASavedChatShowsItWithTheBanner`, `test189AMessageSentIntoAnEmptyChatShowsWhileTheServerIsDown` | Covered (#286) |
 
 ## What the sender sees
 

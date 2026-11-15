@@ -216,6 +216,77 @@ final class HermeticSendUITests: HermeticTestCase {
         XCTAssertTrue(waitForDisappearance(unsent, timeout: 15), "the Library's count clears once it's sent")
     }
 
+    /// #189 (seen on 2.0 (3)): a text sent right after opening a chat, while the chat's first load
+    /// was still in flight, vanished when that load failed — the load replaced the list with the
+    /// saved chat, dropping the new bubble. Here the load hangs for 5 s and then fails (the server
+    /// is down by then); the message must still be on screen, waiting, and go once it's back.
+    /// #189: a message sent into a chat with nothing loaded — here the server is down from the
+    /// start, so the chat's load fails and there's no saved chat — was hidden behind "No discussion
+    /// yet" (that view checked the confirmed messages only). It must show at once, waiting, and go
+    /// once the server is back.
+    func test189AMessageSentIntoAnEmptyChatShowsWhileTheServerIsDown() throws {
+        launch(extraArguments: fastTimings)
+        try setServerDown(true)
+        openCurrentBook()
+        // #286: the failed load says so in the banner — no alert.
+        let banner = indicator("chatOfflineBanner")
+        XCTAssertTrue(banner.waitForExistence(timeout: 20), "the chat's load should fail with the server down")
+        XCTAssertEqual(banner.label, "Can't reach the server — messages will show when it's back")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "a failed load must not interrupt with an alert")
+        XCTAssertFalse(app.staticTexts["No discussion yet. Start the conversation!"].exists,
+                       "nothing loaded isn't the same as no discussion")
+
+        send("into an empty chat")
+
+        let bubble = app.staticTexts["into an empty chat"]
+        XCTAssertTrue(bubble.waitForExistence(timeout: 5), "the unsent message is hidden")
+        XCTAssertFalse(app.staticTexts["No discussion yet. Start the conversation!"].exists)
+        XCTAssertTrue(indicator("waitingSendIndicator").waitForExistence(timeout: 15), "it should show it's waiting")
+
+        try setServerDown(false)
+        XCTAssertEqual(try waitForSent(1, timeout: 30).first?["body"] as? String, "into an empty chat")
+        XCTAssertTrue(bubble.exists, "the message stays on screen once sent")
+    }
+
+    /// #286: a chat load that fails while someone is typing must not take the keyboard. It used to
+    /// pop an alert, and the rest of what they typed went nowhere ("sent while loading" became
+    /// "sent while l"). Here the load hangs, then fails, between the two halves of the message.
+    func test286AFailedLoadDoesNotInterruptTyping() throws {
+        // Every message load fails (the first after hanging 4 s): iOS retries a GET once by itself
+        // when the connection is lost, and opening the chat loads more than once.
+        try script("GET /books/*/messages", [["delay": 4, "drop": true]] + Array(repeating: ["drop": true], count: 6))
+        launch(extraArguments: fastTimings)
+        openCurrentBook()
+
+        let field = app.textViews["messageTextField"]
+        field.tap()
+        field.typeText("first half")
+        XCTAssertTrue(indicator("chatOfflineBanner").waitForExistence(timeout: 15), "the load should fail and say so")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "a failed load must not interrupt with an alert")
+        field.typeText(" second half")
+        app.buttons["sendButton"].tap()
+
+        XCTAssertEqual(try waitForSent(1, timeout: 20).first?["body"] as? String, "first half second half")
+    }
+
+    /// #286: with a saved chat, a failed load keeps showing it, and the banner says so.
+    func test286AFailedLoadWithASavedChatShowsItWithTheBanner() throws {
+        launch()
+        openCurrentBook()   // loads and saves the chat
+        XCTAssertTrue(app.staticTexts["Second seeded message"].waitForExistence(timeout: 10))
+        app.terminate()
+
+        try setServerDown(true)
+        launch(freshState: false)
+        openCurrentBook()
+
+        let banner = indicator("chatOfflineBanner")
+        XCTAssertTrue(banner.waitForExistence(timeout: 20), "the chat's load should fail with the server down")
+        XCTAssertEqual(banner.label, "Can't reach the server — showing saved messages")
+        XCTAssertTrue(app.staticTexts["Second seeded message"].exists, "the saved chat should still show")
+        XCTAssertFalse(app.alerts.firstMatch.exists)
+    }
+
     func testServerErrorsAreRetriedAutomatically() throws {
         try script("POST /books/*/messages", Array(repeating: ["status": 503], count: 4))
         launch(extraArguments: fastTimings)
