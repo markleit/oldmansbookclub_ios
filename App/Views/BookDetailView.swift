@@ -153,20 +153,21 @@ struct BookDetailView: View {
                         }
                     }
                     .overlay(alignment: .top) {
-                        // #204 PR 6 — someone else's message landed above what you'd seen (a late
-                        // arrival, or an upload tapped earlier that finished later). Shown while
-                        // it's out of sight; tap to jump to it.
-                        if let above = viewModel.newMessageAboveId,
-                           !(entryScrollSettled && visibleMessageIds.contains(above)) {
+                        // #275 (D2) — unread messages above the screen, as the server counts them
+                        // (voice until heard): a backlog you landed below, a late arrival, or one
+                        // that came in out of order while you're here. Tap for the oldest.
+                        if entryScrollSettled, let pill = viewModel.unreadPill(onScreen: visibleMessageIds) {
                             Button {
-                                withAnimation(.easeOut(duration: 0.25)) {
-                                    proxy.scrollTo(above, anchor: .center)
+                                Task {
+                                    guard await viewModel.loadThrough(pill.target) else { return }
+                                    withAnimation(.easeOut(duration: 0.25)) {
+                                        proxy.scrollTo(pill.target, anchor: .top)
+                                    }
                                 }
-                                viewModel.newMessageAboveId = nil
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.up")
-                                    Text("New message above")
+                                    Text("\(pill.count) unread")
                                         .font(.caption.weight(.semibold))
                                 }
                                 .padding(.horizontal, 14)
@@ -181,12 +182,14 @@ struct BookDetailView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
-                    // Seen by scrolling to it: the chip has done its job.
+                    // On screen = seen: it stops counting for "↑ N unread" (#275). Not during the
+                    // entry scroll, which passes over messages on its way to the newest.
                     .onChange(of: visibleMessageIds) { ids in
                         guard entryScrollSettled else { return }
-                        if let above = viewModel.newMessageAboveId, ids.contains(above) {
-                            viewModel.newMessageAboveId = nil
-                        }
+                        viewModel.markSeen(ids)
+                    }
+                    .onChange(of: entryScrollSettled) { settled in
+                        if settled { viewModel.markSeen(visibleMessageIds) }
                     }
                     // Always scroll to newest on entry. Multiple attempts handle the
                     // cache→fresh-fetch transition and the LazyVStack layout-pass timing.
@@ -493,6 +496,7 @@ struct BookDetailView: View {
                 )
                 HeardStore.shared.markHeard(unheard.map(\.id), bookId: viewModel.book.id)
                 UnreadStore.shared.zero(bookId: viewModel.book.id)
+                viewModel.clearUnreadPill()
                 let latestId = ChatOrder.latestArrival(in: viewModel.visibleMessages.filter { $0.sendState == nil })?.id
                 Task {
                     await ReceiptQueue.shared.markAllHeard(bookId: viewModel.book.id)

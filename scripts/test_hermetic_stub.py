@@ -252,5 +252,64 @@ class StubTests(unittest.TestCase):
                          ("2026-09-01T09:00:00.000Z", "2026-09-01T12:00:00.000Z"))
 
 
+    # ---- read state and the unread list (#275) -----------------------------------------------
+
+    BOOK = "/books/66666666-6666-6666-6666-666666666666"
+
+    def unread(self):
+        status, _, body = self.request("GET", f"{self.BOOK}/unread")
+        self.assertEqual(status, 200)
+        return body
+
+    def test_the_unread_list_has_the_servers_shape(self):
+        with open(os.path.join(ROOT, "Tests", "contract", "book_unread_rest.json")) as f:
+            fixture = json.load(f)
+        self.request("POST", "/_stub/messages", ["a"])
+        body = self.unread()
+        self.assertEqual(sorted(body), sorted(fixture))
+        self.assertEqual(sorted(body["messages"][0]), sorted(fixture["messages"][0]))
+
+    def test_everything_is_unread_until_the_marker_passes_it_newest_first(self):
+        self.request("POST", "/_stub/messages", ["a", "b", "c"])
+        ids = [m["id"] for m in self.request("GET", f"{self.BOOK}/messages")[2]]
+        self.assertEqual([m["id"] for m in self.unread()["messages"]], list(reversed(ids)))
+
+        self.request("POST", f"{self.BOOK}/read", ids[1])
+        self.assertEqual([m["id"] for m in self.unread()["messages"]], [ids[2]])
+        self.request("POST", f"{self.BOOK}/read", ids[0])   # never backwards
+        self.assertEqual(self.unread()["unread_count"], 1)
+
+    def test_voice_stays_unread_until_heard(self):
+        self.request("POST", "/_stub/messages", [{"type": "Voice"}, {"type": "Voice"}, "after"])
+        ids = [m["id"] for m in self.request("GET", f"{self.BOOK}/messages")[2]]
+        self.request("POST", f"{self.BOOK}/read", ids[2])
+        self.assertEqual({m["id"] for m in self.unread()["messages"]}, {ids[0], ids[1]})
+
+        self.request("POST", f"{self.BOOK}/messages/{ids[0]}/heard")
+        self.assertEqual([m["id"] for m in self.unread()["messages"]], [ids[1]])
+        self.request("POST", f"{self.BOOK}/heard", [ids[1]])
+        self.assertEqual(self.unread()["unread_count"], 0)
+
+    def test_a_late_arrival_after_the_marker_is_unread(self):
+        self.request("POST", "/_stub/messages", [{"body": "a", "sent_at": "2026-09-01T12:00:00.000Z"},
+                                                 {"body": "b", "sent_at": "2026-09-01T12:00:10.000Z"}])
+        ids = [m["id"] for m in self.request("GET", f"{self.BOOK}/messages")[2]]
+        self.request("POST", f"{self.BOOK}/read", ids[1])
+        self.request("POST", "/_stub/messages", [{"body": "a", "sent_at": "2026-09-01T12:00:00.000Z"},
+                                                 {"body": "b", "sent_at": "2026-09-01T12:00:10.000Z"},
+                                                 {"body": "late", "sent_at": "2026-09-01T12:00:05.000Z",
+                                                  "received_at": "2026-09-01T13:00:00.000Z"}])
+        unread = self.unread()["messages"]
+        self.assertEqual([(m["id"], m["sent_at"]) for m in unread],
+                         [(self.request("GET", f"{self.BOOK}/messages")[2][2]["id"], "2026-09-01T12:00:05.000Z")])
+
+    def test_a_reset_forgets_read_state(self):
+        self.request("POST", "/_stub/messages", ["a"])
+        ids = [m["id"] for m in self.request("GET", f"{self.BOOK}/messages")[2]]
+        self.request("POST", f"{self.BOOK}/read", ids[0])
+        self.request("POST", "/_stub/reset")
+        self.request("POST", "/_stub/messages", ["a"])
+        self.assertEqual(self.unread()["unread_count"], 1)
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

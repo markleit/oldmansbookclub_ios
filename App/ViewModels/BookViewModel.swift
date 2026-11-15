@@ -68,10 +68,12 @@ final class BookViewModel: ObservableObject {
     // the filter on every access was pure waste. Now refreshed only when its inputs (messages /
     // blockedUserIds) change, via their didSet.
     @Published private(set) var visibleMessages: [Message] = []
-    /// #204 PR 6 — someone else's message that landed above what you'd already seen (a late
-    /// arrival, or a slow upload tapped earlier). The chat shows "↑ New message above" until it's
-    /// seen. The oldest such message, so reading down from it covers the rest.
-    @Published var newMessageAboveId: UUID?
+    /// #275 — the reader's unread messages (the server's list on open, plus live arrivals) and which
+    /// have been on screen. Drives "↑ N unread"; see UnreadAbove.
+    @Published private(set) var unreadAbove = UnreadAbove()
+    /// Where older history continues from: the edge of the newest page, not the oldest message held
+    /// (a late arrival in the first fetch is far older than the page — #275).
+    private var olderCursor: Date?
 
     private func recomputeVisibleMessages() {
         // #204 — the chat shows the server's messages plus this chat's unsent ones, which belong
@@ -81,7 +83,10 @@ final class BookViewModel: ObservableObject {
         let confirmed = messages.filter { !blockedUserIds.contains($0.senderId) }
         visibleMessages = pendingBubbles.isEmpty ? confirmed
             : (confirmed + pendingBubbles).sorted { $0.sentAt > $1.sentAt }
+        // #275 — never the "↑ N unread" target: a blocked sender's (not shown) or a deleted one.
+        hiddenFromPill = Set(messages.lazy.filter { self.blockedUserIds.contains($0.senderId) || $0.isDeleted }.map(\.id))
     }
+    private var hiddenFromPill: Set<UUID> = []
 
     /// This chat's unsent messages, as bubbles (from SendEngine.items).
     private var pendingBubbles: [Message] = [] {
@@ -110,6 +115,7 @@ final class BookViewModel: ObservableObject {
         let consumable = ids.filter { byOthers.contains($0) && !HeardStore.shared.isHeard($0) }
         guard !consumable.isEmpty else { return }
         HeardStore.shared.markHeard(consumable, bookId: book.id)
+        unreadAbove.markSeen(consumable)
         UnreadStore.shared.bump(bookId: book.id, by: -consumable.count)
         Task { await ReceiptQueue.shared.pushHeard(bookId: book.id, ids: consumable) }
     }
@@ -323,6 +329,8 @@ final class BookViewModel: ObservableObject {
         // The server's per-account heard state — seed the device-local heard cache from it so a
         // voice heard on another device shows as heard here too, and counts match (#102).
         async let myHeardFetch = APIClient.shared.myHeardMessageIds(bookId: bookId)
+        // #275 — what's unread, as the server counts it. Read before markRead below moves the marker.
+        async let unreadFetch = APIClient.shared.unreadMessages(bookId: bookId)
 
         do {
             let fetched = try await messagesFetch
@@ -334,15 +342,9 @@ final class BookViewModel: ObservableObject {
             // entry would otherwise survive and restorePendingMediaBubbles would resurrect it as
             // a ghost that can never reconcile (its re-send echo is dropped because the server id
             // is already loaded here) and stick permanently on .failed.
-            let previous = messages
             let merged = ChatCache.merge(existing: messages, incoming: fetched, myUserId: TokenStore.shared.userId)
             messages = merged.messages
-            // A late arrival since this chat was last open lands above what you'd seen (PR 6).
-            if let above = ChatOrder.arrivedAbove(previous: previous, current: messages,
-                                                  me: TokenStore.shared.userId),
-               let message = messages.first(where: { $0.id == above }) {
-                noteArrivedAbove(message)
-            }
+            olderCursor = ChatOrder.pageFloor(of: fetched, pageSize: APIClient.messagePageSize)
             // A send the server has (it landed while the app was closed, or its response was lost)
             // is confirmed by the fetch itself — the engine drops it and stops retrying.
             for message in fetched where message.senderId == TokenStore.shared.userId {
@@ -395,6 +397,9 @@ final class BookViewModel: ObservableObject {
             if !toPosition.isEmpty { PlaybackProgressStore.shared.markHeard(toPosition) }
             if !toPush.isEmpty { await ReceiptQueue.shared.pushHeard(bookId: bookId, ids: toPush) }
         }
+
+        // #275 — the unread list must be in hand before markRead moves the marker past it.
+        if let refs = try? await unreadFetch { unreadAbove.adopt(refs) }
 
         // markRead fires after messages resolved (needs latestId). Its response carries the
         // book's fresh unread count, which lands in UnreadStore — so opening a chat resyncs
@@ -767,7 +772,10 @@ final class BookViewModel: ObservableObject {
             // than something already here — means it's out of sight: "↑ New message above".
             let index = ChatOrder.insertionIndex(of: message, in: messages)
             messages.insert(message, at: index)
-            if index > 0, message.senderId != TokenStore.shared.userId { noteArrivedAbove(message) }
+            // #275 — unread until it's been on screen; if it landed above the screen, "↑ N unread".
+            if message.senderId != TokenStore.shared.userId, !blockedUserIds.contains(message.senderId) {
+                unreadAbove.arrived(UnreadAbove.Ref(id: message.id, sentAt: message.sentAt))
+            }
             saveMessagesCache()
             // The read receipt's response carries this book's fresh unread count — an arriving
             // voice message raises it (unheard), non-voice nets to zero (read on arrival).
@@ -786,23 +794,34 @@ final class BookViewModel: ObservableObject {
     // chat scroll view; idempotent under repeated calls (in-flight or terminal).
     func loadOlderMessages() async {
         guard !isLoadingOlderMessages, !reachedBeginning else { return }
-        // `messages` holds only confirmed messages (#204), so the last is the oldest the server has.
-        guard let before = messages.last?.sentAt else { return }
+        // From the edge of the newest page (#275), not `messages.last`: the first fetch also brings
+        // late arrivals with tap times far older than the page, and paging from one of those would
+        // skip everything in between. Offline with no fetch yet, the oldest held is all there is.
+        guard var before = olderCursor ?? messages.last?.sentAt else { return }
 
         isLoadingOlderMessages = true
         defer { isLoadingOlderMessages = false }
         do {
-            let older = try await APIClient.shared.getMessages(bookId: book.id, before: before)
-            markOnline()
-            if older.isEmpty {
-                reachedBeginning = true
-                return
+            // Pages this phone already holds (saved from earlier visits) add nothing; keep going
+            // until one does, or the sentinel at the top would sit there with nothing new to show.
+            for _ in 0..<25 {
+                let older = try await APIClient.shared.getMessages(bookId: book.id, before: before)
+                markOnline()
+                guard let oldest = older.last else {
+                    reachedBeginning = true
+                    break
+                }
+                before = oldest.sentAt
+                olderCursor = before
+                // Merge into messages, dedup by id (server might overlap on the boundary).
+                var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+                let fresh = older.filter { byId[$0.id] == nil }
+                guard !fresh.isEmpty else { continue }
+                for msg in fresh { byId[msg.id] = msg }
+                messages = ChatOrder.sorted(byId.values)
+                saveMessagesCache()
+                break
             }
-            // Merge into messages, dedup by id (server might overlap on the boundary).
-            var byId: [UUID: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
-            for msg in older where byId[msg.id] == nil { byId[msg.id] = msg }
-            messages = ChatOrder.sorted(byId.values)
-            saveMessagesCache()
         } catch {
             // Silent — the sentinel will fire again on next scroll attempt.
         }
@@ -871,10 +890,40 @@ final class BookViewModel: ObservableObject {
     }
 
     /// Keeps the oldest of the messages that arrived above the newest, for the "↑" chip.
-    private func noteArrivedAbove(_ message: Message) {
-        if let current = newMessageAboveId, let shown = messages.first(where: { $0.id == current }),
-           ChatOrder.isNewer(message, than: shown) { return }
-        newMessageAboveId = message.id
+    // MARK: - "↑ N unread" (#275)
+
+    /// The pill for what's on screen now: the unseen unread messages above the oldest one showing.
+    func unreadPill(onScreen ids: Set<UUID>) -> UnreadAbove.Pill? {
+        // visibleMessages is newest first, so the last one on screen is the oldest.
+        guard let oldest = visibleMessages.last(where: { ids.contains($0.id) }) else { return nil }
+        return unreadAbove.pill(oldestOnScreen: UnreadAbove.Ref(id: oldest.id, sentAt: oldest.sentAt),
+                                hidden: hiddenFromPill)
+    }
+
+    func markSeen(_ ids: some Sequence<UUID>) {
+        // Only publish when something is newly seen: this runs on every scroll that shows a bubble.
+        let new = ids.filter { !unreadAbove.seen.contains($0) }
+        if !new.isEmpty { unreadAbove.markSeen(new) }
+    }
+
+    func clearUnreadPill() {
+        unreadAbove.clear()
+    }
+
+    /// Pages older history in until `id` is loaded (the pill's target can be older than anything
+    /// loaded: a voice message skipped weeks ago). False if it never turns up — then it stops
+    /// counting, so the pill moves on rather than pointing at nothing.
+    func loadThrough(_ id: UUID) async -> Bool {
+        for _ in 0..<40 where !messages.contains(where: { $0.id == id }) && !reachedBeginning {
+            if isLoadingOlderMessages {
+                try? await Task.sleep(for: .milliseconds(100))   // the scroll sentinel's page is in flight
+                continue
+            }
+            await loadOlderMessages()
+        }
+        let found = messages.contains(where: { $0.id == id })
+        if !found { unreadAbove.markSeen([id]) }
+        return found
     }
 
     // #201 — the photo viewer's pages: every loaded, undeleted photo in this chat, oldest first

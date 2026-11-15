@@ -32,9 +32,7 @@ extension SendEngine {
                 return { task.cancel() }
             },
             cacheConfirmed: { bookId, message in
-                let merged = ChatCache.merge(existing: ChatCache.load(bookId: bookId), incoming: [message],
-                                             myUserId: TokenStore.shared.userId)
-                ChatCache.save(merged.messages, bookId: bookId, excludingPending: [])
+                ChatCache.addConfirmed(message, bookId: bookId, myUserId: TokenStore.shared.userId)
             },
             reminder: { SendReminder.apply($0) })
         return SendEngine(outbox: Outbox(), transport: liveTransport, environment: env)
