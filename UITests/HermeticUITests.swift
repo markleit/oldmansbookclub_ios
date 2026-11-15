@@ -287,7 +287,7 @@ final class HermeticChatUITests: HermeticTestCase {
 
         let pill = app.buttons["newMessageAboveChip"]
         XCTAssertTrue(pill.waitForExistence(timeout: 10), "no pill for unread messages above the screen")
-        XCTAssertTrue(pill.label.contains("unread"), "pill reads '\(pill.label)'")
+        XCTAssertEqual(pill.label, "Unread messages", "the pill shows no count")
         pill.tap()
         let oldest = app.staticTexts["message 0"]
         XCTAssertTrue(oldest.waitForExistence(timeout: 5) && oldest.isHittable, "the pill didn't go to the oldest unread")
@@ -309,7 +309,7 @@ final class HermeticChatUITests: HermeticTestCase {
         XCTAssertTrue(app.staticTexts["message 29"].waitForExistence(timeout: 10))
         let pill = app.buttons["newMessageAboveChip"]
         XCTAssertTrue(pill.waitForExistence(timeout: 10), "an unheard voice message above the screen got no pill")
-        XCTAssertTrue(pill.label.contains("1 unread"), "pill reads '\(pill.label)'")
+        XCTAssertEqual(pill.label, "Unread messages", "the pill shows no count")
         pill.tap()
         let play = app.buttons.matching(identifier: "voicePlayButton").firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 5) && play.isHittable, "the pill didn't go to the voice message")

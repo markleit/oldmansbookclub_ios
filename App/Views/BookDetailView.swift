@@ -183,7 +183,10 @@ struct BookDetailView: View {
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.up")
-                                    Text("\(pill.count) unread")
+                                    // No count (Mark, 2026-11-15): the server marks texts read
+                                    // when the chat opens, so a count here disagreed with the
+                                    // room's number in the Library. The Library number is the count.
+                                    Text("Unread messages")
                                         .font(.caption.weight(.semibold))
                                 }
                                 .padding(.horizontal, 14)
@@ -198,7 +201,7 @@ struct BookDetailView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                         }
                     }
-                    // On screen = seen: it stops counting for "↑ N unread" (#275). Not during the
+                    // On screen = seen: it stops counting for "↑ Unread messages" (#275). Not during the
                     // entry scroll, which passes over messages on its way to the newest.
                     .onChange(of: visibleMessageIds) { ids in
                         guard entryScrollSettled else { return }

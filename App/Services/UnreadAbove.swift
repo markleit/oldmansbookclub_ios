@@ -1,6 +1,6 @@
 import Foundation
 
-/// #275 — what the chat's "↑ N unread" pill points at (D2 in the #204 spec: any unread message above
+/// #275 — what the chat's "↑ Unread messages" pill points at (D2 in the #204 spec: any unread message above
 /// the screen).
 ///
 /// Unread is the server's rule, the one behind the library number and the badge: text, photos and

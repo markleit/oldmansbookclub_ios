@@ -69,7 +69,7 @@ final class BookViewModel: ObservableObject {
     // blockedUserIds) change, via their didSet.
     @Published private(set) var visibleMessages: [Message] = []
     /// #275 — the reader's unread messages (the server's list on open, plus live arrivals) and which
-    /// have been on screen. Drives "↑ N unread"; see UnreadAbove.
+    /// have been on screen. Drives "↑ Unread messages"; see UnreadAbove.
     @Published private(set) var unreadAbove = UnreadAbove()
     /// Where older history continues from: the edge of the newest page, not the oldest message held
     /// (a late arrival in the first fetch is far older than the page — #275).
@@ -83,7 +83,7 @@ final class BookViewModel: ObservableObject {
         let confirmed = messages.filter { !blockedUserIds.contains($0.senderId) }
         visibleMessages = pendingBubbles.isEmpty ? confirmed
             : (confirmed + pendingBubbles).sorted { $0.sentAt > $1.sentAt }
-        // #275 — never the "↑ N unread" target: a blocked sender's (not shown) or a deleted one.
+        // #275 — never the "↑ Unread messages" target: a blocked sender's (not shown) or a deleted one.
         hiddenFromPill = Set(messages.lazy.filter { self.blockedUserIds.contains($0.senderId) || $0.isDeleted }.map(\.id))
     }
     private var hiddenFromPill: Set<UUID> = []
@@ -771,7 +771,7 @@ final class BookViewModel: ObservableObject {
             // than something already here — means it's out of sight: "↑ New message above".
             let index = ChatOrder.insertionIndex(of: message, in: messages)
             messages.insert(message, at: index)
-            // #275 — unread until it's been on screen; if it landed above the screen, "↑ N unread".
+            // #275 — unread until it's been on screen; if it landed above the screen, "↑ Unread messages".
             if message.senderId != TokenStore.shared.userId, !blockedUserIds.contains(message.senderId) {
                 unreadAbove.arrived(UnreadAbove.Ref(id: message.id, sentAt: message.sentAt))
             }
@@ -889,7 +889,7 @@ final class BookViewModel: ObservableObject {
     }
 
     /// Keeps the oldest of the messages that arrived above the newest, for the "↑" chip.
-    // MARK: - "↑ N unread" (#275)
+    // MARK: - "↑ Unread messages" (#275)
 
     /// The pill for what's on screen now: the unseen unread messages above the oldest one showing.
     func unreadPill(onScreen ids: Set<UUID>) -> UnreadAbove.Pill? {
