@@ -328,9 +328,21 @@ final class APIClient {
         enum CodingKeys: String, CodingKey { case title, author, coverUrl }
     }
 
-    func searchBooks(title: String) async -> [BookSearchResult] {
-        guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return [] }
-        return (try? await get(path: "/books/search?q=\(encoded)")) ?? []
+    /// A book search either answers (possibly with no matches) or couldn't be done at all — Google
+    /// Books down (our API says 503 since #266), offline, or anything else. #211: the second used to
+    /// come back as an empty list, so "Google is down" looked exactly like "no such book".
+    enum BookSearchOutcome {
+        case results([BookSearchResult])
+        case unavailable
+    }
+
+    func searchBooks(title: String) async -> BookSearchOutcome {
+        guard let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return .results([]) }
+        do {
+            return .results(try await get(path: "/books/search?q=\(encoded)"))
+        } catch {
+            return .unavailable
+        }
     }
 
     // Fetches a single book's details; the server lazily backfills Google Books
