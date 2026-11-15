@@ -43,6 +43,11 @@ jobs:
     name: iOS build
     # Xcode 27 (GitHub preview image) so CI tests on iOS 27 like our users' phones (#185).
     runs-on: xcode-27
+    env:
+      # One Xcode for building and running (#185). The image's default (27.1) runs tests on the newest
+      # simulator runtime (iOS 27.2), and that mismatch crashed the UI test runner at startup and timed
+      # out its screen queries (image xcode-27-arm64 20261104). Matched 27.2/27.2 passes.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
       - name: Install xcodegen
@@ -67,6 +72,10 @@ jobs:
       # An iOS 27-only device name, so a co-installed older runtime is never picked by name;
       # regression.sh falls back to any available iPhone if the image doesn't have it.
       OMBC_SIMULATOR: iPhone 18 Pro
+      # One Xcode for building and running (#185). The image's default (27.1) runs tests on the newest
+      # simulator runtime (iOS 27.2), and that mismatch crashed the UI test runner at startup and timed
+      # out its screen queries (image xcode-27-arm64 20261104). Matched 27.2/27.2 passes.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -91,6 +100,10 @@ jobs:
         shard: [1, 2, 3]
     env:
       OMBC_SIMULATOR: iPhone 18 Pro
+      # One Xcode for building and running (#185). The image's default (27.1) runs tests on the newest
+      # simulator runtime (iOS 27.2), and that mismatch crashed the UI test runner at startup and timed
+      # out its screen queries (image xcode-27-arm64 20261104). Matched 27.2/27.2 passes.
+      DEVELOPER_DIR: /Applications/Xcode_27.2.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
