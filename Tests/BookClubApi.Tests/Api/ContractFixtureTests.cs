@@ -84,6 +84,9 @@ public class ContractFixtureTests(TestAppFixture fixture) : IntegrationTestBase(
         var user = new UserDto(UserId, "Mark", "Marky", "https://storage.example/avatars/mark.jpg",
             true, false, new UserPreferencesDto(true));
 
+        // #275 — the chat's unread list: newest first, id + sent time (the pill orders by it).
+        var unread = new BookUnreadDto(2, [new UnreadMessageRef(MessageId, SentAt), new UnreadMessageRef(ParentId, SentAt.AddMinutes(-5))]);
+
         return new Dictionary<string, string>
         {
             ["message_voice_rest.json"] = JsonSerializer.Serialize(voice, Rest),
@@ -93,6 +96,7 @@ public class ContractFixtureTests(TestAppFixture fixture) : IntegrationTestBase(
             ["message_minimal_rest.json"] = JsonSerializer.Serialize(minimal, Rest),
             ["book_rest.json"] = JsonSerializer.Serialize(book, Rest),
             ["user_rest.json"] = JsonSerializer.Serialize(user, Rest),
+            ["book_unread_rest.json"] = JsonSerializer.Serialize(unread, Rest),
         };
     }
 

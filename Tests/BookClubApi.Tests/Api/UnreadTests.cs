@@ -282,6 +282,110 @@ public class UnreadTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
         Assert.Empty(theirs);   // heard state is per-account, not global (#102)
     }
 
+    // ---- the unread list (#275) -------------------------------------------------------------
+    //
+    // The chat's "↑ N unread" pill points at these, so they must be exactly what the library
+    // number counts: a pill that disagrees with the badge is the bug this endpoint replaces.
+
+    private static async Task<(int Count, List<(Guid Id, DateTime SentAt)> Messages)> UnreadList(TestUser user, Guid bookId)
+    {
+        var response = await user.Client.GetAsync($"/books/{bookId}/unread");
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"{(int)response.StatusCode}: {body}");
+        var root = JsonDocument.Parse(body).RootElement;
+        var messages = root.GetProperty("messages").EnumerateArray()
+            .Select(m => (m.GetProperty("id").GetGuid(), m.GetProperty("sent_at").GetDateTime().ToUniversalTime()))
+            .ToList();
+        return (root.GetProperty("unread_count").GetInt32(), messages);
+    }
+
+    [Fact]
+    public async Task The_unread_list_is_exactly_what_the_library_count_counts()
+    {
+        var (club, book, me, other) = await ArrangeAsync();
+        var blockedUser = await CreateUserAsync("Blocked", club.Id);
+        var t = DateTime.UtcNow.AddHours(-1);
+
+        var readText = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t);
+        var skippedVoice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: t.AddMinutes(1));
+        var heardVoice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: t.AddMinutes(2));
+        var marker = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t.AddMinutes(3));
+        var newText = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t.AddMinutes(4));
+        var newVoice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: t.AddMinutes(5));
+        await InsertMessageAsync(book.Id, club.Id, me.Id, sentAt: t.AddMinutes(6));                                 // mine
+        await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t.AddMinutes(7), deletedAt: DateTime.UtcNow); // deleted
+        await InsertMessageAsync(book.Id, club.Id, blockedUser.Id, sentAt: t.AddMinutes(8));                       // blocked
+
+        Assert.True((await me.Client.PostAsJsonAsync($"/books/{book.Id}/read", marker.Id)).IsSuccessStatusCode);
+        Assert.True((await me.Client.PostAsync($"/books/{book.Id}/messages/{heardVoice.Id}/heard", null)).IsSuccessStatusCode);
+        Assert.True((await me.Client.PostAsync($"/users/{blockedUser.Id}/block", null)).IsSuccessStatusCode);
+
+        var (count, messages) = await UnreadList(me, book.Id);
+
+        // Voice skipped before the marker is still unread (never heard); text before it isn't.
+        Assert.Equal([newVoice.Id, newText.Id, skippedVoice.Id], messages.Select(m => m.Id).ToList());
+        Assert.Equal(3, count);
+        Assert.Equal(count, await UnreadFromBooksList(me, book.Id));
+        Assert.DoesNotContain(readText.Id, messages.Select(m => m.Id));
+    }
+
+    [Fact]
+    public async Task A_late_arrival_after_the_marker_is_unread_and_listed_at_its_sent_time()
+    {
+        // Sent before the message the reader last saw, but it reached the server after: by arrival,
+        // so it's unread, and its sent time says where it sits in the chat (above the marker).
+        var (club, book, me, other) = await ArrangeAsync();
+        var t = DateTime.UtcNow.AddHours(-2);
+        var marker = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t);
+        Assert.True((await me.Client.PostAsJsonAsync($"/books/{book.Id}/read", marker.Id)).IsSuccessStatusCode);
+        var late = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: t.AddMinutes(-30), receivedAt: t.AddHours(1));
+
+        var (count, messages) = await UnreadList(me, book.Id);
+
+        Assert.Equal(1, count);
+        var only = Assert.Single(messages);
+        Assert.Equal(late.Id, only.Id);
+        Assert.Equal(late.SentAt, only.SentAt, TimeSpan.FromMilliseconds(1));
+    }
+
+    [Fact]
+    public async Task With_no_read_marker_everything_from_others_is_unread_except_heard_voice()
+    {
+        var (club, book, me, other) = await ArrangeAsync();
+        var text = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: DateTime.UtcNow.AddMinutes(-3));
+        var voice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: DateTime.UtcNow.AddMinutes(-2));
+        var heard = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: DateTime.UtcNow.AddMinutes(-1));
+        Assert.True((await me.Client.PostAsync($"/books/{book.Id}/messages/{heard.Id}/heard", null)).IsSuccessStatusCode);
+
+        var (count, messages) = await UnreadList(me, book.Id);
+
+        Assert.Equal([voice.Id, text.Id], messages.Select(m => m.Id).ToList());
+        Assert.Equal(count, await UnreadFromBooksList(me, book.Id));
+    }
+
+    [Fact]
+    public async Task Hearing_a_voice_message_or_reading_past_text_takes_it_off_the_unread_list()
+    {
+        var (club, book, me, other) = await ArrangeAsync();
+        var text = await InsertMessageAsync(book.Id, club.Id, other.Id, sentAt: DateTime.UtcNow.AddMinutes(-2));
+        var voice = await InsertMessageAsync(book.Id, club.Id, other.Id, MessageType.Voice, sentAt: DateTime.UtcNow.AddMinutes(-1));
+        Assert.Equal(2, (await UnreadList(me, book.Id)).Count);
+
+        Assert.True((await me.Client.PostAsJsonAsync($"/books/{book.Id}/read", voice.Id)).IsSuccessStatusCode);
+        Assert.Equal([voice.Id], (await UnreadList(me, book.Id)).Messages.Select(m => m.Id).ToList());
+
+        Assert.True((await me.Client.PostAsync($"/books/{book.Id}/messages/{voice.Id}/heard", null)).IsSuccessStatusCode);
+        Assert.Empty((await UnreadList(me, book.Id)).Messages);
+        Assert.DoesNotContain(text.Id, (await UnreadList(me, book.Id)).Messages.Select(m => m.Id));
+    }
+
+    [Fact]
+    public async Task The_unread_list_of_an_unknown_book_is_not_found()
+    {
+        var (_, _, me, _) = await ArrangeAsync();
+        Assert.Equal(HttpStatusCode.NotFound, (await me.Client.GetAsync($"/books/{Guid.NewGuid()}/unread")).StatusCode);
+    }
+
     // ---- authorization ----------------------------------------------------------------------
 
     [Fact]
@@ -298,6 +402,7 @@ public class UnreadTests(TestAppFixture fixture) : IntegrationTestBase(fixture)
             await outsider.Client.PostAsync($"/books/{book.Id}/messages/{message.Id}/heard", null),
             await outsider.Client.PostAsJsonAsync($"/books/{book.Id}/heard", new[] { message.Id }),
             await outsider.Client.GetAsync($"/books/{book.Id}/my-heard"),
+            await outsider.Client.GetAsync($"/books/{book.Id}/unread"),
         })
         {
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
