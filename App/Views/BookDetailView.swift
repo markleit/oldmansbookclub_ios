@@ -58,7 +58,14 @@ struct BookDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             if viewModel.isOffline {
-                Label("Offline — showing cached messages", systemImage: "wifi.slash")
+                // #286: "server", not "offline" — the phone's network may be fine.
+                let banner = viewModel.messages.isEmpty
+                    ? "Can't reach the server — messages will show when it's back"
+                    : "Can't reach the server — showing saved messages"
+                Label(banner, systemImage: "wifi.slash")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(banner)   // not the icon's "Wi-Fi Off"
+                    .accessibilityIdentifier("chatOfflineBanner")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
@@ -72,9 +79,15 @@ struct BookDetailView: View {
                 // #189: visibleMessages, not messages — `messages` holds only what the server has
                 // confirmed, so a message sent into an empty chat (a new book, or nothing loaded
                 // with the server unreachable) sat hidden behind this text until it was confirmed.
-                Text("No discussion yet. Start the conversation!")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // #286: and when nothing could be loaded, don't claim there's no discussion — the
+                // banner above says why it's empty.
+                if viewModel.isOffline {
+                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Text("No discussion yet. Start the conversation!")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {

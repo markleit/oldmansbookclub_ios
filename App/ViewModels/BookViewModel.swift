@@ -356,11 +356,10 @@ final class BookViewModel: ObservableObject {
             isLoadingMessages = false
             return
         } catch {
-            if hasCachedState {
-                isOffline = true
-            } else {
-                errorMessage = "Failed to load discussion."
-            }
+            // #286: never an alert — a modal took the keyboard from someone typing and lost the
+            // rest of what they typed. The chat's banner says the server can't be reached instead
+            // (with or without a saved chat); it reloads when the network comes back or on reopen.
+            isOffline = true
         }
         isLoadingMessages = false
         startNetworkMonitorIfNeeded()
