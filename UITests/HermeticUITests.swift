@@ -684,7 +684,8 @@ final class HermeticMediaUITests: HermeticTestCase {
         let deadline = Date().addingTimeInterval(15)
         while Date() < deadline && !sawToast {
             if toast.exists { sawToast = true; break }
-            if photosAlert.exists, photosAlert.buttons["Allow"].exists { photosAlert.buttons["Allow"].tap() }
+            // firstMatch: iOS 27.2 lists the Allow button twice (see SystemAlerts).
+            if photosAlert.exists, photosAlert.buttons["Allow"].exists { photosAlert.buttons["Allow"].firstMatch.tap() }
         }
         XCTAssertTrue(sawToast, "no Saved to Photos confirmation")
     }
