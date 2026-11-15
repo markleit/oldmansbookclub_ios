@@ -220,8 +220,7 @@ run_xcodebuild_tests() {  # run_xcodebuild_tests <label> <destination> <retry:0|
 # never showed the library" on the first picker test of a part). Opening Photos once lets iOS
 # index the sample library before any test needs it.
 warm_photo_library() {
-    local udid
-    udid=$(xcrun simctl list devices available | sed -n "s/^ *$SIMULATOR (\([0-9A-F-]*\)).*/\1/p" | head -1)
+    local udid="$SIM_UDID"
     [[ -z "$udid" ]] && return 0
     # #204 H14 — the sample library has photos only; the video test needs one clip. Adding it
     # again on a reused simulator just leaves another copy, which the test doesn't mind.
@@ -258,6 +257,27 @@ resolve_simulator() {
     SIMULATOR="$fallback"
 }
 
+# #185 — the ONE simulator every step uses: $SIMULATOR on the newest iOS installed. A runner image can
+# carry the same device name on several runtimes (xcode-27-arm64 has iPhone 18 Pro on 27.0, 27.1 and
+# 27.2). Picking by name let the setup steps (reset, keychain, sample video, Photos warm-up) take the
+# first one listed while `-destination name=` ran the tests on the newest: tests then ran on a
+# simulator nobody had reset — a stale sign-in token, no sample video, a cold boot mid-test.
+simulator_udid() {
+    xcrun simctl list devices available -j | python3 -c '
+import json, re, sys
+name, best = sys.argv[1], None
+for runtime, devices in json.load(sys.stdin)["devices"].items():
+    m = re.search(r"iOS-(\d+)-(\d+)", runtime)
+    if not m:
+        continue
+    version = tuple(map(int, m.groups()))
+    for d in devices:
+        if d["name"] == name and (best is None or version > best[0]):
+            best = (version, d["udid"])
+print(best[1] if best else "")' "$SIMULATOR"
+}
+SIM_UDID=""
+
 # The simulator's persisted state is shared across lanes, and a session left by one lane poisons
 # the next: the hermetic lane signs in against its stub server, and the token it stores is not
 # valid on the real API — every later request 401s and the failures look like app bugs. (This is
@@ -266,9 +286,7 @@ resolve_simulator() {
 # So each iOS lane starts from a clean app: uninstall, and reset the simulator keychain, which an
 # uninstall alone does not clear.
 reset_simulator_state() {
-    local udid
-    udid=$(xcrun simctl list devices available \
-        | sed -n "s/^ *$SIMULATOR (\([0-9A-F-]*\)).*/\1/p" | head -1)
+    local udid="$SIM_UDID"
     [[ -z "$udid" ]] && return 0
 
     xcrun simctl boot "$udid" >/dev/null 2>&1 || true
@@ -290,6 +308,12 @@ reset_simulator_state() {
 
 if [[ $LANE_IOS_UNIT -eq 1 || $LANE_LIVE -eq 1 || -n "$BUILD_FOR_TESTING_DIR" ]]; then
     resolve_simulator
+    SIM_UDID=$(simulator_udid)
+    if [[ -z "$SIM_UDID" ]]; then
+        fail "couldn't find the '$SIMULATOR' simulator's id"
+        exit 1
+    fi
+    note "simulator: $SIMULATOR ($SIM_UDID)"
 fi
 
 # Prebuilt bundles (--products) need no project at all — they were built from it already.
@@ -320,7 +344,7 @@ if [[ $LANE_IOS_UNIT -eq 1 ]]; then
     if [[ $SKIP_UNIT -eq 0 ]]; then
         step "iOS unit tests (no network, no backend)"
         reset_simulator_state
-        run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,name=$SIMULATOR" 0 OldMansBookClubTests
+        run_xcodebuild_tests "iOS unit" "platform=iOS Simulator,id=$SIM_UDID" 0 OldMansBookClubTests
     fi
 
     if [[ "${SKIP_HERMETIC_UI:-0}" != "1" ]]; then
@@ -335,7 +359,7 @@ if [[ $LANE_IOS_UNIT -eq 1 ]]; then
                 warm_photo_library
                 classes_var="HERMETIC_SHARD_$shard"
                 # shellcheck disable=SC2086
-                run_xcodebuild_tests "hermetic UI $shard/3" "platform=iOS Simulator,name=$SIMULATOR" 1 ${!classes_var}
+                run_xcodebuild_tests "hermetic UI $shard/3" "platform=iOS Simulator,id=$SIM_UDID" 1 ${!classes_var}
             done
         else
             record "hermetic UI (shard check)" 1
@@ -427,7 +451,7 @@ if [[ $LANE_LIVE -eq 1 ]]; then
     reset_simulator_state
     # The Hermetic* classes are excluded here: they bring their own stub server, so running them
     # again against the live API would prove nothing new and cost another minute.
-    run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,name=$SIMULATOR" 1 \
+    run_xcodebuild_tests "live UI (simulator)" "platform=iOS Simulator,id=$SIM_UDID" 1 \
         OldMansBookClubUITests/OldMansBookClubUITests OldMansBookClubUITests/LibraryUITests
 fi
 
