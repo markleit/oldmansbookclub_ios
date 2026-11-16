@@ -526,7 +526,10 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         // A different title, author or cover can mean a different book (or edition), so the
         // details filled in for the old one no longer apply: drop them and fetch the new book's
         // now. If Google doesn't answer, MetadataFetchedAt stays null and the next open retries.
-        if ((book.Title, book.Author, book.CoverBlobUrl) != identityBefore)
+        // Picking a cover at all counts too, even the one the book already has: it's the admin
+        // saying "this is the book", and it's the way to repair details stored before the cover
+        // was trusted (the app sends a cover only when one was picked; older apps never do).
+        if (request.CoverUrl is not null || (book.Title, book.Author, book.CoverBlobUrl) != identityBefore)
         {
             book.Description = null;
             book.PublishedYear = null;

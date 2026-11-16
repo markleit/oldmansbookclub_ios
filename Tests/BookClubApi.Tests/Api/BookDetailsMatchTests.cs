@@ -187,6 +187,36 @@ public class BookDetailsMatchTests(TestAppFixture fixture) : IntegrationTestBase
     }
 
     [Fact]
+    public async Task Re_picking_the_cover_the_book_already_has_refetches_its_details()
+    {
+        // The reported follow-up: the book already had the right cover but details stored by the
+        // old first-result logic. Picking that same cover again must replace them.
+        var club = await CreateClubAsync();
+        var admin = await CreateUserAsync("Admin", club.Id, isClubAdmin: true);
+        var book = await CreateBookAsync(club.Id, Title, author: Author, coverUrl: PickedCover);
+        await using (var db = App.NewDbContext())
+        {
+            var b = await db.Books.SingleAsync(x => x.Id == book.Id);
+            b.Description = "Another book.";
+            b.PublishedYear = 2011;
+            b.PageCount = 197;
+            b.MetadataFetchedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        Google(new() { ["picked1"] = Picked }, search: Search());
+
+        var response = await admin.Client.PatchAsJsonAsync($"/books/{book.Id}",
+            new { title = Title, author = Author, cover_url = PickedCover });
+        Assert.True(response.IsSuccessStatusCode, await response.Content.ReadAsStringAsync());
+
+        var stored = await StoredAsync(book.Id);
+        Assert.Equal("The right book.", stored.Description);
+        Assert.Equal(2024, stored.Year);
+        Assert.Equal(320, stored.Pages);
+        Assert.Equal(PickedCover, stored.Cover);
+    }
+
+    [Fact]
     public async Task Editing_only_the_series_keeps_the_details_and_does_not_ask_google()
     {
         var club = await CreateClubAsync();
