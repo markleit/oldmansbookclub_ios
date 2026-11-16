@@ -236,7 +236,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
     }
 
     // A parsed Google Books volume with the fields we care about.
-    private record GoogleVolume(string Title, string Author, string? CoverUrl, string? Description, int? PublishedYear, int? PageCount);
+    internal record GoogleVolume(string Title, string Author, string? CoverUrl, string? Description, int? PublishedYear, int? PageCount);
 
     // Volumes is empty both for "no matches" and for "Google didn't answer"; Unavailable tells them apart.
     private record GoogleBooksSearch(List<GoogleVolume> Volumes, bool Unavailable);
@@ -279,6 +279,35 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         {
             logger.LogError(ex, "Google Books request failed");
             return new([], Unavailable: true);
+        }
+    }
+
+    // One volume by its Google id. Volume is null when Google has no such volume (404) — the
+    // caller then falls back to a title search; Unavailable when Google didn't answer.
+    private async Task<(GoogleVolume? Volume, bool Unavailable)> FetchGoogleVolumeAsync(string volumeId)
+    {
+        var apiKey = config["GoogleBooks:ApiKey"];
+        var url = $"volumes/{Uri.EscapeDataString(volumeId)}";
+        if (!string.IsNullOrEmpty(apiKey)) url += $"?key={apiKey}";
+
+        var client = http.CreateClient("google-books");
+        try
+        {
+            using var response = await client.GetAsync(url);
+            if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.BadRequest)
+                return (null, false);
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning("Google Books volume {VolumeId} returned {Status}", volumeId, (int)response.StatusCode);
+                return (null, true);
+            }
+            var json = await response.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            return (json.TryGetProperty("volumeInfo", out _) ? ParseVolume(json) : null, false);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Google Books volume request failed for {VolumeId}", volumeId);
+            return (null, true);
         }
     }
 
@@ -382,27 +411,80 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
         var isMember = await db.Memberships.AnyAsync(m => m.UserId == UserId && m.ClubId == book.ClubId);
         if (!isMember) return Forbid();
 
-        if (book.MetadataFetchedAt is null)
-        {
-            var search = await FetchGoogleBooksAsync(book.Title);
-            var match = search.Volumes.FirstOrDefault();
-            if (match is not null)
-            {
-                book.Description ??= match.Description;
-                book.PublishedYear ??= match.PublishedYear;
-                book.PageCount ??= match.PageCount;
-                if (!string.IsNullOrEmpty(match.CoverUrl)) book.CoverBlobUrl = match.CoverUrl;
-            }
-            // Mark attempted even with no match — but not when Google didn't answer, so the next
-            // open tries again instead of leaving the book without details for good.
-            if (!search.Unavailable)
-            {
-                book.MetadataFetchedAt = DateTime.UtcNow;
-                await db.SaveChangesAsync();
-            }
-        }
+        if (book.MetadataFetchedAt is null && await BackfillDetailsAsync(book))
+            await db.SaveChangesAsync();
 
         return await ToDtoAsync(book);
+    }
+
+    // Fills a book's description / year / pages from Google Books — from the book itself, never
+    // from whatever a title search happens to rank first ("The Treasure Hunters Club" opened with
+    // another book's cover and blurb). Returns whether the attempt is finished (MetadataFetchedAt
+    // set): false only when Google didn't answer, so the next open tries again.
+    //   1. A cover picked in Add Book / Edit Book is a Google thumbnail whose ?id= is the exact
+    //      volume — fetch that volume.
+    //   2. Otherwise (a photo cover, no cover), search by title and take only a result whose title
+    //      and author match the book. No such result → leave the details blank, not wrong.
+    // The book's cover is never replaced; one is only added when the book has none.
+    private async Task<bool> BackfillDetailsAsync(Book book)
+    {
+        GoogleVolume? match = null;
+        var volumeId = GoogleVolumeId(book.CoverBlobUrl);
+        if (volumeId is not null)
+        {
+            var byId = await FetchGoogleVolumeAsync(volumeId);
+            if (byId.Unavailable) return false;
+            match = byId.Volume;
+        }
+        if (match is null)
+        {
+            var search = await FetchGoogleBooksAsync(book.Title);
+            if (search.Unavailable) return false;
+            match = search.Volumes.FirstOrDefault(v => IsSameBook(v, book.Title, book.Author));
+        }
+
+        if (match is not null)
+        {
+            book.Description = match.Description;
+            book.PublishedYear = match.PublishedYear;
+            book.PageCount = match.PageCount;
+            if (string.IsNullOrEmpty(book.CoverBlobUrl) && !string.IsNullOrEmpty(match.CoverUrl))
+                book.CoverBlobUrl = match.CoverUrl;
+        }
+        book.MetadataFetchedAt = DateTime.UtcNow;
+        return true;
+    }
+
+    // The Google Books volume id in one of Google's cover URLs
+    // (https://books.google.com/books/content?id=zyTCAlFPjgYC&printsec=frontcover&img=1…), or
+    // null for our own uploads / anything else. The id goes into a request path, so only
+    // Google's id alphabet is accepted.
+    internal static string? GoogleVolumeId(string? coverUrl)
+    {
+        if (!Uri.TryCreate(coverUrl, UriKind.Absolute, out var uri) || uri.Host != "books.google.com") return null;
+        var id = System.Web.HttpUtility.ParseQueryString(uri.Query)["id"];
+        return id is { Length: >= 4 and <= 40 } && id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')
+            ? id : null;
+    }
+
+    // Same book = same title (ignoring case, punctuation and a leading "The"/"A"/"An") and, when
+    // the book has an author, an author sharing their surname ("Herbert" ~ "Frank Herbert").
+    internal static bool IsSameBook(GoogleVolume volume, string title, string author)
+    {
+        if (NormalizeTitle(volume.Title) != NormalizeTitle(title)) return false;
+        var surname = Words(author).LastOrDefault();
+        return surname is null || Words(volume.Author).Contains(surname);
+    }
+
+    private static string[] Words(string? s) =>
+        new string([.. (s ?? "").ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : ' ')])
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+    private static string NormalizeTitle(string? title)
+    {
+        var words = Words(title);
+        if (words.Length > 1 && words[0] is "the" or "a" or "an") words = words[1..];
+        return string.Join(' ', words);
     }
 
     // Edit a book's title/author/series and, optionally, its cover (backs the "Edit Book" action).
@@ -419,6 +501,7 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
 
         var title = request.Title?.Trim();
         if (string.IsNullOrEmpty(title)) return BadRequest("Title is required.");
+        var identityBefore = (book.Title, book.Author, book.CoverBlobUrl);
         book.Title = title;
         book.Author = request.Author?.Trim() ?? "";
 
@@ -438,27 +521,18 @@ public class BooksController(AppDbContext db, BlobService blob, IConfiguration c
             // Our own uploads are stored plain (a read SAS is added when served); a Google cover
             // URL keeps its query — that's where the volume id lives.
             book.CoverBlobUrl = IsOwnBlob(request.CoverUrl) ? request.CoverUrl.Split('?')[0] : request.CoverUrl;
-            // GetBook's one-time Google backfill would otherwise replace this cover with the top
-            // search match the first time anyone opens the book. Do that backfill now for the
-            // other details instead (description, year, pages) and mark it done.
-            if (book.MetadataFetchedAt is null)
-            {
-                try
-                {
-                    var match = (await FetchGoogleBooksAsync(book.Title)).Volumes.FirstOrDefault();
-                    if (match is not null)
-                    {
-                        book.Description ??= match.Description;
-                        book.PublishedYear ??= match.PublishedYear;
-                        book.PageCount ??= match.PageCount;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(ex, "Metadata backfill during cover change failed for book {BookId}", book.Id);
-                }
-                book.MetadataFetchedAt = DateTime.UtcNow;
-            }
+        }
+
+        // A different title, author or cover can mean a different book (or edition), so the
+        // details filled in for the old one no longer apply: drop them and fetch the new book's
+        // now. If Google doesn't answer, MetadataFetchedAt stays null and the next open retries.
+        if ((book.Title, book.Author, book.CoverBlobUrl) != identityBefore)
+        {
+            book.Description = null;
+            book.PublishedYear = null;
+            book.PageCount = null;
+            book.MetadataFetchedAt = null;
+            await BackfillDetailsAsync(book);
         }
 
         await db.SaveChangesAsync();

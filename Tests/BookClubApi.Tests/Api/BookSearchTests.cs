@@ -108,7 +108,7 @@ public class BookSearchTests(TestAppFixture fixture) : IntegrationTestBase(fixtu
     {
         var club = await CreateClubAsync();
         var user = await CreateUserAsync("Member", club.Id);
-        var book = await CreateBookAsync(club.Id, "Dune");
+        var book = await CreateBookAsync(club.Id, "Dune", author: "Frank Herbert");
         GoogleIgnoresFieldQueries();
 
         var response = await user.Client.GetAsync($"/books/{book.Id}");
@@ -127,7 +127,7 @@ public class BookSearchTests(TestAppFixture fixture) : IntegrationTestBase(fixtu
     {
         var club = await CreateClubAsync();
         var user = await CreateUserAsync("Member", club.Id);
-        var book = await CreateBookAsync(club.Id, "Dune");
+        var book = await CreateBookAsync(club.Id, "Dune", author: "Frank Herbert");
         App.GoogleBooks.Responder = (_, _) => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") };
 
         Assert.Equal(HttpStatusCode.OK, (await user.Client.GetAsync($"/books/{book.Id}")).StatusCode);
