@@ -103,14 +103,16 @@ public abstract class IntegrationTestBase(TestAppFixture fixture) : IAsyncLifeti
     }
 
     protected async Task<Book> CreateBookAsync(Guid clubId, string title, string status = "current",
-        int displayOrder = 0, DateTime? addedAt = null, string? seriesName = null, int? seriesOrder = null)
+        int displayOrder = 0, DateTime? addedAt = null, string? seriesName = null, int? seriesOrder = null,
+        string author = "Test Author", string? coverUrl = null)
     {
         await using var db = App.NewDbContext();
         var book = new Book
         {
             ClubId = clubId,
             Title = title,
-            Author = "Test Author",
+            Author = author,
+            CoverBlobUrl = coverUrl,
             Status = status,
             DisplayOrder = displayOrder,
             AddedAt = addedAt ?? DateTime.UtcNow,
